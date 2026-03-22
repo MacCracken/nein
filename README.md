@@ -130,13 +130,14 @@ let masq = nat::container_masquerade("172.17.0.0/16", "eth0");
 - [x] 151 unit tests, 7 integration tests
 
 ### Phase 3 — Advanced
-- [ ] TOML firewall config files (for sutra playbooks)
-- [ ] Rate limiting rules (per-source, per-port)
-- [ ] GeoIP blocking
-- [ ] Connection tracking helpers
-- [ ] nftables sets and maps (IP sets, port groups)
-- [ ] IPv6 support
-- [ ] Publish to crates.io
+- [x] nftables named sets and verdict maps (`NftSet`, `NftMap`, integrated into `Table`)
+- [x] IPv6 support (`SourceAddr6`, `DestAddr6`, `ip6 saddr/daddr`)
+- [x] Rate limiting rules (`Match::Limit`, `rate_limit_tcp`)
+- [x] Connection tracking helpers (`Match::CtHelper`)
+- [x] Set membership matching (`Match::SetLookup`, `match_set`)
+- [x] TOML firewall config files (`config` feature, `from_toml`/`to_toml`, round-trip)
+- [x] GeoIP blocking (`geoip` feature, `GeoIpBlocklist`, country CIDR sets, dual-stack)
+- [x] 255 unit tests, 7 integration tests
 
 ## Reference Code
 

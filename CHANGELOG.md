@@ -6,6 +6,20 @@ All notable changes to nein are documented here.
 
 ### Added
 
+#### Phase 3 — Advanced
+- **Named sets and maps** (core): `NftSet` with element types (ipv4_addr, ipv6_addr, inet_service, inet_proto, ifname), flags (constant, interval, timeout). `NftMap` verdict maps. Integrated into `Table` — sets/maps render before chains
+- **IPv6 support**: `Match::SourceAddr6`/`DestAddr6` for `ip6 saddr`/`ip6 daddr`. `deny_source6()` convenience function. `validate_addr` accepts IPv6 notation
+- **Rate limiting**: `Match::Limit { rate, unit, burst }` renders as `limit rate N/unit burst M packets`. `RateUnit` enum (second/minute/hour/day). `rate_limit_tcp()` convenience
+- **Connection tracking helpers**: `Match::CtHelper` renders as `ct helper "name"` with identifier validation
+- **Set membership matching**: `Match::SetLookup { field, set_name }` renders as `field @setname`. `match_set()` convenience
+- **TOML config** (`config` feature): `from_toml()`/`to_toml()` for firewall config files. Tagged union match types, all verdict/family/hook/chain_type variants. Round-trip serialization for sutra playbooks
+- **GeoIP blocking** (`geoip` feature): `GeoIpBlocklist` with `CountryBlock` entries. Generates nftables interval sets per country + drop rules. Dual-stack (IPv4 + IPv6 in separate tables). Country code validation (ISO 3166-1 alpha-2)
+- `validate_nft_element()` for set/map element validation
+- `Eq` added to `ChainRule`, `Chain`, `Table`, `NetworkPolicy`
+- `Clone` added to `Firewall`
+- MCP `build_allow_rule`/`build_deny_rule` now validate source CIDRs
+- 255 unit tests, 7 integration tests
+
 #### Phase 2 — Daimon Integration
 - **Agent policy engine** (`engine` feature): `PolicyEngine` manages per-agent network policies with `AgentPolicy`, `PortSpec`. Generates unified firewall with dispatch chains that jump to per-agent `{id}_in`/`{id}_out` chains. Supports inbound/outbound port control, outbound host restrictions, established/loopback toggles
 - **Dynamic rule operations** in `apply` module: `add_rule()`, `delete_rule()` for incremental rule management; `list_ruleset_with_handles()`, `find_rules_by_comment()`, `parse_rules_with_handles()` for rule discovery by comment prefix; `flush_table()`, `delete_table()` for table-level operations

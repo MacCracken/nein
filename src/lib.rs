@@ -13,6 +13,7 @@
 
 pub mod chain;
 pub mod rule;
+pub mod set;
 pub mod table;
 pub mod validate;
 
@@ -42,6 +43,12 @@ pub mod mesh;
 
 #[cfg(feature = "mcp")]
 pub mod mcp;
+
+#[cfg(feature = "config")]
+pub mod config;
+
+#[cfg(feature = "geoip")]
+pub mod geoip;
 
 mod error;
 pub use error::NeinError;
@@ -95,6 +102,12 @@ impl Firewall {
     pub fn validate(&self) -> Result<(), NeinError> {
         for table in &self.tables {
             validate::validate_identifier(&table.name)?;
+            for set in &table.sets {
+                set.validate()?;
+            }
+            for map in &table.maps {
+                map.validate()?;
+            }
             for chain in &table.chains {
                 validate::validate_identifier(&chain.name)?;
                 for entry in &chain.rules {

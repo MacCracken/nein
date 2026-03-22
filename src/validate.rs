@@ -141,6 +141,29 @@ pub fn validate_log_prefix(s: &str) -> Result<(), NeinError> {
     Ok(())
 }
 
+/// Validate a set/map element string.
+///
+/// Allows the characters needed for IP addresses, ports, CIDR notation, and
+/// interface names. Rejects dangerous injection characters.
+pub fn validate_nft_element(s: &str) -> Result<(), NeinError> {
+    if s.is_empty() {
+        return Err(NeinError::InvalidRule("element must not be empty".into()));
+    }
+    for c in DANGEROUS_CHARS {
+        if s.contains(*c) {
+            return Err(NeinError::InvalidRule(format!(
+                "element contains dangerous character: {c:?}"
+            )));
+        }
+    }
+    if s.contains('"') {
+        return Err(NeinError::InvalidRule(
+            "element must not contain double quotes".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

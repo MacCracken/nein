@@ -53,13 +53,37 @@ impl std::fmt::Display for Verdict {
     }
 }
 
+/// Rate limit time unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RateUnit {
+    Second,
+    Minute,
+    Hour,
+    Day,
+}
+
+impl std::fmt::Display for RateUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Second => write!(f, "second"),
+            Self::Minute => write!(f, "minute"),
+            Self::Hour => write!(f, "hour"),
+            Self::Day => write!(f, "day"),
+        }
+    }
+}
+
 /// A match expression in a rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Match {
-    /// Match source IP/CIDR.
+    /// Match source IPv4 address/CIDR (`ip saddr`).
     SourceAddr(String),
-    /// Match destination IP/CIDR.
+    /// Match destination IPv4 address/CIDR (`ip daddr`).
     DestAddr(String),
+    /// Match source IPv6 address/CIDR (`ip6 saddr`).
+    SourceAddr6(String),
+    /// Match destination IPv6 address/CIDR (`ip6 daddr`).
+    DestAddr6(String),
     /// Match protocol.
     Protocol(Protocol),
     /// Match destination port.
@@ -74,6 +98,21 @@ pub enum Match {
     Oif(String),
     /// Match connection state.
     CtState(Vec<String>),
+    /// Rate limit — match only if under the specified rate.
+    ///
+    /// Renders as `limit rate {rate}/{unit} burst {burst} packets`.
+    Limit {
+        rate: u32,
+        unit: RateUnit,
+        burst: u32,
+    },
+    /// Match against a named set (`@setname`).
+    ///
+    /// `field` is the selector (e.g., "ip saddr", "tcp dport").
+    /// `set_name` is the name of the set defined in the same table.
+    SetLookup { field: String, set_name: String },
+    /// Match connection tracking helper.
+    CtHelper(String),
     /// Raw nft expression (escape hatch).
     ///
     /// # Security
@@ -121,7 +160,10 @@ impl Rule {
     pub fn validate(&self) -> Result<(), NeinError> {
         for m in &self.matches {
             match m {
-                Match::SourceAddr(addr) | Match::DestAddr(addr) => {
+                Match::SourceAddr(addr)
+                | Match::DestAddr(addr)
+                | Match::SourceAddr6(addr)
+                | Match::DestAddr6(addr) => {
                     validate::validate_addr(addr)?;
                 }
                 Match::Iif(iface) | Match::Oif(iface) => {
@@ -131,6 +173,16 @@ impl Rule {
                     for s in states {
                         validate::validate_ct_state(s)?;
                     }
+                }
+                Match::CtHelper(helper) => {
+                    validate::validate_identifier(helper)?;
+                }
+                Match::SetLookup { field, set_name } => {
+                    validate::validate_nft_element(field)?;
+                    validate::validate_identifier(set_name)?;
+                }
+                Match::Limit { .. } => {
+                    // Typed values, no injection possible.
                 }
                 Match::Raw(_) => {
                     // Deliberately not validated — caller's responsibility.
@@ -171,6 +223,8 @@ impl Rule {
             parts.push(match m {
                 Match::SourceAddr(addr) => format!("ip saddr {addr}"),
                 Match::DestAddr(addr) => format!("ip daddr {addr}"),
+                Match::SourceAddr6(addr) => format!("ip6 saddr {addr}"),
+                Match::DestAddr6(addr) => format!("ip6 daddr {addr}"),
                 Match::Protocol(proto) => format!("{proto}"),
                 Match::DPort(port) => format!("dport {port}"),
                 Match::SPort(port) => format!("sport {port}"),
@@ -178,6 +232,11 @@ impl Rule {
                 Match::Iif(iface) => format!("iif \"{iface}\""),
                 Match::Oif(iface) => format!("oif \"{iface}\""),
                 Match::CtState(states) => format!("ct state {{ {} }}", states.join(", ")),
+                Match::Limit { rate, unit, burst } => {
+                    format!("limit rate {rate}/{unit} burst {burst} packets")
+                }
+                Match::SetLookup { field, set_name } => format!("{field} @{set_name}"),
+                Match::CtHelper(helper) => format!("ct helper \"{helper}\""),
                 Match::Raw(expr) => expr.clone(),
             });
         }
@@ -223,6 +282,31 @@ pub fn allow_service(source_cidr: &str, protocol: Protocol, port: u16) -> Rule {
         .matching(Match::SourceAddr(source_cidr.to_string()))
         .matching(Match::Protocol(protocol))
         .matching(Match::DPort(port))
+}
+
+/// Convenience: rate-limited accept on a TCP port.
+pub fn rate_limit_tcp(port: u16, rate: u32, unit: RateUnit) -> Rule {
+    Rule::new(Verdict::Accept)
+        .matching(Match::Protocol(Protocol::Tcp))
+        .matching(Match::DPort(port))
+        .matching(Match::Limit {
+            rate,
+            unit,
+            burst: rate,
+        })
+}
+
+/// Convenience: drop traffic from an IPv6 source.
+pub fn deny_source6(cidr: &str) -> Rule {
+    Rule::new(Verdict::Drop).matching(Match::SourceAddr6(cidr.to_string()))
+}
+
+/// Convenience: match against a named set.
+pub fn match_set(field: &str, set_name: &str) -> Match {
+    Match::SetLookup {
+        field: field.to_string(),
+        set_name: set_name.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -476,6 +560,111 @@ mod tests {
         let good = Rule::new(Verdict::Drop).matching(Match::DestAddr("10.0.0.0/8".into()));
         assert!(good.validate().is_ok());
         let bad = Rule::new(Verdict::Drop).matching(Match::DestAddr("evil;addr".into()));
+        assert!(bad.validate().is_err());
+    }
+
+    // -- IPv6 tests --
+
+    #[test]
+    fn render_source_addr6() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::SourceAddr6("fe80::/10".into()));
+        assert_eq!(rule.render(), "ip6 saddr fe80::/10 accept");
+    }
+
+    #[test]
+    fn render_dest_addr6() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::DestAddr6("::1".into()));
+        assert_eq!(rule.render(), "ip6 daddr ::1 drop");
+    }
+
+    #[test]
+    fn validate_addr6() {
+        let good = Rule::new(Verdict::Accept).matching(Match::SourceAddr6("fe80::/10".into()));
+        assert!(good.validate().is_ok());
+        let bad = Rule::new(Verdict::Accept).matching(Match::SourceAddr6("evil;addr".into()));
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn render_deny_source6() {
+        let rule = deny_source6("2001:db8::/32");
+        assert_eq!(rule.render(), "ip6 saddr 2001:db8::/32 drop");
+    }
+
+    // -- Rate limiting tests --
+
+    #[test]
+    fn render_limit() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::Limit {
+            rate: 10,
+            unit: RateUnit::Second,
+            burst: 20,
+        });
+        assert_eq!(
+            rule.render(),
+            "limit rate 10/second burst 20 packets accept"
+        );
+    }
+
+    #[test]
+    fn render_rate_limit_tcp() {
+        let rule = rate_limit_tcp(22, 3, RateUnit::Minute);
+        let rendered = rule.render();
+        assert!(rendered.contains("tcp dport 22"));
+        assert!(rendered.contains("limit rate 3/minute burst 3 packets"));
+        assert!(rendered.contains("accept"));
+    }
+
+    #[test]
+    fn rate_unit_display() {
+        assert_eq!(RateUnit::Second.to_string(), "second");
+        assert_eq!(RateUnit::Minute.to_string(), "minute");
+        assert_eq!(RateUnit::Hour.to_string(), "hour");
+        assert_eq!(RateUnit::Day.to_string(), "day");
+    }
+
+    #[test]
+    fn validate_limit() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::Limit {
+            rate: 100,
+            unit: RateUnit::Hour,
+            burst: 10,
+        });
+        assert!(rule.validate().is_ok());
+    }
+
+    // -- Set lookup tests --
+
+    #[test]
+    fn render_set_lookup() {
+        let rule = Rule::new(Verdict::Drop).matching(match_set("ip saddr", "blocklist"));
+        assert_eq!(rule.render(), "ip saddr @blocklist drop");
+    }
+
+    #[test]
+    fn validate_set_lookup() {
+        let good = Rule::new(Verdict::Accept).matching(match_set("tcp dport", "allowed_ports"));
+        assert!(good.validate().is_ok());
+        let bad = Rule::new(Verdict::Accept).matching(Match::SetLookup {
+            field: "ip saddr".into(),
+            set_name: "bad;set".into(),
+        });
+        assert!(bad.validate().is_err());
+    }
+
+    // -- CT helper tests --
+
+    #[test]
+    fn render_ct_helper() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::CtHelper("ftp".into()));
+        assert_eq!(rule.render(), "ct helper \"ftp\" accept");
+    }
+
+    #[test]
+    fn validate_ct_helper() {
+        let good = Rule::new(Verdict::Accept).matching(Match::CtHelper("ftp".into()));
+        assert!(good.validate().is_ok());
+        let bad = Rule::new(Verdict::Accept).matching(Match::CtHelper("bad;helper".into()));
         assert!(bad.validate().is_err());
     }
 }
