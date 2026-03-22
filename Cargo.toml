@@ -45,6 +45,7 @@ tokio = { version = "1", features = ["macros", "rt", "test-util"] }
 [[bench]]
 name = "benchmarks"
 harness = false
+required-features = ["full"]
 
 [[example]]
 name = "host_firewall"
