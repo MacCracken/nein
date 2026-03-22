@@ -117,6 +117,7 @@ impl Firewall {
     /// Called automatically by [`apply`] before executing. You can also call
     /// it manually to check a ruleset without applying.
     pub fn validate(&self) -> Result<(), NeinError> {
+        tracing::debug!(tables = self.tables.len(), "validating firewall");
         for table in &self.tables {
             validate::validate_identifier(&table.name)?;
             for set in &table.sets {
@@ -132,6 +133,7 @@ impl Firewall {
                 }
             }
         }
+        tracing::debug!("firewall validation passed");
         Ok(())
     }
 
@@ -144,9 +146,14 @@ impl Firewall {
         self.validate()?;
         let ruleset = self.render();
         if self.dry_run {
-            tracing::info!("dry-run: would apply {} bytes of nft rules", ruleset.len());
+            tracing::info!(bytes = ruleset.len(), "dry-run: skipping apply");
             return Ok(());
         }
+        tracing::info!(
+            tables = self.tables.len(),
+            bytes = ruleset.len(),
+            "applying firewall"
+        );
         apply::apply_ruleset(&ruleset).await
     }
 

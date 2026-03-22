@@ -207,12 +207,25 @@ impl PolicyEngine {
 
     /// Add or update an agent's policy. Returns the previous policy if updating.
     pub fn add_agent(&mut self, policy: AgentPolicy) -> Option<AgentPolicy> {
-        self.agents.insert(policy.agent_id.clone(), policy)
+        let id = policy.agent_id.clone();
+        let prev = self.agents.insert(id.clone(), policy);
+        if prev.is_some() {
+            tracing::info!(agent_id = %id, "updated agent policy");
+        } else {
+            tracing::info!(agent_id = %id, "added agent policy");
+        }
+        prev
     }
 
     /// Remove an agent's policy. Returns the removed policy.
     pub fn remove_agent(&mut self, agent_id: &str) -> Option<AgentPolicy> {
-        self.agents.remove(agent_id)
+        let removed = self.agents.remove(agent_id);
+        if removed.is_some() {
+            tracing::info!(agent_id, "removed agent policy");
+        } else {
+            tracing::debug!(agent_id, "agent not found for removal");
+        }
+        removed
     }
 
     /// Get an agent's current policy.

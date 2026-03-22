@@ -8,21 +8,27 @@ use crate::error::NeinError;
 
 /// Apply a ruleset string via `nft -f -`.
 pub async fn apply_ruleset(ruleset: &str) -> Result<(), NeinError> {
-    run_nft_stdin(ruleset).await
+    tracing::debug!(bytes = ruleset.len(), "applying ruleset");
+    run_nft_stdin(ruleset).await.inspect(|_| {
+        tracing::info!(bytes = ruleset.len(), "ruleset applied");
+    })
 }
 
 /// Flush all nftables rules.
 pub async fn flush_ruleset() -> Result<(), NeinError> {
+    tracing::info!("flushing all rules");
     run_nft_stdin("flush ruleset\n").await
 }
 
 /// Flush a specific table.
 pub async fn flush_table(family: &str, table: &str) -> Result<(), NeinError> {
+    tracing::info!(family, table, "flushing table");
     run_nft_stdin(&format!("flush table {family} {table}\n")).await
 }
 
 /// Delete a specific table.
 pub async fn delete_table(family: &str, table: &str) -> Result<(), NeinError> {
+    tracing::info!(family, table, "deleting table");
     run_nft_stdin(&format!("delete table {family} {table}\n")).await
 }
 
@@ -31,6 +37,7 @@ pub async fn delete_table(family: &str, table: &str) -> Result<(), NeinError> {
 /// The rule string should be the nftables rule body (matches + verdict),
 /// without the leading `add rule` prefix.
 pub async fn add_rule(family: &str, table: &str, chain: &str, rule: &str) -> Result<(), NeinError> {
+    tracing::debug!(family, table, chain, rule, "adding rule");
     run_nft_stdin(&format!("add rule {family} {table} {chain} {rule}\n")).await
 }
 
@@ -43,6 +50,7 @@ pub async fn delete_rule(
     chain: &str,
     handle: u64,
 ) -> Result<(), NeinError> {
+    tracing::debug!(family, table, chain, handle, "deleting rule");
     run_nft_stdin(&format!(
         "delete rule {family} {table} {chain} handle {handle}\n"
     ))
@@ -51,6 +59,7 @@ pub async fn delete_rule(
 
 /// List current ruleset (for inspection).
 pub async fn list_ruleset() -> Result<String, NeinError> {
+    tracing::debug!("listing ruleset");
     run_nft_cmd(&["list", "ruleset"]).await
 }
 
@@ -58,6 +67,7 @@ pub async fn list_ruleset() -> Result<String, NeinError> {
 ///
 /// Each rule line will include `# handle N` at the end.
 pub async fn list_ruleset_with_handles() -> Result<String, NeinError> {
+    tracing::debug!("listing ruleset with handles");
     run_nft_cmd(&["-a", "list", "ruleset"]).await
 }
 
@@ -80,8 +90,11 @@ pub async fn find_rules_by_comment(
     table: &str,
     comment_prefix: &str,
 ) -> Result<Vec<RuleHandle>, NeinError> {
+    tracing::debug!(family, table, comment_prefix, "finding rules by comment");
     let raw = run_nft_cmd(&["-a", "list", "table", family, table]).await?;
-    Ok(parse_rules_with_handles(&raw, comment_prefix))
+    let handles = parse_rules_with_handles(&raw, comment_prefix);
+    tracing::debug!(count = handles.len(), comment_prefix, "found rules");
+    Ok(handles)
 }
 
 /// Parse `nft -a` output, extracting rules matching a comment prefix.
@@ -158,6 +171,7 @@ async fn run_nft_stdin(input: &str) -> Result<(), NeinError> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::warn!(stderr = %stderr, "nft command failed");
         return Err(NeinError::NftFailed(stderr.to_string()));
     }
 
@@ -176,6 +190,7 @@ async fn run_nft_cmd(args: &[&str]) -> Result<String, NeinError> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::warn!(stderr = %stderr, ?args, "nft command failed");
         return Err(NeinError::NftFailed(stderr.to_string()));
     }
 
@@ -184,8 +199,10 @@ async fn run_nft_cmd(args: &[&str]) -> Result<String, NeinError> {
 
 fn map_spawn_error(e: std::io::Error) -> NeinError {
     if e.kind() == std::io::ErrorKind::PermissionDenied {
+        tracing::error!("nft permission denied — requires root or CAP_NET_ADMIN");
         NeinError::PermissionDenied
     } else {
+        tracing::error!(error = %e, "failed to spawn nft");
         NeinError::NftFailed(e.to_string())
     }
 }
