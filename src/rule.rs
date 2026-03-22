@@ -1,5 +1,7 @@
 //! nftables rules — match expressions and verdicts.
 
+use crate::error::NeinError;
+use crate::validate;
 use serde::{Deserialize, Serialize};
 
 /// A firewall rule verdict.
@@ -57,6 +59,12 @@ pub enum Match {
     /// Match connection state.
     CtState(Vec<String>),
     /// Raw nft expression (escape hatch).
+    ///
+    /// # Security
+    ///
+    /// This variant is **not validated** — the string is emitted verbatim into
+    /// the rendered nftables ruleset. Only use with trusted, hard-coded values.
+    /// Never pass user-controlled input through `Raw` without prior sanitization.
     Raw(String),
 }
 
@@ -89,6 +97,49 @@ impl Rule {
     pub fn comment(mut self, c: &str) -> Self {
         self.comment = Some(c.to_string());
         self
+    }
+
+    /// Validate all string fields in this rule for dangerous input.
+    ///
+    /// `Raw` matches are skipped — they are the caller's responsibility.
+    pub fn validate(&self) -> Result<(), NeinError> {
+        for m in &self.matches {
+            match m {
+                Match::SourceAddr(addr) | Match::DestAddr(addr) => {
+                    validate::validate_addr(addr)?;
+                }
+                Match::Iif(iface) | Match::Oif(iface) => {
+                    validate::validate_iface(iface)?;
+                }
+                Match::CtState(states) => {
+                    for s in states {
+                        validate::validate_ct_state(s)?;
+                    }
+                }
+                Match::Raw(_) => {
+                    // Deliberately not validated — caller's responsibility.
+                }
+                Match::Protocol(_) | Match::DPort(_) | Match::SPort(_) | Match::DPortRange(..) => {
+                    // Typed values, no string injection possible.
+                }
+            }
+        }
+
+        match &self.verdict {
+            Verdict::Jump(chain) | Verdict::GoTo(chain) => {
+                validate::validate_identifier(chain)?;
+            }
+            Verdict::Log(Some(prefix)) => {
+                validate::validate_log_prefix(prefix)?;
+            }
+            _ => {}
+        }
+
+        if let Some(comment) = &self.comment {
+            validate::validate_comment(comment)?;
+        }
+
+        Ok(())
     }
 
     /// Render this rule as nftables syntax.
@@ -155,8 +206,7 @@ pub fn allow_established() -> Rule {
 
 /// Convenience: drop from source CIDR.
 pub fn deny_source(cidr: &str) -> Rule {
-    Rule::new(Verdict::Drop)
-        .matching(Match::SourceAddr(cidr.to_string()))
+    Rule::new(Verdict::Drop).matching(Match::SourceAddr(cidr.to_string()))
 }
 
 /// Convenience: allow specific source to specific port (service policy).
@@ -192,7 +242,10 @@ mod tests {
     #[test]
     fn render_service_policy() {
         let rule = allow_service("192.168.1.0/24", Protocol::Tcp, 8090);
-        assert_eq!(rule.render(), "ip saddr 192.168.1.0/24 tcp dport 8090 accept");
+        assert_eq!(
+            rule.render(),
+            "ip saddr 192.168.1.0/24 tcp dport 8090 accept"
+        );
     }
 
     #[test]
@@ -213,5 +266,42 @@ mod tests {
         let rule = Rule::new(Verdict::Log(Some("NEIN_DROP: ".into())))
             .matching(Match::Protocol(Protocol::Tcp));
         assert_eq!(rule.render(), "tcp log prefix \"NEIN_DROP: \"");
+    }
+
+    #[test]
+    fn validate_good_rule() {
+        let rule = allow_service("10.0.0.0/8", Protocol::Tcp, 80);
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_bad_addr() {
+        let rule = deny_source("10.0.0.1; flush ruleset");
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_bad_iface() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::Iif("eth0; drop".to_string()));
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_bad_comment() {
+        let rule = allow_tcp(22).comment("has \"quotes\"");
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_bad_jump_target() {
+        let rule = Rule::new(Verdict::Jump("evil;chain".to_string()));
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_raw_skipped() {
+        let rule =
+            Rule::new(Verdict::Accept).matching(Match::Raw("anything goes here;{}".to_string()));
+        assert!(rule.validate().is_ok());
     }
 }

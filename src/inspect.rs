@@ -1,10 +1,9 @@
 //! Inspect current firewall state.
 
 use crate::error::NeinError;
-use serde::{Deserialize, Serialize};
 
 /// Summary of current firewall state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FirewallStatus {
     pub tables: Vec<String>,
     pub total_rules: usize,
@@ -21,14 +20,17 @@ pub async fn status() -> Result<FirewallStatus, NeinError> {
         .map(|l| l.trim_end_matches(" {").to_string())
         .collect();
 
-    let total_rules = raw.lines().filter(|l| {
-        let trimmed = l.trim();
-        !trimmed.is_empty()
-            && !trimmed.starts_with("table ")
-            && !trimmed.starts_with("chain ")
-            && !trimmed.starts_with("type ")
-            && trimmed != "}"
-    }).count();
+    let total_rules = raw
+        .lines()
+        .filter(|l| {
+            let trimmed = l.trim();
+            !trimmed.is_empty()
+                && !trimmed.starts_with("table ")
+                && !trimmed.starts_with("chain ")
+                && !trimmed.starts_with("type ")
+                && trimmed != "}"
+        })
+        .count();
 
     Ok(FirewallStatus {
         tables,

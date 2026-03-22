@@ -74,7 +74,13 @@ pub struct Chain {
 
 impl Chain {
     /// Create a base chain (attached to a hook).
-    pub fn base(name: &str, chain_type: ChainType, hook: Hook, priority: i32, policy: Policy) -> Self {
+    pub fn base(
+        name: &str,
+        chain_type: ChainType,
+        hook: Hook,
+        priority: i32,
+        policy: Policy,
+    ) -> Self {
         Self {
             name: name.to_string(),
             chain_type: Some(chain_type),
@@ -108,7 +114,10 @@ impl Chain {
         if let (Some(ct), Some(hook), Some(prio), Some(pol)) =
             (&self.chain_type, &self.hook, &self.priority, &self.policy)
         {
-            out.push_str(&format!("    type {} hook {} priority {}; policy {};\n", ct, hook, prio, pol));
+            out.push_str(&format!(
+                "    type {} hook {} priority {}; policy {};\n",
+                ct, hook, prio, pol
+            ));
         }
         for rule in &self.rules {
             out.push_str(&format!("    {}\n", rule.render()));

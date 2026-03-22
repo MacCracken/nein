@@ -23,12 +23,15 @@ pub async fn apply_ruleset(ruleset: &str) -> Result<(), NeinError> {
     // Write the ruleset to nft's stdin
     if let Some(mut stdin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
-        stdin.write_all(ruleset.as_bytes()).await
+        stdin
+            .write_all(ruleset.as_bytes())
+            .await
             .map_err(|e| NeinError::NftFailed(format!("failed to write to nft stdin: {e}")))?;
         // Drop stdin to close the pipe so nft reads EOF
     }
 
-    let output = child.wait_with_output()
+    let output = child
+        .wait_with_output()
         .await
         .map_err(|e| NeinError::NftFailed(e.to_string()))?;
 

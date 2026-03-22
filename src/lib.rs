@@ -11,13 +11,24 @@
 //! - **aegis** — host firewall rules
 //! - **sutra** — fleet-wide firewall playbooks
 
+pub mod chain;
 pub mod rule;
 pub mod table;
-pub mod chain;
+pub mod validate;
+
+#[cfg(feature = "nat")]
 pub mod nat;
+
+#[cfg(feature = "policy")]
 pub mod policy;
+
+#[cfg(feature = "apply")]
 pub mod apply;
+
+#[cfg(feature = "inspect")]
 pub mod inspect;
+
+#[cfg(feature = "builder")]
 pub mod builder;
 
 mod error;
@@ -59,8 +70,30 @@ impl Firewall {
         output
     }
 
+    /// Validate all tables, chains, and rules for dangerous input.
+    ///
+    /// Called automatically by [`apply`] before executing. You can also call
+    /// it manually to check a ruleset without applying.
+    pub fn validate(&self) -> Result<(), NeinError> {
+        for table in &self.tables {
+            validate::validate_identifier(&table.name)?;
+            for chain in &table.chains {
+                validate::validate_identifier(&chain.name)?;
+                for rule in &chain.rules {
+                    rule.validate()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Apply the ruleset via `nft -f`.
+    ///
+    /// Validates all rule inputs before applying. In dry-run mode, logs the
+    /// ruleset size but does not execute.
+    #[cfg(feature = "apply")]
     pub async fn apply(&self) -> Result<(), NeinError> {
+        self.validate()?;
         let ruleset = self.render();
         if self.dry_run {
             tracing::info!("dry-run: would apply {} bytes of nft rules", ruleset.len());
@@ -69,7 +102,12 @@ impl Firewall {
         apply::apply_ruleset(&ruleset).await
     }
 
-    /// Flush all rules (reset to empty).
+    /// Flush all nftables rules (reset to empty).
+    ///
+    /// **Warning:** this flushes the *entire* nftables ruleset on the host,
+    /// not just tables managed by this `Firewall` instance. Use with caution
+    /// on systems with rules managed by other tools.
+    #[cfg(feature = "apply")]
     pub async fn flush(&self) -> Result<(), NeinError> {
         if self.dry_run {
             tracing::info!("dry-run: would flush all rules");
@@ -106,5 +144,18 @@ mod tests {
     fn render_empty() {
         let fw = Firewall::new();
         assert_eq!(fw.render(), "");
+    }
+
+    #[test]
+    fn validate_empty() {
+        let fw = Firewall::new();
+        assert!(fw.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_bad_table_name() {
+        let mut fw = Firewall::new();
+        fw.add_table(table::Table::new("evil;drop", table::Family::Inet));
+        assert!(fw.validate().is_err());
     }
 }

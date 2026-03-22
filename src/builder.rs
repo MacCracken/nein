@@ -1,10 +1,10 @@
 //! Fluent builder for common firewall configurations.
 
+use crate::Firewall;
 use crate::chain::{Chain, ChainType, Hook, Policy};
 use crate::nat;
 use crate::rule::{self, Match, Protocol, Rule, Verdict};
 use crate::table::{Family, Table};
-use crate::Firewall;
 
 /// Build a basic host firewall (allow established, SSH, drop rest).
 pub fn basic_host_firewall() -> Firewall {
@@ -29,7 +29,6 @@ pub fn basic_host_firewall() -> Firewall {
 pub fn container_bridge(bridge_name: &str, subnet: &str, outbound_iface: &str) -> Firewall {
     let mut fw = Firewall::new();
 
-    // Filter table — allow forwarding through bridge
     let mut filter = Table::new("filter", Family::Inet);
     let mut forward = Chain::base("forward", ChainType::Filter, Hook::Forward, 0, Policy::Drop);
 
@@ -38,23 +37,27 @@ pub fn container_bridge(bridge_name: &str, subnet: &str, outbound_iface: &str) -
         Rule::new(Verdict::Accept)
             .matching(Match::Iif(bridge_name.to_string()))
             .matching(Match::Oif(outbound_iface.to_string()))
-            .comment("container → internet"),
+            .comment("container to internet"),
     );
     forward.add_rule(
         Rule::new(Verdict::Accept)
             .matching(Match::Iif(bridge_name.to_string()))
             .matching(Match::Oif(bridge_name.to_string()))
-            .comment("container → container"),
+            .comment("container to container"),
     );
 
     filter.add_chain(forward);
     fw.add_table(filter);
 
-    // NAT table — masquerade outbound
     let mut nat_table = Table::new("nat", Family::Ip);
-    let mut postrouting = Chain::base("postrouting", ChainType::Nat, Hook::Postrouting, 100, Policy::Accept);
+    let mut postrouting = Chain::base(
+        "postrouting",
+        ChainType::Nat,
+        Hook::Postrouting,
+        100,
+        Policy::Accept,
+    );
 
-    // Render masquerade as raw rule
     let masq = nat::container_masquerade(subnet, outbound_iface);
     postrouting.add_rule(Rule::new(Verdict::Accept).matching(Match::Raw(masq.render())));
 
@@ -65,11 +68,7 @@ pub fn container_bridge(bridge_name: &str, subnet: &str, outbound_iface: &str) -
 }
 
 /// Build agent-to-agent service policy rules.
-pub fn service_policy(
-    agent_source: &str,
-    _agent_dest: &str,
-    ports: &[(Protocol, u16)],
-) -> Firewall {
+pub fn service_policy(agent_source: &str, ports: &[(Protocol, u16)]) -> Firewall {
     let mut fw = Firewall::new();
     let mut table = Table::new("agnos_policy", Family::Inet);
     let mut chain = Chain::regular("agent_access");
@@ -103,13 +102,13 @@ mod tests {
         let rendered = fw.render();
         assert!(rendered.contains("table inet filter"));
         assert!(rendered.contains("table ip nat"));
-        assert!(rendered.contains("container → internet"));
+        assert!(rendered.contains("container to internet"));
         assert!(rendered.contains("masquerade"));
     }
 
     #[test]
     fn service_policy_renders() {
-        let fw = service_policy("10.0.0.1", "10.0.0.2", &[(Protocol::Tcp, 8090)]);
+        let fw = service_policy("10.0.0.1", &[(Protocol::Tcp, 8090)]);
         let rendered = fw.render();
         assert!(rendered.contains("ip saddr 10.0.0.1"));
         assert!(rendered.contains("dport 8090"));

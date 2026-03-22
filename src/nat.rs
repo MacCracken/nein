@@ -1,5 +1,7 @@
 //! NAT rules — SNAT, DNAT, masquerade for container networking.
 
+use crate::error::NeinError;
+use crate::validate;
 use serde::{Deserialize, Serialize};
 
 /// A NAT rule.
@@ -35,24 +37,84 @@ pub enum NatRule {
 }
 
 impl NatRule {
+    /// Validate all string fields for dangerous input.
+    pub fn validate(&self) -> Result<(), NeinError> {
+        match self {
+            Self::Dnat {
+                to_addr, comment, ..
+            } => {
+                validate::validate_addr(to_addr)?;
+                if let Some(c) = comment {
+                    validate::validate_comment(c)?;
+                }
+            }
+            Self::Snat {
+                source_cidr,
+                to_addr,
+                comment,
+                ..
+            } => {
+                validate::validate_addr(source_cidr)?;
+                validate::validate_addr(to_addr)?;
+                if let Some(c) = comment {
+                    validate::validate_comment(c)?;
+                }
+            }
+            Self::Masquerade {
+                source_cidr,
+                oif,
+                comment,
+                ..
+            } => {
+                validate::validate_addr(source_cidr)?;
+                if let Some(iface) = oif {
+                    validate::validate_iface(iface)?;
+                }
+                if let Some(c) = comment {
+                    validate::validate_comment(c)?;
+                }
+            }
+            Self::Redirect { comment, .. } => {
+                if let Some(c) = comment {
+                    validate::validate_comment(c)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Render as nftables syntax.
     pub fn render(&self) -> String {
         match self {
-            Self::Dnat { protocol, dest_port, to_addr, to_port, comment } => {
+            Self::Dnat {
+                protocol,
+                dest_port,
+                to_addr,
+                to_port,
+                comment,
+            } => {
                 let mut r = format!("{protocol} dport {dest_port} dnat to {to_addr}:{to_port}");
                 if let Some(c) = comment {
                     r.push_str(&format!(" comment \"{c}\""));
                 }
                 r
             }
-            Self::Snat { source_cidr, to_addr, comment } => {
+            Self::Snat {
+                source_cidr,
+                to_addr,
+                comment,
+            } => {
                 let mut r = format!("ip saddr {source_cidr} snat to {to_addr}");
                 if let Some(c) = comment {
                     r.push_str(&format!(" comment \"{c}\""));
                 }
                 r
             }
-            Self::Masquerade { source_cidr, oif, comment } => {
+            Self::Masquerade {
+                source_cidr,
+                oif,
+                comment,
+            } => {
                 let mut r = format!("ip saddr {source_cidr}");
                 if let Some(iface) = oif {
                     r.push_str(&format!(" oif \"{iface}\""));
@@ -63,7 +125,12 @@ impl NatRule {
                 }
                 r
             }
-            Self::Redirect { protocol, dest_port, to_port, comment } => {
+            Self::Redirect {
+                protocol,
+                dest_port,
+                to_port,
+                comment,
+            } => {
                 let mut r = format!("{protocol} dport {dest_port} redirect to :{to_port}");
                 if let Some(c) = comment {
                     r.push_str(&format!(" comment \"{c}\""));
@@ -125,5 +192,31 @@ mod tests {
             comment: None,
         };
         assert_eq!(rule.render(), "tcp dport 80 redirect to :8080");
+    }
+
+    #[test]
+    fn validate_good_dnat() {
+        let rule = port_forward(8080, "172.17.0.2", 80);
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_bad_addr() {
+        let rule = NatRule::Snat {
+            source_cidr: "10.0.0.0/8; drop".to_string(),
+            to_addr: "1.2.3.4".to_string(),
+            comment: None,
+        };
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_bad_iface() {
+        let rule = NatRule::Masquerade {
+            source_cidr: "10.0.0.0/8".to_string(),
+            oif: Some("eth0; drop".to_string()),
+            comment: None,
+        };
+        assert!(rule.validate().is_err());
     }
 }

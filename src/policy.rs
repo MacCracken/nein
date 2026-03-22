@@ -56,7 +56,10 @@ impl NetworkPolicy {
                     rule = rule.matching(Match::SourceAddr(ingress.peer.clone()));
                 }
 
-                rule = rule.comment(&format!("policy:{} ingress from {}", self.name, ingress.peer));
+                rule = rule.comment(&format!(
+                    "policy:{} ingress from {}",
+                    self.name, ingress.peer
+                ));
                 rules.push(rule);
             }
         }
@@ -82,7 +85,13 @@ impl NetworkPolicy {
 }
 
 /// Convenience: allow agent A to talk to agent B on a port.
-pub fn agent_to_agent(name: &str, source: &str, dest: &str, protocol: Protocol, port: u16) -> NetworkPolicy {
+pub fn agent_to_agent(
+    name: &str,
+    source: &str,
+    dest: &str,
+    protocol: Protocol,
+    port: u16,
+) -> NetworkPolicy {
     NetworkPolicy {
         name: name.to_string(),
         target: dest.to_string(),
@@ -123,8 +132,14 @@ mod tests {
             ingress: vec![PolicyRule {
                 peer: "any".to_string(),
                 ports: vec![
-                    PolicyPort { protocol: Protocol::Tcp, port: 80 },
-                    PolicyPort { protocol: Protocol::Tcp, port: 443 },
+                    PolicyPort {
+                        protocol: Protocol::Tcp,
+                        port: 80,
+                    },
+                    PolicyPort {
+                        protocol: Protocol::Tcp,
+                        port: 443,
+                    },
                 ],
             }],
             egress: vec![],
