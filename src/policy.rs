@@ -159,6 +159,50 @@ mod tests {
     }
 
     #[test]
+    fn egress_rules() {
+        let policy = NetworkPolicy {
+            name: "egress-test".to_string(),
+            target: "10.0.0.1".to_string(),
+            ingress: vec![],
+            egress: vec![PolicyRule {
+                peer: "10.0.0.2".to_string(),
+                ports: vec![PolicyPort {
+                    protocol: Protocol::Tcp,
+                    port: 443,
+                }],
+            }],
+            default_action: PolicyAction::Deny,
+        };
+        let rules = policy.to_rules();
+        assert_eq!(rules.len(), 1);
+        let rendered = rules[0].render();
+        assert!(rendered.contains("ip daddr 10.0.0.2"));
+        assert!(rendered.contains("dport 443"));
+        assert!(rendered.contains("egress to 10.0.0.2"));
+    }
+
+    #[test]
+    fn egress_any_dest() {
+        let policy = NetworkPolicy {
+            name: "egress-any".to_string(),
+            target: "10.0.0.1".to_string(),
+            ingress: vec![],
+            egress: vec![PolicyRule {
+                peer: "any".to_string(),
+                ports: vec![PolicyPort {
+                    protocol: Protocol::Tcp,
+                    port: 80,
+                }],
+            }],
+            default_action: PolicyAction::Allow,
+        };
+        let rules = policy.to_rules();
+        assert_eq!(rules.len(), 1);
+        // "any" dest should not add ip daddr match
+        assert!(!rules[0].render().contains("daddr"));
+    }
+
+    #[test]
     fn policy_any_source() {
         let policy = NetworkPolicy {
             name: "public-web".to_string(),

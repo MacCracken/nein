@@ -277,6 +277,82 @@ mod tests {
     }
 
     #[test]
+    fn render_reject() {
+        let rule = Rule::new(Verdict::Reject);
+        assert_eq!(rule.render(), "reject");
+    }
+
+    #[test]
+    fn render_goto() {
+        let rule = Rule::new(Verdict::GoTo("other_chain".into()));
+        assert_eq!(rule.render(), "goto other_chain");
+    }
+
+    #[test]
+    fn render_return() {
+        let rule = Rule::new(Verdict::Return);
+        assert_eq!(rule.render(), "return");
+    }
+
+    #[test]
+    fn render_counter() {
+        let rule = Rule::new(Verdict::Counter)
+            .matching(Match::Protocol(Protocol::Tcp))
+            .matching(Match::DPort(80));
+        assert_eq!(rule.render(), "tcp dport 80 counter");
+    }
+
+    #[test]
+    fn render_log_no_prefix() {
+        let rule = Rule::new(Verdict::Log(None));
+        assert_eq!(rule.render(), "log");
+    }
+
+    #[test]
+    fn render_sport() {
+        let rule = Rule::new(Verdict::Accept)
+            .matching(Match::Protocol(Protocol::Tcp))
+            .matching(Match::SPort(1024));
+        assert_eq!(rule.render(), "tcp sport 1024 accept");
+    }
+
+    #[test]
+    fn render_dport_range() {
+        let rule = Rule::new(Verdict::Accept)
+            .matching(Match::Protocol(Protocol::Tcp))
+            .matching(Match::DPortRange(8000, 9000));
+        assert_eq!(rule.render(), "tcp dport 8000-9000 accept");
+    }
+
+    #[test]
+    fn render_dest_addr() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::DestAddr("10.0.0.1".into()));
+        assert_eq!(rule.render(), "ip daddr 10.0.0.1 drop");
+    }
+
+    #[test]
+    fn protocol_display() {
+        assert_eq!(Protocol::Icmp.to_string(), "icmp");
+        assert_eq!(Protocol::Icmpv6.to_string(), "icmpv6");
+    }
+
+    #[test]
+    fn validate_goto_target() {
+        let rule = Rule::new(Verdict::GoTo("valid_chain".into()));
+        assert!(rule.validate().is_ok());
+        let rule = Rule::new(Verdict::GoTo("bad;chain".into()));
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_log_prefix() {
+        let rule = Rule::new(Verdict::Log(Some("GOOD: ".into())));
+        assert!(rule.validate().is_ok());
+        let rule = Rule::new(Verdict::Log(Some("bad;prefix".into())));
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
     fn validate_good_rule() {
         let rule = allow_service("10.0.0.0/8", Protocol::Tcp, 80);
         assert!(rule.validate().is_ok());

@@ -166,4 +166,28 @@ mod tests {
         fw.add_table(table::Table::new("evil;drop", table::Family::Inet));
         assert!(fw.validate().is_err());
     }
+
+    #[test]
+    fn firewall_default_impl() {
+        let fw = Firewall::default();
+        assert!(fw.tables.is_empty());
+    }
+
+    #[test]
+    fn firewall_tables_accessor() {
+        let mut fw = Firewall::new();
+        assert!(fw.tables().is_empty());
+        fw.add_table(table::Table::new("test", table::Family::Inet));
+        assert_eq!(fw.tables().len(), 1);
+        assert_eq!(fw.tables()[0].name, "test");
+    }
+
+    #[test]
+    fn validate_rejects_bad_chain_name() {
+        let mut fw = Firewall::new();
+        let mut table = table::Table::new("good", table::Family::Inet);
+        table.add_chain(chain::Chain::regular("bad;chain"));
+        fw.add_table(table);
+        assert!(fw.validate().is_err());
+    }
 }

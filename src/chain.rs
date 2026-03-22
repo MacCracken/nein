@@ -195,4 +195,67 @@ mod tests {
         assert!(rendered.contains("chain my_chain"));
         assert!(!rendered.contains("type"));
     }
+
+    #[test]
+    fn chain_type_display() {
+        assert_eq!(ChainType::Filter.to_string(), "filter");
+        assert_eq!(ChainType::Nat.to_string(), "nat");
+        assert_eq!(ChainType::Route.to_string(), "route");
+    }
+
+    #[test]
+    fn hook_display() {
+        assert_eq!(Hook::Prerouting.to_string(), "prerouting");
+        assert_eq!(Hook::Input.to_string(), "input");
+        assert_eq!(Hook::Forward.to_string(), "forward");
+        assert_eq!(Hook::Output.to_string(), "output");
+        assert_eq!(Hook::Postrouting.to_string(), "postrouting");
+        assert_eq!(Hook::Ingress.to_string(), "ingress");
+    }
+
+    #[test]
+    fn policy_display() {
+        assert_eq!(Policy::Accept.to_string(), "accept");
+        assert_eq!(Policy::Drop.to_string(), "drop");
+    }
+
+    #[test]
+    fn chain_rule_validate_dispatches() {
+        use crate::rule::{Match, Rule, Verdict};
+        let good = ChainRule::Rule(Rule::new(Verdict::Accept));
+        assert!(good.validate().is_ok());
+
+        let bad = ChainRule::Rule(
+            Rule::new(Verdict::Accept).matching(Match::SourceAddr("evil;addr".into())),
+        );
+        assert!(bad.validate().is_err());
+    }
+
+    #[cfg(feature = "nat")]
+    #[test]
+    fn chain_rule_nat_render() {
+        let nat_rule = crate::nat::NatRule::Redirect {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port: 80,
+            to_port: 8080,
+            comment: None,
+        };
+        let cr = ChainRule::Nat(nat_rule);
+        assert_eq!(cr.render(), "tcp dport 80 redirect to :8080");
+    }
+
+    #[cfg(feature = "nat")]
+    #[test]
+    fn chain_add_nat_rule() {
+        let mut chain = Chain::regular("nat_chain");
+        chain.add_nat_rule(crate::nat::NatRule::Redirect {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port: 80,
+            to_port: 8080,
+            comment: None,
+        });
+        assert_eq!(chain.rules.len(), 1);
+        let rendered = chain.render();
+        assert!(rendered.contains("redirect to :8080"));
+    }
 }

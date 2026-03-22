@@ -76,6 +76,10 @@ mod tests {
     #[test]
     fn family_display() {
         assert_eq!(Family::Inet.to_string(), "inet");
+        assert_eq!(Family::Ip.to_string(), "ip");
+        assert_eq!(Family::Ip6.to_string(), "ip6");
+        assert_eq!(Family::Arp.to_string(), "arp");
         assert_eq!(Family::Bridge.to_string(), "bridge");
+        assert_eq!(Family::Netdev.to_string(), "netdev");
     }
 }

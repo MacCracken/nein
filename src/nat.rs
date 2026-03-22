@@ -219,4 +219,133 @@ mod tests {
         };
         assert!(rule.validate().is_err());
     }
+
+    #[test]
+    fn render_snat() {
+        let rule = NatRule::Snat {
+            source_cidr: "10.0.0.0/8".to_string(),
+            to_addr: "1.2.3.4".to_string(),
+            comment: None,
+        };
+        assert_eq!(rule.render(), "ip saddr 10.0.0.0/8 snat to 1.2.3.4");
+    }
+
+    #[test]
+    fn render_snat_with_comment() {
+        let rule = NatRule::Snat {
+            source_cidr: "10.0.0.0/8".to_string(),
+            to_addr: "1.2.3.4".to_string(),
+            comment: Some("outbound SNAT".to_string()),
+        };
+        let rendered = rule.render();
+        assert!(rendered.contains("snat to 1.2.3.4"));
+        assert!(rendered.contains("comment \"outbound SNAT\""));
+    }
+
+    #[test]
+    fn render_dnat_with_comment() {
+        let rule = NatRule::Dnat {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port: 443,
+            to_addr: "10.0.0.1".to_string(),
+            to_port: 8443,
+            comment: Some("TLS forward".to_string()),
+        };
+        let rendered = rule.render();
+        assert!(rendered.contains("dnat to 10.0.0.1:8443"));
+        assert!(rendered.contains("comment \"TLS forward\""));
+    }
+
+    #[test]
+    fn render_redirect_with_comment() {
+        let rule = NatRule::Redirect {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port: 80,
+            to_port: 8080,
+            comment: Some("local redirect".to_string()),
+        };
+        let rendered = rule.render();
+        assert!(rendered.contains("redirect to :8080"));
+        assert!(rendered.contains("comment \"local redirect\""));
+    }
+
+    #[test]
+    fn render_masquerade_no_oif() {
+        let rule = NatRule::Masquerade {
+            source_cidr: "10.0.0.0/8".to_string(),
+            oif: None,
+            comment: None,
+        };
+        assert_eq!(rule.render(), "ip saddr 10.0.0.0/8 masquerade");
+    }
+
+    #[test]
+    fn render_masquerade_with_comment() {
+        let rule = NatRule::Masquerade {
+            source_cidr: "10.0.0.0/8".to_string(),
+            oif: Some("eth0".to_string()),
+            comment: Some("NAT out".to_string()),
+        };
+        let rendered = rule.render();
+        assert!(rendered.contains("masquerade"));
+        assert!(rendered.contains("comment \"NAT out\""));
+    }
+
+    #[test]
+    fn validate_snat() {
+        let good = NatRule::Snat {
+            source_cidr: "10.0.0.0/8".to_string(),
+            to_addr: "1.2.3.4".to_string(),
+            comment: None,
+        };
+        assert!(good.validate().is_ok());
+
+        let bad = NatRule::Snat {
+            source_cidr: "10.0.0.0/8".to_string(),
+            to_addr: "bad;addr".to_string(),
+            comment: None,
+        };
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn validate_redirect_comment() {
+        let good = NatRule::Redirect {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port: 80,
+            to_port: 8080,
+            comment: Some("valid".to_string()),
+        };
+        assert!(good.validate().is_ok());
+
+        let bad = NatRule::Redirect {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port: 80,
+            to_port: 8080,
+            comment: Some("bad;comment".to_string()),
+        };
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn validate_masquerade_comment() {
+        let bad = NatRule::Masquerade {
+            source_cidr: "10.0.0.0/8".to_string(),
+            oif: None,
+            comment: Some("bad;comment".to_string()),
+        };
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn validate_dnat_comment() {
+        let bad = NatRule::Dnat {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port: 80,
+            to_addr: "10.0.0.1".to_string(),
+            to_port: 8080,
+            comment: Some("bad;comment".to_string()),
+        };
+        assert!(bad.validate().is_err());
+    }
 }

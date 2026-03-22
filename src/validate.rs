@@ -219,6 +219,19 @@ mod tests {
     }
 
     #[test]
+    fn valid_log_prefix() {
+        assert!(validate_log_prefix("NEIN_DROP: ").is_ok());
+        assert!(validate_log_prefix("fw-input ").is_ok());
+    }
+
+    #[test]
+    fn invalid_log_prefix() {
+        assert!(validate_log_prefix("has\"quote").is_err());
+        assert!(validate_log_prefix("has;semi").is_err());
+        assert!(validate_log_prefix(&"x".repeat(65)).is_err());
+    }
+
+    #[test]
     fn injection_attempt() {
         assert!(validate_addr("10.0.0.1\n; flush ruleset").is_err());
         assert!(validate_iface("eth0; drop").is_err());
