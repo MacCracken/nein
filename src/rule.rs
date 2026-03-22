@@ -406,4 +406,76 @@ mod tests {
             Rule::new(Verdict::Accept).matching(Match::Raw("anything goes here;{}".to_string()));
         assert!(rule.validate().is_ok());
     }
+
+    #[test]
+    fn render_multiple_matches_same_type() {
+        // Two DPort matches — unusual but nftables will error, we just render faithfully
+        let rule = Rule::new(Verdict::Accept)
+            .matching(Match::Protocol(Protocol::Tcp))
+            .matching(Match::DPort(80))
+            .matching(Match::DPort(443));
+        let rendered = rule.render();
+        assert!(rendered.contains("dport 80"));
+        assert!(rendered.contains("dport 443"));
+    }
+
+    #[test]
+    fn validate_port_range_edge_single_port() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::DPortRange(1, 1));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_port_range_edge_max() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::DPortRange(65535, 65535));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_port_range_full() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::DPortRange(1, 65535));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn render_allow_udp() {
+        let rule = allow_udp(53);
+        assert_eq!(rule.render(), "udp dport 53 accept");
+    }
+
+    #[test]
+    fn render_icmp() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::Protocol(Protocol::Icmp));
+        assert_eq!(rule.render(), "icmp accept");
+    }
+
+    #[test]
+    fn render_icmpv6() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::Protocol(Protocol::Icmpv6));
+        assert_eq!(rule.render(), "icmpv6 accept");
+    }
+
+    #[test]
+    fn verdict_display_all_variants() {
+        assert_eq!(Verdict::Accept.to_string(), "accept");
+        assert_eq!(Verdict::Drop.to_string(), "drop");
+        assert_eq!(Verdict::Reject.to_string(), "reject");
+        assert_eq!(Verdict::Return.to_string(), "return");
+        assert_eq!(Verdict::Counter.to_string(), "counter");
+        assert_eq!(Verdict::Log(None).to_string(), "log");
+        assert_eq!(
+            Verdict::Log(Some("TEST: ".into())).to_string(),
+            "log prefix \"TEST: \""
+        );
+        assert_eq!(Verdict::Jump("chain1".into()).to_string(), "jump chain1");
+        assert_eq!(Verdict::GoTo("chain2".into()).to_string(), "goto chain2");
+    }
+
+    #[test]
+    fn validate_dest_addr() {
+        let good = Rule::new(Verdict::Drop).matching(Match::DestAddr("10.0.0.0/8".into()));
+        assert!(good.validate().is_ok());
+        let bad = Rule::new(Verdict::Drop).matching(Match::DestAddr("evil;addr".into()));
+        assert!(bad.validate().is_err());
+    }
 }

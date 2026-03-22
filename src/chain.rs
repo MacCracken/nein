@@ -63,7 +63,7 @@ impl std::fmt::Display for Policy {
 }
 
 /// An entry in a chain — either a filter rule or a NAT rule.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChainRule {
     /// A standard filter/routing rule.
     Rule(Rule),
@@ -106,7 +106,7 @@ impl From<crate::nat::NatRule> for ChainRule {
 }
 
 /// An nftables chain.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Chain {
     pub name: String,
     pub chain_type: Option<ChainType>,

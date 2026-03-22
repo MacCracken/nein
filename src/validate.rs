@@ -237,4 +237,64 @@ mod tests {
         assert!(validate_iface("eth0; drop").is_err());
         assert!(validate_identifier("table\0evil").is_err());
     }
+
+    #[test]
+    fn ct_state_untracked() {
+        assert!(validate_ct_state("untracked").is_ok());
+    }
+
+    #[test]
+    fn ct_state_invalid() {
+        assert!(validate_ct_state("invalid").is_ok());
+    }
+
+    #[test]
+    fn ct_state_new() {
+        assert!(validate_ct_state("new").is_ok());
+    }
+
+    #[test]
+    fn identifier_max_length() {
+        assert!(validate_identifier(&"a".repeat(64)).is_ok());
+        assert!(validate_identifier(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn identifier_numeric_start() {
+        // Digits at start are valid for nft identifiers
+        assert!(validate_identifier("0eth0").is_ok());
+        assert!(validate_identifier("123").is_ok());
+    }
+
+    #[test]
+    fn iface_max_length() {
+        assert!(validate_iface(&"a".repeat(15)).is_ok());
+        assert!(validate_iface(&"a".repeat(16)).is_err());
+    }
+
+    #[test]
+    fn addr_ipv6_full() {
+        assert!(validate_addr("2001:0db8:85a3:0000:0000:8a2e:0370:7334").is_ok());
+    }
+
+    #[test]
+    fn comment_max_length() {
+        assert!(validate_comment(&"a".repeat(128)).is_ok());
+        assert!(validate_comment(&"a".repeat(129)).is_err());
+    }
+
+    #[test]
+    fn log_prefix_max_length() {
+        assert!(validate_log_prefix(&"a".repeat(64)).is_ok());
+        assert!(validate_log_prefix(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn dangerous_chars_all() {
+        for c in [';', '{', '}', '|', '\n', '\r', '\0', '`', '$'] {
+            let s = format!("test{c}val");
+            assert!(validate_comment(&s).is_err(), "should reject {c:?}");
+            assert!(validate_log_prefix(&s).is_err(), "should reject {c:?}");
+        }
+    }
 }

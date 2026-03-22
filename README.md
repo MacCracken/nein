@@ -115,19 +115,19 @@ let masq = nat::container_masquerade("172.17.0.0/16", "eth0");
 - [x] Input validation to prevent nftables injection
 - [x] Feature-gated modules (nat, policy, apply, inspect, builder, bridge)
 
-### Phase 1 — Stiva Integration (current)
+### Phase 1 — Stiva Integration
 - [x] Container bridge firewall (`BridgeFirewall`, `BridgeConfig`)
 - [x] Port mapping lifecycle (add/remove per container, duplicate detection)
 - [x] Network isolation between container groups (`IsolationGroup`, cross-CIDR)
 - [x] Integration tests with real nftables (`NEIN_INTEGRATION=1`)
 - [x] Criterion benchmarks (rule render, validate, bridge firewall, policy)
-- [x] 70 unit tests, 6 integration tests
 
-### Phase 2 — Daimon Integration
-- [ ] Agent network policy enforcement
-- [ ] Dynamic rule updates (add/remove rules for agent lifecycle)
-- [ ] Service mesh integration (Envoy sidecar rules)
-- [ ] MCP tools: `nein_status`, `nein_allow`, `nein_deny`, `nein_list`
+### Phase 2 — Daimon Integration (current)
+- [x] Agent network policy engine (`PolicyEngine`, `AgentPolicy`, per-agent chains)
+- [x] Dynamic rule operations (`add_rule`, `delete_rule`, `find_rules_by_comment`)
+- [x] Service mesh sidecar proxy rules (`SidecarConfig`, Envoy defaults, transparent redirect)
+- [x] MCP tool building blocks (`nein_status`, `nein_allow`, `nein_deny`, `nein_list` descriptors + request/response types)
+- [x] 151 unit tests, 7 integration tests
 
 ### Phase 3 — Advanced
 - [ ] TOML firewall config files (for sutra playbooks)

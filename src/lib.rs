@@ -34,10 +34,20 @@ pub mod builder;
 #[cfg(feature = "bridge")]
 pub mod bridge;
 
+#[cfg(feature = "engine")]
+pub mod engine;
+
+#[cfg(feature = "mesh")]
+pub mod mesh;
+
+#[cfg(feature = "mcp")]
+pub mod mcp;
+
 mod error;
 pub use error::NeinError;
 
 /// Top-level firewall manager.
+#[derive(Debug, Clone)]
 pub struct Firewall {
     tables: Vec<table::Table>,
     dry_run: bool,
@@ -180,6 +190,26 @@ mod tests {
         fw.add_table(table::Table::new("test", table::Family::Inet));
         assert_eq!(fw.tables().len(), 1);
         assert_eq!(fw.tables()[0].name, "test");
+    }
+
+    #[test]
+    fn firewall_clone() {
+        let mut fw = Firewall::new().dry_run(true);
+        fw.add_table(table::Table::new("test", table::Family::Inet));
+        let fw2 = fw.clone();
+        assert_eq!(fw.render(), fw2.render());
+        assert_eq!(fw.tables().len(), fw2.tables().len());
+    }
+
+    #[test]
+    fn firewall_multiple_tables() {
+        let mut fw = Firewall::new();
+        fw.add_table(table::Table::new("t1", table::Family::Inet));
+        fw.add_table(table::Table::new("t2", table::Family::Ip));
+        let rendered = fw.render();
+        assert!(rendered.contains("table inet t1"));
+        assert!(rendered.contains("table ip t2"));
+        assert_eq!(fw.tables().len(), 2);
     }
 
     #[test]

@@ -5,6 +5,21 @@ All notable changes to nein are documented here.
 ## [0.21.3] — 2026-03-22
 
 ### Added
+
+#### Phase 2 — Daimon Integration
+- **Agent policy engine** (`engine` feature): `PolicyEngine` manages per-agent network policies with `AgentPolicy`, `PortSpec`. Generates unified firewall with dispatch chains that jump to per-agent `{id}_in`/`{id}_out` chains. Supports inbound/outbound port control, outbound host restrictions, established/loopback toggles
+- **Dynamic rule operations** in `apply` module: `add_rule()`, `delete_rule()` for incremental rule management; `list_ruleset_with_handles()`, `find_rules_by_comment()`, `parse_rules_with_handles()` for rule discovery by comment prefix; `flush_table()`, `delete_table()` for table-level operations
+- **Service mesh sidecar proxy** (`mesh` feature): `SidecarConfig` with Envoy defaults (ports 15006/15001, UID 1337). Generates transparent TCP redirect rules with UID-based proxy bypass, CIDR exclusions, port exclusions for both inbound and outbound interception
+- **MCP tool building blocks** (`mcp` feature): `ToolDescriptor`, `ToolResult`, request/response types for `nein_status`, `nein_allow`, `nein_deny`, `nein_list`. Includes `build_allow_rule()` and `build_deny_rule()` helpers, `tool_descriptors()` for MCP registration
+
+#### Phase 1 — Stiva Integration
+- **Bridge module** (`bridge` feature): `BridgeConfig`, `BridgeFirewall`, `PortMapping`, `IsolationGroup` — full container bridge firewall management
+- Port mapping lifecycle: `add_port_mapping` (with duplicate detection), `remove_port_mapping`
+- Network isolation groups with cross-CIDR intra-group traffic rules
+- Integration tests (`tests/integration.rs`) — 7 tests gated behind `NEIN_INTEGRATION=1` env var, require root + nft
+- Criterion benchmarks (`benches/benchmarks.rs`) — rule render, validate, NAT render, host firewall, bridge firewall (small/large), policy, 100-rule validation
+
+#### Phase 0 — Foundation
 - Input validation module (`validate`) — rejects dangerous characters in addresses, interface names, identifiers, comments, and log prefixes to prevent nftables injection
 - `Firewall::validate()` — walks all tables/chains/rules, called automatically before `apply()`
 - `Rule::validate()` and `NatRule::validate()` for per-rule validation

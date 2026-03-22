@@ -6,7 +6,7 @@ use crate::validate;
 use serde::{Deserialize, Serialize};
 
 /// A network policy (like k8s NetworkPolicy but for AGNOS agents/containers).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkPolicy {
     pub name: String,
     /// Target (agent ID, container ID, or CIDR).

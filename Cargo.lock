@@ -370,6 +370,7 @@ version = "0.21.3"
 dependencies = [
  "criterion",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
