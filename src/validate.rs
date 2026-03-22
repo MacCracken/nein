@@ -313,6 +313,22 @@ mod tests {
     }
 
     #[test]
+    fn valid_nft_elements() {
+        assert!(validate_nft_element("10.0.0.1").is_ok());
+        assert!(validate_nft_element("80").is_ok());
+        assert!(validate_nft_element("192.168.0.0/16").is_ok());
+        assert!(validate_nft_element("::1").is_ok());
+    }
+
+    #[test]
+    fn invalid_nft_elements() {
+        assert!(validate_nft_element("").is_err());
+        assert!(validate_nft_element("evil;inject").is_err());
+        assert!(validate_nft_element("has\"quote").is_err());
+        assert!(validate_nft_element("has\nnewline").is_err());
+    }
+
+    #[test]
     fn dangerous_chars_all() {
         for c in [';', '{', '}', '|', '\n', '\r', '\0', '`', '$'] {
             let s = format!("test{c}val");

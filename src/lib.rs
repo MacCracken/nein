@@ -4,6 +4,23 @@
 //! for generating and applying nftables rules. It replaces raw nft command
 //! invocations with a composable rule builder.
 //!
+//! ## Features
+//!
+//! | Feature   | Module     | Description |
+//! |-----------|------------|-------------|
+//! | *(core)*  | `rule`, `table`, `chain`, `set`, `validate` | Always available — rule builder, rendering, validation |
+//! | `nat`     | `nat`      | NAT rules (DNAT, SNAT, masquerade, redirect) |
+//! | `policy`  | `policy`   | Kubernetes-style network policies |
+//! | `apply`   | `apply`    | Execute nftables via `nft` command (requires tokio) |
+//! | `inspect` | `inspect`  | Query live firewall state |
+//! | `builder` | `builder`  | Pre-built firewall configurations |
+//! | `bridge`  | `bridge`   | Container bridge firewall with port mappings and isolation |
+//! | `engine`  | `engine`   | Per-agent network policy engine |
+//! | `mesh`    | `mesh`     | Service mesh sidecar proxy rules (Envoy) |
+//! | `mcp`     | `mcp`      | MCP tool descriptors and request/response types |
+//! | `config`  | `config`   | TOML firewall configuration (parse and serialize) |
+//! | `geoip`   | `geoip`    | GeoIP country-based blocking with nftables sets |
+//!
 //! ## Consumers
 //!
 //! - **stiva** — container bridge/NAT, port mapping, network isolation

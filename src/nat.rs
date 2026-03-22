@@ -93,7 +93,13 @@ impl NatRule {
                 to_port,
                 comment,
             } => {
-                let mut r = format!("{protocol} dport {dest_port} dnat to {to_addr}:{to_port}");
+                // Bracket IPv6 addresses to avoid ambiguity with port separator
+                let addr_str = if to_addr.contains(':') {
+                    format!("[{to_addr}]")
+                } else {
+                    to_addr.clone()
+                };
+                let mut r = format!("{protocol} dport {dest_port} dnat to {addr_str}:{to_port}");
                 if let Some(c) = comment {
                     r.push_str(&format!(" comment \"{c}\""));
                 }
@@ -347,5 +353,29 @@ mod tests {
             comment: Some("bad;comment".to_string()),
         };
         assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn render_dnat_ipv6_brackets() {
+        let rule = NatRule::Dnat {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port: 443,
+            to_addr: "2001:db8::1".to_string(),
+            to_port: 8443,
+            comment: None,
+        };
+        assert_eq!(rule.render(), "tcp dport 443 dnat to [2001:db8::1]:8443");
+    }
+
+    #[test]
+    fn render_dnat_ipv4_no_brackets() {
+        let rule = NatRule::Dnat {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port: 80,
+            to_addr: "10.0.0.1".to_string(),
+            to_port: 8080,
+            comment: None,
+        };
+        assert_eq!(rule.render(), "tcp dport 80 dnat to 10.0.0.1:8080");
     }
 }

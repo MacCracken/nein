@@ -1,0 +1,8 @@
+# cargo-vet audits for nein
+# Audit entries are added as dependencies are reviewed.
+
+[criteria.safe-to-deploy]
+description = "No unsafe code, no network I/O, no filesystem I/O outside intended scope."
+
+[criteria.safe-to-run]
+description = "Safe to execute in development and CI environments."

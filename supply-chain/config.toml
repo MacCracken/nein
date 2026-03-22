@@ -1,0 +1,7 @@
+# cargo-vet configuration for nein
+
+[cargo-vet]
+version = "0.10"
+
+[policy.nein]
+audit-as-crates-io = false

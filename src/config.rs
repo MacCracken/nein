@@ -115,6 +115,14 @@ pub enum MatchConfig {
     },
     #[serde(rename = "set_lookup")]
     SetLookup { field: String, set_name: String },
+    #[serde(rename = "tcp_flags")]
+    TcpFlags { flags: Vec<String> },
+    #[serde(rename = "icmp_type")]
+    IcmpType { icmp_type: String },
+    #[serde(rename = "icmpv6_type")]
+    Icmpv6Type { icmp_type: String },
+    #[serde(rename = "meta_mark")]
+    MetaMark { value: u32 },
     #[serde(rename = "raw")]
     Raw { expr: String },
 }
@@ -205,6 +213,10 @@ fn parse_match(mc: &MatchConfig) -> Result<Match, NeinError> {
             field: field.clone(),
             set_name: set_name.clone(),
         },
+        MatchConfig::TcpFlags { flags } => Match::TcpFlags(flags.clone()),
+        MatchConfig::IcmpType { icmp_type } => Match::IcmpType(icmp_type.clone()),
+        MatchConfig::Icmpv6Type { icmp_type } => Match::Icmpv6Type(icmp_type.clone()),
+        MatchConfig::MetaMark { value } => Match::MetaMark(*value),
         MatchConfig::Raw { expr } => Match::Raw(expr.clone()),
     })
 }
@@ -217,7 +229,9 @@ fn parse_family(s: &str) -> Result<Family, NeinError> {
         "arp" => Ok(Family::Arp),
         "bridge" => Ok(Family::Bridge),
         "netdev" => Ok(Family::Netdev),
-        _ => Err(NeinError::Parse(format!("unknown family: {s}"))),
+        _ => Err(NeinError::Parse(format!(
+            "unknown family: {s} (valid: inet, ip, ip6, arp, bridge, netdev)"
+        ))),
     }
 }
 
@@ -226,7 +240,9 @@ fn parse_chain_type(s: &str) -> Result<ChainType, NeinError> {
         "filter" => Ok(ChainType::Filter),
         "nat" => Ok(ChainType::Nat),
         "route" => Ok(ChainType::Route),
-        _ => Err(NeinError::Parse(format!("unknown chain type: {s}"))),
+        _ => Err(NeinError::Parse(format!(
+            "unknown chain type: {s} (valid: filter, nat, route)"
+        ))),
     }
 }
 
@@ -238,7 +254,9 @@ fn parse_hook(s: &str) -> Result<Hook, NeinError> {
         "output" => Ok(Hook::Output),
         "postrouting" => Ok(Hook::Postrouting),
         "ingress" => Ok(Hook::Ingress),
-        _ => Err(NeinError::Parse(format!("unknown hook: {s}"))),
+        _ => Err(NeinError::Parse(format!(
+            "unknown hook: {s} (valid: prerouting, input, forward, output, postrouting, ingress)"
+        ))),
     }
 }
 
@@ -246,7 +264,9 @@ fn parse_policy(s: &str) -> Result<Policy, NeinError> {
     match s {
         "accept" => Ok(Policy::Accept),
         "drop" => Ok(Policy::Drop),
-        _ => Err(NeinError::Parse(format!("unknown policy: {s}"))),
+        _ => Err(NeinError::Parse(format!(
+            "unknown policy: {s} (valid: accept, drop)"
+        ))),
     }
 }
 
@@ -270,7 +290,9 @@ fn parse_verdict(s: &str, chain: &Option<String>) -> Result<Verdict, NeinError> 
                 .ok_or_else(|| NeinError::Parse("goto requires verdict_chain".into()))?
                 .clone(),
         )),
-        _ => Err(NeinError::Parse(format!("unknown verdict: {s}"))),
+        _ => Err(NeinError::Parse(format!(
+            "unknown verdict: {s} (valid: accept, drop, reject, return, counter, log, jump, goto)"
+        ))),
     }
 }
 
@@ -280,7 +302,9 @@ fn parse_protocol(s: &str) -> Result<Protocol, NeinError> {
         "udp" => Ok(Protocol::Udp),
         "icmp" => Ok(Protocol::Icmp),
         "icmpv6" => Ok(Protocol::Icmpv6),
-        _ => Err(NeinError::Parse(format!("unknown protocol: {s}"))),
+        _ => Err(NeinError::Parse(format!(
+            "unknown protocol: {s} (valid: tcp, udp, icmp, icmpv6)"
+        ))),
     }
 }
 
@@ -290,7 +314,9 @@ fn parse_rate_unit(s: &str) -> Result<RateUnit, NeinError> {
         "minute" => Ok(RateUnit::Minute),
         "hour" => Ok(RateUnit::Hour),
         "day" => Ok(RateUnit::Day),
-        _ => Err(NeinError::Parse(format!("unknown rate unit: {s}"))),
+        _ => Err(NeinError::Parse(format!(
+            "unknown rate unit: {s} (valid: second, minute, hour, day)"
+        ))),
     }
 }
 

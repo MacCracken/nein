@@ -113,6 +113,22 @@ pub enum Match {
     SetLookup { field: String, set_name: String },
     /// Match connection tracking helper.
     CtHelper(String),
+    /// Match TCP flags (e.g., `syn`, `ack`, `fin`, `rst`, `psh`, `urg`).
+    ///
+    /// Renders as `tcp flags { flag1, flag2 }`.
+    TcpFlags(Vec<String>),
+    /// Match ICMP type (e.g., `echo-request`, `echo-reply`, `destination-unreachable`).
+    ///
+    /// Renders as `icmp type {type_name}`.
+    IcmpType(String),
+    /// Match ICMPv6 type.
+    ///
+    /// Renders as `icmpv6 type {type_name}`.
+    Icmpv6Type(String),
+    /// Match or set packet mark (`meta mark`).
+    ///
+    /// Renders as `meta mark {value}`.
+    MetaMark(u32),
     /// Raw nft expression (escape hatch).
     ///
     /// # Security
@@ -181,7 +197,15 @@ impl Rule {
                     validate::validate_nft_element(field)?;
                     validate::validate_identifier(set_name)?;
                 }
-                Match::Limit { .. } => {
+                Match::TcpFlags(flags) => {
+                    for flag in flags {
+                        validate::validate_identifier(flag)?;
+                    }
+                }
+                Match::IcmpType(t) | Match::Icmpv6Type(t) => {
+                    validate::validate_identifier(t)?;
+                }
+                Match::Limit { .. } | Match::MetaMark(_) => {
                     // Typed values, no injection possible.
                 }
                 Match::Raw(_) => {
@@ -237,6 +261,12 @@ impl Rule {
                 }
                 Match::SetLookup { field, set_name } => format!("{field} @{set_name}"),
                 Match::CtHelper(helper) => format!("ct helper \"{helper}\""),
+                Match::TcpFlags(flags) => {
+                    format!("tcp flags {{ {} }}", flags.join(", "))
+                }
+                Match::IcmpType(t) => format!("icmp type {t}"),
+                Match::Icmpv6Type(t) => format!("icmpv6 type {t}"),
+                Match::MetaMark(val) => format!("meta mark {val}"),
                 Match::Raw(expr) => expr.clone(),
             });
         }
@@ -666,5 +696,65 @@ mod tests {
         assert!(good.validate().is_ok());
         let bad = Rule::new(Verdict::Accept).matching(Match::CtHelper("bad;helper".into()));
         assert!(bad.validate().is_err());
+    }
+
+    // -- TCP flags tests --
+
+    #[test]
+    fn render_tcp_flags() {
+        let rule =
+            Rule::new(Verdict::Drop).matching(Match::TcpFlags(vec!["syn".into(), "fin".into()]));
+        assert_eq!(rule.render(), "tcp flags { syn, fin } drop");
+    }
+
+    #[test]
+    fn validate_tcp_flags() {
+        let good =
+            Rule::new(Verdict::Drop).matching(Match::TcpFlags(vec!["syn".into(), "ack".into()]));
+        assert!(good.validate().is_ok());
+        let bad = Rule::new(Verdict::Drop).matching(Match::TcpFlags(vec!["bad;flag".into()]));
+        assert!(bad.validate().is_err());
+    }
+
+    // -- ICMP type tests --
+
+    #[test]
+    fn render_icmp_type() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::IcmpType("echo-request".into()));
+        assert_eq!(rule.render(), "icmp type echo-request accept");
+    }
+
+    #[test]
+    fn render_icmpv6_type() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::Icmpv6Type("echo-request".into()));
+        assert_eq!(rule.render(), "icmpv6 type echo-request accept");
+    }
+
+    #[test]
+    fn validate_icmp_type() {
+        let good = Rule::new(Verdict::Accept).matching(Match::IcmpType("echo-reply".into()));
+        assert!(good.validate().is_ok());
+        let bad = Rule::new(Verdict::Accept).matching(Match::IcmpType("bad;type".into()));
+        assert!(bad.validate().is_err());
+    }
+
+    // -- Meta mark tests --
+
+    #[test]
+    fn render_meta_mark() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::MetaMark(0x1));
+        assert_eq!(rule.render(), "meta mark 1 accept");
+    }
+
+    #[test]
+    fn render_meta_mark_hex() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::MetaMark(255));
+        assert_eq!(rule.render(), "meta mark 255 drop");
+    }
+
+    #[test]
+    fn validate_meta_mark() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::MetaMark(42));
+        assert!(rule.validate().is_ok());
     }
 }

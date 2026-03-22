@@ -1,0 +1,27 @@
+[package]
+name = "nein-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+nein = { path = "..", features = ["full"] }
+
+[[bin]]
+name = "fuzz_rule_render"
+path = "fuzz_targets/fuzz_rule_render.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_toml_config"
+path = "fuzz_targets/fuzz_toml_config.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_validation"
+path = "fuzz_targets/fuzz_validation.rs"
+doc = false

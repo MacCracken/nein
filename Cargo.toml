@@ -10,6 +10,7 @@ repository = "https://github.com/MacCracken/nein"
 readme = "README.md"
 keywords = ["firewall", "nftables", "network", "security", "nat"]
 categories = ["os", "network-programming"]
+exclude = [".claude/", ".github/", "target/", "fuzz/", "supply-chain/", "coverage/"]
 
 [features]
 default = ["nat", "policy", "apply", "builder", "bridge", "engine", "mesh"]
@@ -44,3 +45,19 @@ tokio = { version = "1", features = ["macros", "rt", "test-util"] }
 [[bench]]
 name = "benchmarks"
 harness = false
+
+[[example]]
+name = "host_firewall"
+required-features = ["builder"]
+
+[[example]]
+name = "container_bridge"
+required-features = ["bridge"]
+
+[[example]]
+name = "policy_engine"
+required-features = ["engine"]
+
+[[example]]
+name = "geoip_blocklist"
+required-features = ["geoip"]

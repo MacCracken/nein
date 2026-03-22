@@ -6,6 +6,25 @@ All notable changes to nein are documented here.
 
 ### Added
 
+#### Publishing Infrastructure
+- CI/CD pipeline (`.github/workflows/ci.yml`): 10-job pipeline — lint (3x feature combos), security audit, cargo-deny, test, test-minimal, MSRV, coverage (codecov), benchmarks (artifact upload), documentation (-D warnings), semver checks (PRs)
+- Release automation (`.github/workflows/release.yml`): triadic version verification (VERSION + Cargo.toml + git tag), publish to crates.io, create GitHub release
+- Community files: `CONTRIBUTING.md`, `SECURITY.md` (threat model, disclosure policy), `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1), `codecov.yml` (80% project, 75% patch)
+- 4 runnable examples: `host_firewall`, `container_bridge`, `policy_engine`, `geoip_blocklist` (feature-gated)
+- 3 fuzz targets: `fuzz_rule_render`, `fuzz_toml_config`, `fuzz_validation` (libfuzzer)
+- Supply chain: `supply-chain/config.toml`, `supply-chain/audits.toml` (cargo-vet)
+- Documentation: `docs/architecture/overview.md`, `docs/development/threat-model.md`, `docs/guides/testing.md`
+- Expanded `Makefile`: coverage, fuzz, clippy --all-features, doc with -D warnings
+- `Cargo.toml`: publish excludes, example entries with required-features
+- Expanded `lib.rs` module documentation with feature table
+
+#### Firewall Features
+- **TCP flags matching**: `Match::TcpFlags` renders as `tcp flags { syn, fin }`
+- **ICMP type matching**: `Match::IcmpType`, `Match::Icmpv6Type` for fine-grained ICMP filtering
+- **Packet mark matching**: `Match::MetaMark` for `meta mark` matching
+- **IPv6 DNAT fix**: brackets around IPv6 addresses in DNAT rendering (`dnat to [addr]:port`)
+- Improved config parse error messages — all parsers now list valid options on error
+
 #### Phase 3 — Advanced
 - **Named sets and maps** (core): `NftSet` with element types (ipv4_addr, ipv6_addr, inet_service, inet_proto, ifname), flags (constant, interval, timeout). `NftMap` verdict maps. Integrated into `Table` — sets/maps render before chains
 - **IPv6 support**: `Match::SourceAddr6`/`DestAddr6` for `ip6 saddr`/`ip6 daddr`. `deny_source6()` convenience function. `validate_addr` accepts IPv6 notation

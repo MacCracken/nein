@@ -1,7 +1,7 @@
-.PHONY: check fmt clippy test bench audit deny build doc clean
+.PHONY: check fmt clippy test bench audit deny fuzz coverage build doc clean
 
 # Run all CI checks locally
-check: fmt clippy test
+check: fmt clippy test audit
 
 # Format check
 fmt:
@@ -9,15 +9,15 @@ fmt:
 
 # Lint (zero warnings)
 clippy:
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --all-features --all-targets -- -D warnings
 
 # Run test suite
 test:
-	cargo test
+	cargo test --all-features
 
 # Run benchmarks (criterion)
 bench:
-	cargo bench
+	cargo bench --all-features --no-fail-fast
 
 # Security audit
 audit:
@@ -27,14 +27,26 @@ audit:
 deny:
 	cargo deny check
 
+# Run fuzz targets (30 seconds each)
+fuzz:
+	cargo +nightly fuzz run fuzz_rule_render -- -max_total_time=30
+	cargo +nightly fuzz run fuzz_toml_config -- -max_total_time=30
+	cargo +nightly fuzz run fuzz_validation -- -max_total_time=30
+
+# Generate coverage report
+coverage:
+	cargo tarpaulin --all-features --skip-clean
+	@echo "Coverage report generated"
+
 # Build release
 build:
-	cargo build --release
+	cargo build --release --all-features
 
 # Generate documentation
 doc:
-	cargo doc --no-deps
+	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 
 # Clean build artifacts
 clean:
 	cargo clean
+	rm -rf coverage/
