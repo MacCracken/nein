@@ -31,6 +31,9 @@ pub mod inspect;
 #[cfg(feature = "builder")]
 pub mod builder;
 
+#[cfg(feature = "bridge")]
+pub mod bridge;
+
 mod error;
 pub use error::NeinError;
 

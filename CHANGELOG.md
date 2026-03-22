@@ -15,7 +15,12 @@ All notable changes to nein are documented here.
 - `Firewall::tables()` accessor
 - `DPortRange(lo, hi)` validation rejects inverted ranges
 - `PartialEq`/`Eq` derives on `Rule`, `Match`, `Table`, `Chain`, `NatRule`, `ChainRule`, `NetworkPolicy`, `PolicyRule`, `PolicyPort`
-- 51 unit tests (up from 24)
+- **Bridge module** (`bridge` feature): `BridgeConfig`, `BridgeFirewall`, `PortMapping`, `IsolationGroup` — full container bridge firewall management
+- Port mapping lifecycle: `add_port_mapping` (with duplicate detection), `remove_port_mapping`
+- Network isolation groups with cross-CIDR intra-group traffic rules
+- Integration tests (`tests/integration.rs`) — 7 tests gated behind `NEIN_INTEGRATION=1` env var, require root + nft
+- Criterion benchmarks (`benches/benchmarks.rs`) — rule render, validate, NAT render, host firewall, bridge firewall (small/large), policy, 100-rule validation
+- 70 unit tests, 6 integration tests (up from 24)
 
 ### Fixed
 - Zombie process in `apply_ruleset` — child is now always waited on, even if stdin write fails
@@ -23,9 +28,9 @@ All notable changes to nein are documented here.
 - `container_bridge` builder no longer wraps NAT rules through `Match::Raw`, eliminating a validation bypass
 
 ### Changed
-- Feature flags now gate modules: `nat`, `policy`, `inspect`, `apply`, `builder` (previously decorative)
+- Feature flags now gate modules: `nat`, `policy`, `inspect`, `apply`, `builder`, `bridge` (previously decorative)
 - `tokio` is optional, gated behind the `apply` feature
-- Default features: `nat`, `policy`, `apply`, `builder`
+- Default features: `nat`, `policy`, `apply`, `builder`, `bridge`
 - Removed unused `rules` feature (core types always compiled)
 
 ### Removed

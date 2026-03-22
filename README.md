@@ -103,7 +103,7 @@ let masq = nat::container_masquerade("172.17.0.0/16", "eth0");
 
 ## Roadmap
 
-### Phase 0 — Foundation (current)
+### Phase 0 — Foundation
 - [x] Scaffold with nftables type model
 - [x] Rule builder with 10 match types and 8 verdicts
 - [x] Table/chain rendering to nftables syntax
@@ -112,13 +112,16 @@ let masq = nat::container_masquerade("172.17.0.0/16", "eth0");
 - [x] Apply via `nft -f -` with stdin pipe
 - [x] Pre-built builders (host firewall, container bridge, service policy)
 - [x] Dry-run mode
-- [x] 24 tests
+- [x] Input validation to prevent nftables injection
+- [x] Feature-gated modules (nat, policy, apply, inspect, builder, bridge)
 
-### Phase 1 — Stiva Integration
-- [ ] Container bridge setup (veth + nftables in one call)
-- [ ] Port mapping lifecycle (add/remove per container)
-- [ ] Network isolation between container groups
-- [ ] Integration tests with real nftables (rootful CI)
+### Phase 1 — Stiva Integration (current)
+- [x] Container bridge firewall (`BridgeFirewall`, `BridgeConfig`)
+- [x] Port mapping lifecycle (add/remove per container, duplicate detection)
+- [x] Network isolation between container groups (`IsolationGroup`, cross-CIDR)
+- [x] Integration tests with real nftables (`NEIN_INTEGRATION=1`)
+- [x] Criterion benchmarks (rule render, validate, bridge firewall, policy)
+- [x] 70 unit tests, 6 integration tests
 
 ### Phase 2 — Daimon Integration
 - [ ] Agent network policy enforcement

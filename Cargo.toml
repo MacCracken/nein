@@ -12,13 +12,14 @@ keywords = ["firewall", "nftables", "network", "security", "nat"]
 categories = ["os", "network-programming"]
 
 [features]
-default = ["nat", "policy", "apply", "builder"]
+default = ["nat", "policy", "apply", "builder", "bridge"]
 nat = []
 policy = []
 inspect = ["apply"]
 apply = ["dep:tokio"]
 builder = ["nat"]
-full = ["nat", "policy", "inspect", "apply", "builder"]
+bridge = ["nat"]
+full = ["nat", "policy", "inspect", "apply", "builder", "bridge"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -27,5 +28,10 @@ tracing = "0.1"
 tokio = { version = "1", features = ["process", "io-util"], optional = true }
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "test-util"] }
+
+[[bench]]
+name = "benchmarks"
+harness = false
