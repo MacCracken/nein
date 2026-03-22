@@ -51,11 +51,30 @@ make coverage
 
 ## Benchmarks
 
+Run benchmarks:
+
 ```sh
 cargo bench --all-features
+# or
+make bench
 ```
 
 Results are written to `target/criterion/`.
+
+### Historical Tracking
+
+The `bench-track` script runs benchmarks and appends results to a local TSV log
+(`benchmarks/history.tsv`) for tracking performance across versions:
+
+```sh
+make bench-track                          # run and record
+./scripts/bench-track.sh --compare        # show historical results
+```
+
+Each run records: timestamp, version, git commit, benchmark name, and median
+time. Raw criterion output is also saved per version in `benchmarks/`.
+
+The `benchmarks/` directory is gitignored — it is a local development tool.
 
 ## Fuzzing
 

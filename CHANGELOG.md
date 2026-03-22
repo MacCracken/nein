@@ -2,6 +2,23 @@
 
 All notable changes to nein are documented here.
 
+## [0.22.3] — 2026-03-22
+
+### Added
+- Benchmark tracking script (`scripts/bench-track.sh`) — records criterion results to `benchmarks/history.tsv` with version, commit, and timestamp for historical performance tracking
+- Expanded benchmarks: 22 criterion benchmarks covering all modules (rule render/validate, complex rules with IPv6/rate-limit/TCP-flags, NAT, host firewall, bridge small/large, engine 10 agents, policy, mesh, geoip 10 countries, set 1000 elements, TOML parse)
+- 6 architecture decision records (ADRs) in `docs/decisions/`: render-not-execute, validate-before-apply, feature-gated-modules, raw-match-escape-hatch, chain-rule-enum, sets-in-tables
+- Future roadmap (`docs/development/roadmap.md`): Phases 4-7 (production hardening, deep protocol support, ergonomics, ecosystem integration)
+- Development section in README with quick-reference commands
+- Documentation links in README (architecture, threat model, ADRs, testing guide)
+
+### Changed
+- Version bump for stiva 0.22.3 ecosystem release
+- README roadmap replaced with link to `docs/development/roadmap.md` — completed phases removed (in CHANGELOG)
+- `Makefile` adds `bench-track` target
+- `CONTRIBUTING.md` expanded with benchmark tracking workflow
+- `docs/guides/testing.md` expanded with historical benchmark tracking
+
 ## [0.21.3] — 2026-03-22
 
 ### Added

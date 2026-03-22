@@ -1,9 +1,9 @@
 [package]
 name = "nein"
-version = "0.21.3"
+version = "0.22.3"
 edition = "2024"
 rust-version = "1.89"
-license = "GPL-3.0"
+license = "GPL-3.0-only"
 description = "Programmatic nftables firewall — network policy, NAT, port mapping, and service access control for AGNOS"
 homepage = "https://github.com/MacCracken/nein"
 repository = "https://github.com/MacCracken/nein"

@@ -101,10 +101,29 @@ let masq = nat::container_masquerade("172.17.0.0/16", "eth0");
 | `inspect` | Query current firewall state |
 | `full` | All features |
 
+## Development
+
+```sh
+make check          # fmt + clippy + test + audit
+make bench          # criterion benchmarks
+make bench-track    # benchmark with historical tracking
+make coverage       # code coverage report
+make fuzz           # fuzz targets (requires nightly)
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full development workflow, [docs/guides/testing.md](docs/guides/testing.md) for testing details.
+
 ## Roadmap
 
 See [docs/development/roadmap.md](docs/development/roadmap.md) for the full roadmap. Completed work is documented in the [CHANGELOG](CHANGELOG.md).
 
+## Documentation
+
+- [Architecture overview](docs/architecture/overview.md)
+- [Threat model](docs/development/threat-model.md)
+- [Architecture decisions](docs/decisions/README.md)
+- [Testing guide](docs/guides/testing.md)
+
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE) for details.
+GPL-3.0-only — see [LICENSE](LICENSE) for details.

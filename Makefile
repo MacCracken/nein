@@ -1,4 +1,4 @@
-.PHONY: check fmt clippy test bench audit deny fuzz coverage build doc clean
+.PHONY: check fmt clippy test bench bench-track audit deny fuzz coverage build doc clean
 
 # Run all CI checks locally
 check: fmt clippy test audit
@@ -18,6 +18,10 @@ test:
 # Run benchmarks (criterion)
 bench:
 	cargo bench --all-features --no-fail-fast
+
+# Run benchmarks and record to historical log
+bench-track:
+	./scripts/bench-track.sh
 
 # Security audit
 audit:

@@ -2,10 +2,16 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use nein::Firewall;
 use nein::bridge::{BridgeConfig, BridgeFirewall, IsolationGroup, PortMapping};
 use nein::chain::{Chain, ChainType, Hook, Policy};
+use nein::engine::{AgentPolicy, PolicyEngine, PortSpec};
+use nein::geoip::{CountryBlock, GeoIpBlocklist};
+use nein::mesh::SidecarConfig;
 use nein::nat;
 use nein::policy;
-use nein::rule::{self, Match, Protocol, Rule, Verdict};
+use nein::rule::{self, Match, Protocol, RateUnit, Rule, Verdict};
+use nein::set::{NftSet, SetFlag, SetType};
 use nein::table::{Family, Table};
+
+// -- Core rule benchmarks --
 
 fn bench_rule_render(c: &mut Criterion) {
     let rule =
@@ -30,12 +36,37 @@ fn bench_rule_validate(c: &mut Criterion) {
     });
 }
 
+fn bench_rule_complex(c: &mut Criterion) {
+    let rule = Rule::new(Verdict::Accept)
+        .matching(Match::SourceAddr6("2001:db8::/32".into()))
+        .matching(Match::Protocol(Protocol::Tcp))
+        .matching(Match::TcpFlags(vec!["syn".into()]))
+        .matching(Match::DPort(443))
+        .matching(Match::Limit {
+            rate: 100,
+            unit: RateUnit::Second,
+            burst: 200,
+        })
+        .matching(Match::MetaMark(42))
+        .comment("complex rule bench");
+
+    c.bench_function("rule_complex_render", |b| {
+        b.iter(|| black_box(rule.render()));
+    });
+
+    c.bench_function("rule_complex_validate", |b| {
+        b.iter(|| black_box(rule.validate()).unwrap());
+    });
+}
+
 fn bench_nat_render(c: &mut Criterion) {
     let rule = nat::port_forward(8080, "172.17.0.2", 80);
     c.bench_function("nat_render", |b| {
         b.iter(|| black_box(rule.render()));
     });
 }
+
+// -- Builder benchmarks --
 
 fn bench_host_firewall_render(c: &mut Criterion) {
     let fw = nein::builder::basic_host_firewall();
@@ -44,6 +75,8 @@ fn bench_host_firewall_render(c: &mut Criterion) {
     });
 }
 
+// -- Bridge benchmarks --
+
 fn bench_bridge_firewall_small(c: &mut Criterion) {
     let mut bf = BridgeFirewall::new(BridgeConfig::new("br0", "172.17.0.0/16", "eth0"));
     bf.add_port_mapping(PortMapping::tcp(8080, "172.17.0.2", 80))
@@ -51,24 +84,19 @@ fn bench_bridge_firewall_small(c: &mut Criterion) {
     bf.add_port_mapping(PortMapping::tcp(8443, "172.17.0.2", 443))
         .unwrap();
 
-    c.bench_function("bridge_firewall_small_to_firewall", |b| {
+    c.bench_function("bridge_small_to_firewall", |b| {
         b.iter(|| black_box(bf.to_firewall()));
     });
 
     let fw = bf.to_firewall();
-    c.bench_function("bridge_firewall_small_render", |b| {
+    c.bench_function("bridge_small_render", |b| {
         b.iter(|| black_box(fw.render()));
-    });
-
-    c.bench_function("bridge_firewall_small_validate", |b| {
-        b.iter(|| black_box(bf.validate()).unwrap());
     });
 }
 
 fn bench_bridge_firewall_large(c: &mut Criterion) {
     let mut bf = BridgeFirewall::new(BridgeConfig::new("br0", "172.17.0.0/16", "eth0"));
 
-    // 50 port mappings
     for i in 0..50u16 {
         bf.add_port_mapping(PortMapping::tcp(
             8000 + i,
@@ -77,8 +105,6 @@ fn bench_bridge_firewall_large(c: &mut Criterion) {
         ))
         .unwrap();
     }
-
-    // 5 isolation groups
     for i in 0..5 {
         bf.add_isolation_group(IsolationGroup::new(
             &format!("group{i}"),
@@ -86,17 +112,41 @@ fn bench_bridge_firewall_large(c: &mut Criterion) {
         ));
     }
 
-    c.bench_function("bridge_firewall_large_to_firewall", |b| {
+    c.bench_function("bridge_large_to_firewall", |b| {
         b.iter(|| black_box(bf.to_firewall()));
     });
 
     let fw = bf.to_firewall();
-    c.bench_function("bridge_firewall_large_render", |b| {
+    c.bench_function("bridge_large_render", |b| {
+        b.iter(|| black_box(fw.render()));
+    });
+}
+
+// -- Policy engine benchmarks --
+
+fn bench_engine(c: &mut Criterion) {
+    let mut engine = PolicyEngine::new();
+    for i in 0..10 {
+        engine.add_agent(
+            AgentPolicy::new(&format!("agent-{i}"), &format!("10.100.{i}.2"))
+                .allow_inbound(PortSpec::tcp(80))
+                .allow_inbound(PortSpec::tcp(443))
+                .allow_outbound(PortSpec::tcp(8090))
+                .allow_outbound(PortSpec::udp(53)),
+        );
+    }
+
+    c.bench_function("engine_10_agents_to_firewall", |b| {
+        b.iter(|| black_box(engine.to_firewall()));
+    });
+
+    let fw = engine.to_firewall();
+    c.bench_function("engine_10_agents_render", |b| {
         b.iter(|| black_box(fw.render()));
     });
 
-    c.bench_function("bridge_firewall_large_validate", |b| {
-        b.iter(|| black_box(bf.validate()).unwrap());
+    c.bench_function("engine_10_agents_validate", |b| {
+        b.iter(|| black_box(engine.validate()).unwrap());
     });
 }
 
@@ -106,6 +156,102 @@ fn bench_policy_to_rules(c: &mut Criterion) {
         b.iter(|| black_box(pol.to_rules()));
     });
 }
+
+// -- Mesh benchmarks --
+
+fn bench_mesh(c: &mut Criterion) {
+    let cfg = SidecarConfig::envoy()
+        .exclude_outbound_cidr("10.0.0.0/8")
+        .exclude_outbound_port(9090)
+        .exclude_inbound_port(15090);
+
+    c.bench_function("mesh_to_firewall", |b| {
+        b.iter(|| black_box(cfg.to_firewall()));
+    });
+
+    let fw = cfg.to_firewall();
+    c.bench_function("mesh_render", |b| {
+        b.iter(|| black_box(fw.render()));
+    });
+}
+
+// -- GeoIP benchmarks --
+
+fn bench_geoip(c: &mut Criterion) {
+    let mut bl = GeoIpBlocklist::new();
+    for i in 0..10 {
+        let mut cidrs = vec![];
+        for j in 0..50 {
+            cidrs.push(format!("{i}.{j}.0.0/16"));
+        }
+        bl.block_country(CountryBlock::v4(
+            &format!("{}{}", (b'A' + i) as char, (b'A' + i) as char),
+            cidrs,
+        ));
+    }
+
+    c.bench_function("geoip_10_countries_to_firewall", |b| {
+        b.iter(|| black_box(bl.to_firewall()));
+    });
+
+    let fw = bl.to_firewall();
+    c.bench_function("geoip_10_countries_render", |b| {
+        b.iter(|| black_box(fw.render()));
+    });
+}
+
+// -- Set benchmarks --
+
+fn bench_set(c: &mut Criterion) {
+    let mut set = NftSet::new("blocklist", SetType::Ipv4Addr).flag(SetFlag::Interval);
+    for i in 0..1000 {
+        set = set.element(&format!("{}.{}.0.0/16", i / 256, i % 256));
+    }
+
+    c.bench_function("set_1000_elements_render", |b| {
+        b.iter(|| black_box(set.render()));
+    });
+}
+
+// -- TOML config benchmarks --
+
+fn bench_toml_parse(c: &mut Criterion) {
+    let toml = r#"
+[[tables]]
+name = "filter"
+family = "inet"
+
+[[tables.chains]]
+name = "input"
+chain_type = "filter"
+hook = "input"
+priority = 0
+policy = "drop"
+
+[[tables.chains.rules]]
+matches = [{ type = "ct_state", states = ["established", "related"] }]
+verdict = "accept"
+
+[[tables.chains.rules]]
+matches = [{ type = "protocol", value = "tcp" }, { type = "dport", port = 22 }]
+verdict = "accept"
+comment = "SSH"
+
+[[tables.chains.rules]]
+matches = [{ type = "protocol", value = "tcp" }, { type = "dport", port = 80 }]
+verdict = "accept"
+
+[[tables.chains.rules]]
+matches = [{ type = "protocol", value = "tcp" }, { type = "dport", port = 443 }]
+verdict = "accept"
+"#;
+
+    c.bench_function("toml_parse_small", |b| {
+        b.iter(|| black_box(nein::config::from_toml(toml)).unwrap());
+    });
+}
+
+// -- Validation benchmark --
 
 fn bench_firewall_validate(c: &mut Criterion) {
     let mut fw = Firewall::new();
@@ -126,11 +272,17 @@ criterion_group!(
     benches,
     bench_rule_render,
     bench_rule_validate,
+    bench_rule_complex,
     bench_nat_render,
     bench_host_firewall_render,
     bench_bridge_firewall_small,
     bench_bridge_firewall_large,
+    bench_engine,
     bench_policy_to_rules,
+    bench_mesh,
+    bench_geoip,
+    bench_set,
+    bench_toml_parse,
     bench_firewall_validate,
 );
 criterion_main!(benches);

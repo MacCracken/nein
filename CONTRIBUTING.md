@@ -27,9 +27,31 @@ development workflow, code standards, and project conventions.
 | `make test`     | Run the test suite                               |
 | `make deny`     | Audit dependencies with `cargo deny`             |
 | `make fuzz`     | Run fuzz targets                                 |
-| `make coverage` | Generate code coverage report                    |
+| `make coverage`     | Generate code coverage report                    |
+| `make bench`        | Run criterion benchmarks                         |
+| `make bench-track`  | Run benchmarks and record to historical log      |
 
 Before opening a PR, run `make check` to verify everything passes.
+
+## Benchmarks
+
+Run benchmarks with criterion:
+
+```sh
+make bench
+```
+
+To track performance over time, use the benchmark tracking script:
+
+```sh
+make bench-track                          # run and record
+./scripts/bench-track.sh --compare        # show historical results
+```
+
+Results are saved to `benchmarks/history.tsv` (TSV with timestamp, version,
+commit, benchmark name, and median time). Raw criterion output is saved per
+version in `benchmarks/`. The `benchmarks/` directory is gitignored — it is a
+local development aid, not committed.
 
 ## Adding a New Module
 
@@ -66,6 +88,6 @@ nftables ruleset.
 
 ## License
 
-nein is licensed under **GPL-3.0**. All contributions must be compatible with
+nein is licensed under **GPL-3.0-only**. All contributions must be compatible with
 this license. By submitting a pull request, you agree that your contribution is
 licensed under the same terms.
