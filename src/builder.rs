@@ -58,8 +58,7 @@ pub fn container_bridge(bridge_name: &str, subnet: &str, outbound_iface: &str) -
         Policy::Accept,
     );
 
-    let masq = nat::container_masquerade(subnet, outbound_iface);
-    postrouting.add_rule(Rule::new(Verdict::Accept).matching(Match::Raw(masq.render())));
+    postrouting.add_nat_rule(nat::container_masquerade(subnet, outbound_iface));
 
     nat_table.add_chain(postrouting);
     fw.add_table(nat_table);

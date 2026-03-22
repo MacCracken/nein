@@ -20,20 +20,28 @@ pub async fn apply_ruleset(ruleset: &str) -> Result<(), NeinError> {
             }
         })?;
 
-    // Write the ruleset to nft's stdin
-    if let Some(mut stdin) = child.stdin.take() {
+    // Write the ruleset to nft's stdin, then drop to close the pipe.
+    let write_err = if let Some(mut stdin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
-        stdin
-            .write_all(ruleset.as_bytes())
-            .await
-            .map_err(|e| NeinError::NftFailed(format!("failed to write to nft stdin: {e}")))?;
-        // Drop stdin to close the pipe so nft reads EOF
-    }
+        stdin.write_all(ruleset.as_bytes()).await.err()
+    } else {
+        None
+    };
 
+    // Always wait for the child to avoid zombie processes.
     let output = child
         .wait_with_output()
         .await
         .map_err(|e| NeinError::NftFailed(e.to_string()))?;
+
+    // Report stdin write error if the child didn't also fail.
+    if let Some(e) = write_err
+        && output.status.success()
+    {
+        return Err(NeinError::NftFailed(format!(
+            "failed to write to nft stdin: {e}"
+        )));
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -68,11 +76,8 @@ pub async fn list_ruleset() -> Result<String, NeinError> {
 
 #[cfg(test)]
 mod tests {
-    // apply tests require root + nft, so we test rendering instead
-    // See integration tests for real nft invocation tests
-
     #[test]
     fn module_exists() {
-        // Compilation check
+        // Compilation check — real apply tests require root + nft
     }
 }

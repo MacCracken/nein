@@ -1,10 +1,12 @@
 //! Network policies — service-level access control for agents and containers.
 
+use crate::error::NeinError;
 use crate::rule::{Match, Protocol, Rule, Verdict};
+use crate::validate;
 use serde::{Deserialize, Serialize};
 
 /// A network policy (like k8s NetworkPolicy but for AGNOS agents/containers).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NetworkPolicy {
     pub name: String,
     /// Target (agent ID, container ID, or CIDR).
@@ -18,7 +20,7 @@ pub struct NetworkPolicy {
 }
 
 /// A policy rule.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyRule {
     /// Source/destination (agent ID, CIDR, or "any").
     pub peer: String,
@@ -27,7 +29,7 @@ pub struct PolicyRule {
 }
 
 /// A port in a policy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyPort {
     pub protocol: Protocol,
     pub port: u16,
@@ -41,6 +43,20 @@ pub enum PolicyAction {
 }
 
 impl NetworkPolicy {
+    /// Validate all string fields in this policy.
+    ///
+    /// Checks that the policy name is a valid identifier and that peer
+    /// addresses (when not "any") are valid address strings.
+    pub fn validate(&self) -> Result<(), NeinError> {
+        validate::validate_identifier(&self.name)?;
+        for rule in self.ingress.iter().chain(self.egress.iter()) {
+            if rule.peer != "any" {
+                validate::validate_addr(&rule.peer)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Convert this policy to nftables rules.
     pub fn to_rules(&self) -> Vec<Rule> {
         let mut rules = vec![];
@@ -122,6 +138,24 @@ mod tests {
         assert!(rules[0].render().contains("ip saddr 10.0.0.1"));
         assert!(rules[0].render().contains("dport 8090"));
         assert!(rules[0].render().contains("accept"));
+    }
+
+    #[test]
+    fn validate_good_policy() {
+        let policy = agent_to_agent("allow-web", "10.0.0.1", "10.0.0.2", Protocol::Tcp, 80);
+        assert!(policy.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_bad_policy_name() {
+        let policy = agent_to_agent("evil;name", "10.0.0.1", "10.0.0.2", Protocol::Tcp, 80);
+        assert!(policy.validate().is_err());
+    }
+
+    #[test]
+    fn validate_bad_peer() {
+        let policy = agent_to_agent("allow-web", "10.0.0.1; drop", "10.0.0.2", Protocol::Tcp, 80);
+        assert!(policy.validate().is_err());
     }
 
     #[test]

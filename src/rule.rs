@@ -37,8 +37,24 @@ impl std::fmt::Display for Protocol {
     }
 }
 
+impl std::fmt::Display for Verdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Accept => write!(f, "accept"),
+            Self::Drop => write!(f, "drop"),
+            Self::Reject => write!(f, "reject"),
+            Self::Jump(chain) => write!(f, "jump {chain}"),
+            Self::GoTo(chain) => write!(f, "goto {chain}"),
+            Self::Return => write!(f, "return"),
+            Self::Log(Some(p)) => write!(f, "log prefix \"{p}\""),
+            Self::Log(None) => write!(f, "log"),
+            Self::Counter => write!(f, "counter"),
+        }
+    }
+}
+
 /// A match expression in a rule.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Match {
     /// Match source IP/CIDR.
     SourceAddr(String),
@@ -69,7 +85,7 @@ pub enum Match {
 }
 
 /// An nftables rule.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {
     pub matches: Vec<Match>,
     pub verdict: Verdict,
@@ -119,6 +135,11 @@ impl Rule {
                 Match::Raw(_) => {
                     // Deliberately not validated — caller's responsibility.
                 }
+                Match::DPortRange(lo, hi) if lo > hi => {
+                    return Err(NeinError::InvalidRule(format!(
+                        "port range start ({lo}) must not exceed end ({hi})"
+                    )));
+                }
                 Match::Protocol(_) | Match::DPort(_) | Match::SPort(_) | Match::DPortRange(..) => {
                     // Typed values, no string injection possible.
                 }
@@ -161,20 +182,7 @@ impl Rule {
             });
         }
 
-        let verdict = match &self.verdict {
-            Verdict::Accept => "accept".to_string(),
-            Verdict::Drop => "drop".to_string(),
-            Verdict::Reject => "reject".to_string(),
-            Verdict::Jump(chain) => format!("jump {chain}"),
-            Verdict::GoTo(chain) => format!("goto {chain}"),
-            Verdict::Return => "return".to_string(),
-            Verdict::Log(prefix) => match prefix {
-                Some(p) => format!("log prefix \"{p}\""),
-                None => "log".to_string(),
-            },
-            Verdict::Counter => "counter".to_string(),
-        };
-        parts.push(verdict);
+        parts.push(self.verdict.to_string());
 
         if let Some(comment) = &self.comment {
             parts.push(format!("comment \"{comment}\""));
@@ -295,6 +303,24 @@ mod tests {
     #[test]
     fn validate_bad_jump_target() {
         let rule = Rule::new(Verdict::Jump("evil;chain".to_string()));
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_port_range_valid() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::DPortRange(80, 443));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_port_range_equal() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::DPortRange(80, 80));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_port_range_inverted() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::DPortRange(443, 80));
         assert!(rule.validate().is_err());
     }
 

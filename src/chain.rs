@@ -1,5 +1,6 @@
 //! nftables chains.
 
+use crate::error::NeinError;
 use crate::rule::Rule;
 use serde::{Deserialize, Serialize};
 
@@ -61,15 +62,58 @@ impl std::fmt::Display for Policy {
     }
 }
 
+/// An entry in a chain — either a filter rule or a NAT rule.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ChainRule {
+    /// A standard filter/routing rule.
+    Rule(Rule),
+    /// A NAT rule (DNAT, SNAT, masquerade, redirect).
+    #[cfg(feature = "nat")]
+    Nat(crate::nat::NatRule),
+}
+
+impl ChainRule {
+    /// Render this chain rule as nftables syntax.
+    pub fn render(&self) -> String {
+        match self {
+            Self::Rule(r) => r.render(),
+            #[cfg(feature = "nat")]
+            Self::Nat(n) => n.render(),
+        }
+    }
+
+    /// Validate this chain rule for dangerous input.
+    pub fn validate(&self) -> Result<(), NeinError> {
+        match self {
+            Self::Rule(r) => r.validate(),
+            #[cfg(feature = "nat")]
+            Self::Nat(n) => n.validate(),
+        }
+    }
+}
+
+impl From<Rule> for ChainRule {
+    fn from(r: Rule) -> Self {
+        Self::Rule(r)
+    }
+}
+
+#[cfg(feature = "nat")]
+impl From<crate::nat::NatRule> for ChainRule {
+    fn from(n: crate::nat::NatRule) -> Self {
+        Self::Nat(n)
+    }
+}
+
 /// An nftables chain.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Chain {
     pub name: String,
     pub chain_type: Option<ChainType>,
     pub hook: Option<Hook>,
     pub priority: Option<i32>,
     pub policy: Option<Policy>,
-    pub rules: Vec<Rule>,
+    pub rules: Vec<ChainRule>,
 }
 
 impl Chain {
@@ -105,7 +149,13 @@ impl Chain {
 
     /// Add a rule to this chain.
     pub fn add_rule(&mut self, rule: Rule) {
-        self.rules.push(rule);
+        self.rules.push(ChainRule::Rule(rule));
+    }
+
+    /// Add a NAT rule to this chain.
+    #[cfg(feature = "nat")]
+    pub fn add_nat_rule(&mut self, rule: crate::nat::NatRule) {
+        self.rules.push(ChainRule::Nat(rule));
     }
 
     /// Render this chain as nftables syntax.

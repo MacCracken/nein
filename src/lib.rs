@@ -70,6 +70,11 @@ impl Firewall {
         output
     }
 
+    /// Access the tables in this firewall.
+    pub fn tables(&self) -> &[table::Table] {
+        &self.tables
+    }
+
     /// Validate all tables, chains, and rules for dangerous input.
     ///
     /// Called automatically by [`apply`] before executing. You can also call
@@ -79,8 +84,8 @@ impl Firewall {
             validate::validate_identifier(&table.name)?;
             for chain in &table.chains {
                 validate::validate_identifier(&chain.name)?;
-                for rule in &chain.rules {
-                    rule.validate()?;
+                for entry in &chain.rules {
+                    entry.validate()?;
                 }
             }
         }

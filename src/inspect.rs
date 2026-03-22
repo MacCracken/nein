@@ -12,7 +12,7 @@ pub struct FirewallStatus {
 
 /// Get current firewall status.
 pub async fn status() -> Result<FirewallStatus, NeinError> {
-    let raw = crate::apply::list_ruleset().await.unwrap_or_default();
+    let raw = crate::apply::list_ruleset().await?;
 
     let tables: Vec<String> = raw
         .lines()

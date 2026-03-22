@@ -28,7 +28,7 @@ impl std::fmt::Display for Family {
 }
 
 /// An nftables table.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Table {
     pub name: String,
     pub family: Family,

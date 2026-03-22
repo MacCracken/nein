@@ -141,29 +141,6 @@ pub fn validate_log_prefix(s: &str) -> Result<(), NeinError> {
     Ok(())
 }
 
-/// Validate a free-form nft value (used for addresses in NAT rules, etc.).
-///
-/// Rejects dangerous injection characters but allows the broader character set
-/// needed for `addr:port` syntax.
-pub fn validate_nft_value(s: &str) -> Result<(), NeinError> {
-    if s.is_empty() {
-        return Err(NeinError::InvalidRule("value must not be empty".into()));
-    }
-    for c in DANGEROUS_CHARS {
-        if s.contains(*c) {
-            return Err(NeinError::InvalidRule(format!(
-                "value contains dangerous character: {c:?}"
-            )));
-        }
-    }
-    if s.contains('"') {
-        return Err(NeinError::InvalidRule(
-            "value must not contain double quotes".into(),
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
