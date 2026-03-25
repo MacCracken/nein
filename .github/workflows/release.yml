@@ -33,6 +33,14 @@ jobs:
             exit 1
           fi
           echo "Version verified: $TAG_VERSION"
+      - name: Strip private dependencies
+        run: |
+          # Remove the netns feature and agnosys dep — agnosys is publish = false
+          # and cannot be resolved from crates.io
+          sed -i '/^netns = /d' Cargo.toml
+          sed -i '/^agnosys = /d' Cargo.toml
+          sed -i '/feature = "netns"/d' src/lib.rs
+          sed -i '/pub mod netns;/d' src/lib.rs
       - name: Publish
         run: cargo publish
         env:
