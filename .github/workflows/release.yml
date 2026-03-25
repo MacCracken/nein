@@ -41,6 +41,8 @@ jobs:
           sed -i '/^agnosys = /d' Cargo.toml
           sed -i '/feature = "netns"/d' src/lib.rs
           sed -i '/pub mod netns;/d' src/lib.rs
+          git add -A
+          git commit -m "strip private deps for publish"
       - name: Publish
         run: cargo publish
         env:
