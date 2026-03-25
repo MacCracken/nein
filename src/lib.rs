@@ -20,6 +20,7 @@
 //! | `mcp`     | `mcp`      | MCP tool descriptors and request/response types |
 //! | `config`  | `config`   | TOML firewall configuration (parse and serialize) |
 //! | `geoip`   | `geoip`    | GeoIP country-based blocking with nftables sets |
+//! | `netns`   | `netns`    | Agent network namespace firewall (requires agnosys) |
 //!
 //! ## Consumers
 //!
@@ -66,6 +67,9 @@ pub mod config;
 
 #[cfg(feature = "geoip")]
 pub mod geoip;
+
+#[cfg(feature = "netns")]
+pub mod netns;
 
 mod error;
 pub use error::NeinError;

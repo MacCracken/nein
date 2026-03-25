@@ -2,6 +2,20 @@
 
 All notable changes to nein are documented here.
 
+## [0.24.3] — 2026-03-24
+
+### Added
+- **`netns` feature**: agent network namespace firewall integration via agnosys
+  - `NamespaceFirewall` builder — type-safe nftables rulesets for agent namespaces (established/related, loopback, DNS, inbound/outbound ports, host restrictions)
+  - `apply_to_namespace()` — renders and applies firewall inside a namespace via `agnosys::netns::apply_nftables_ruleset`
+  - 15 unit tests, doctest
+  - Feature-gated behind `dep:agnosys` (optional path dependency, not included in `full` or `default` — agnosys is `publish = false`)
+
+### Changed
+- `full` feature no longer enables all features — excludes `netns` since agnosys is a private crate
+- CI (`ci.yml`): `--all-features` replaced with `--features full` across all jobs (clippy, test, MSRV, coverage, benchmarks, docs) to avoid requiring private path dependencies
+- `deny.toml`: switched from `all-features = true` to `features = ["full"]` for the same reason
+
 ## [0.22.3] — 2026-03-22
 
 ### Added

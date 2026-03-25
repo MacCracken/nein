@@ -1,6 +1,6 @@
 [package]
 name = "nein"
-version = "0.22.3"
+version = "0.24.3"
 edition = "2024"
 rust-version = "1.89"
 license = "GPL-3.0-only"
@@ -25,6 +25,7 @@ mesh = []
 mcp = ["dep:serde_json"]
 config = ["dep:toml"]
 geoip = []
+netns = ["engine", "dep:agnosys"]
 full = ["nat", "policy", "inspect", "apply", "builder", "bridge", "engine", "mesh", "mcp", "config", "geoip"]
 
 [dependencies]
@@ -34,6 +35,7 @@ thiserror = "2"
 toml = { version = "0.8", optional = true }
 tracing = "0.1"
 tokio = { version = "1", features = ["process", "io-util"], optional = true }
+agnosys = { path = "../agnosys", features = ["netns"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

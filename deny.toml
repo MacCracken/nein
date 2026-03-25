@@ -3,7 +3,9 @@
 
 [graph]
 targets = []
-all-features = true
+# Use "full" instead of all-features: the "netns" feature depends on agnosys
+# which is a private (publish = false) path dependency, unavailable on crates.io.
+features = ["full"]
 
 [advisories]
 ignore = []

@@ -40,3 +40,15 @@ Completed phases (0-3) are documented in the [CHANGELOG](../../CHANGELOG.md).
 - [ ] daimon agent runtime MCP handler wiring (in agnosticos repo)
 - [ ] sutra playbook examples (TOML fleet configs)
 - [ ] aegis host hardening profiles
+
+## Phase 8 — QUIC Support (Network Evolution Tier 1)
+
+QUIC uses UDP. nein must support UDP-based firewall rules for QUIC traffic alongside existing TCP rules.
+
+- [ ] UDP port matching for QUIC connections (majra QUIC relay, daimon QUIC edge)
+- [ ] QUIC-aware connection tracking (conntrack for UDP streams with QUIC connection IDs)
+- [ ] Policy engine QUIC transport type (distinguish QUIC from plain UDP)
+- [ ] stiva container networking: QUIC port forwarding rules
+- [ ] Rate limiting for QUIC connection migration (prevent connection hijacking)
+
+See [network-evolution.md](../../../../docs/development/network-evolution.md) in agnosticos for full architecture.
