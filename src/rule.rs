@@ -20,6 +20,20 @@ pub enum Verdict {
     SetMark(u32),
     /// Set conntrack mark (`ct mark set {value}`).
     SetCtMark(u32),
+    /// Enhanced log with level, group, and snaplen options.
+    ///
+    /// Renders as `log prefix "{prefix}" level {level} group {group} snaplen {snaplen}`.
+    /// All fields are optional except prefix is part of the base.
+    LogAdvanced {
+        prefix: Option<String>,
+        level: Option<LogLevel>,
+        group: Option<u16>,
+        snaplen: Option<u32>,
+    },
+    /// Named counter reference.
+    ///
+    /// Renders as `counter name "{name}"`.
+    CounterNamed(String),
 }
 
 /// IP protocol.
@@ -57,6 +71,28 @@ impl std::fmt::Display for Verdict {
             Self::Counter => write!(f, "counter"),
             Self::SetMark(val) => write!(f, "meta mark set {val}"),
             Self::SetCtMark(val) => write!(f, "ct mark set {val}"),
+            Self::LogAdvanced {
+                prefix,
+                level,
+                group,
+                snaplen,
+            } => {
+                write!(f, "log")?;
+                if let Some(p) = prefix {
+                    write!(f, " prefix \"{p}\"")?;
+                }
+                if let Some(l) = level {
+                    write!(f, " level {l}")?;
+                }
+                if let Some(g) = group {
+                    write!(f, " group {g}")?;
+                }
+                if let Some(s) = snaplen {
+                    write!(f, " snaplen {s}")?;
+                }
+                Ok(())
+            }
+            Self::CounterNamed(name) => write!(f, "counter name \"{name}\""),
         }
     }
 }
@@ -118,6 +154,79 @@ impl std::fmt::Display for QuotaUnit {
             Self::KBytes => write!(f, "kbytes"),
             Self::MBytes => write!(f, "mbytes"),
             Self::GBytes => write!(f, "gbytes"),
+        }
+    }
+}
+
+/// Packet type for meta matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum PktType {
+    Unicast,
+    Broadcast,
+    Multicast,
+}
+
+impl std::fmt::Display for PktType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unicast => write!(f, "unicast"),
+            Self::Broadcast => write!(f, "broadcast"),
+            Self::Multicast => write!(f, "multicast"),
+        }
+    }
+}
+
+/// IPv6 extension header type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Ipv6ExtHdr {
+    HopByHop,
+    Routing,
+    Fragment,
+    Destination,
+    Mobility,
+    Authentication,
+}
+
+impl std::fmt::Display for Ipv6ExtHdr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HopByHop => write!(f, "hbh"),
+            Self::Routing => write!(f, "rt"),
+            Self::Fragment => write!(f, "frag"),
+            Self::Destination => write!(f, "dst"),
+            Self::Mobility => write!(f, "mh"),
+            Self::Authentication => write!(f, "auth"),
+        }
+    }
+}
+
+/// Log level for enhanced logging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum LogLevel {
+    Emerg,
+    Alert,
+    Crit,
+    Err,
+    Warn,
+    Notice,
+    Info,
+    Debug,
+}
+
+impl std::fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Emerg => write!(f, "emerg"),
+            Self::Alert => write!(f, "alert"),
+            Self::Crit => write!(f, "crit"),
+            Self::Err => write!(f, "err"),
+            Self::Warn => write!(f, "warn"),
+            Self::Notice => write!(f, "notice"),
+            Self::Info => write!(f, "info"),
+            Self::Debug => write!(f, "debug"),
         }
     }
 }
@@ -195,6 +304,35 @@ pub enum Match {
     ///
     /// Renders as `ct timeout set "{name}"`.
     CtTimeoutSet(String),
+    /// Match ICMP type and code.
+    ///
+    /// Renders as `icmp type {type_name} icmp code {code}`.
+    IcmpTypeCode(String, u8),
+    /// Match ICMPv6 type and code.
+    ///
+    /// Renders as `icmpv6 type {type_name} icmpv6 code {code}`.
+    Icmpv6TypeCode(String, u8),
+    /// Match 802.1q VLAN ID.
+    ///
+    /// Renders as `vlan id {id}`.
+    VlanId(u16),
+    /// Match DSCP (Differentiated Services Code Point).
+    ///
+    /// Renders as `ip dscp {value}`. Values 0-63.
+    Dscp(u8),
+    /// Match IPv6 extension header presence.
+    ///
+    /// Renders as `exthdr {type} exists`.
+    Ipv6ExtHdrExists(Ipv6ExtHdr),
+    /// Match IP fragment flags.
+    ///
+    /// Renders as `ip frag-off & 0x{mask:x} {op} 0x{value:x}`.
+    /// Common: more-fragments (`0x2000 != 0`), is-fragment (`0x1fff != 0`).
+    FragOff { mask: u16, op: String, value: u16 },
+    /// Match packet type (unicast, broadcast, multicast).
+    ///
+    /// Renders as `meta pkttype {type}`.
+    PktType(PktType),
     /// Raw nft expression (escape hatch).
     ///
     /// # Security
@@ -276,11 +414,40 @@ impl Rule {
                 Match::IcmpType(t) | Match::Icmpv6Type(t) => {
                     validate::validate_identifier(t)?;
                 }
-                Match::Limit { .. } | Match::MetaMark(_) | Match::Quota { .. } => {
+                Match::Limit { .. }
+                | Match::MetaMark(_)
+                | Match::Quota { .. }
+                | Match::Ipv6ExtHdrExists(_)
+                | Match::PktType(_) => {
                     // Typed values, no injection possible.
+                }
+                Match::Dscp(val) => {
+                    if *val > 63 {
+                        return Err(NeinError::InvalidRule(format!(
+                            "DSCP value {val} exceeds max 63"
+                        )));
+                    }
+                }
+                Match::VlanId(id) => {
+                    if *id > 4094 {
+                        return Err(NeinError::InvalidRule(format!(
+                            "VLAN ID {id} exceeds max 4094"
+                        )));
+                    }
                 }
                 Match::FlowOffload(name) | Match::CtTimeoutSet(name) => {
                     validate::validate_identifier(name)?;
+                }
+                Match::IcmpTypeCode(t, _) | Match::Icmpv6TypeCode(t, _) => {
+                    validate::validate_identifier(t)?;
+                }
+                Match::FragOff { op, .. } => {
+                    const VALID_OPS: &[&str] = &["==", "!=", "<", ">", "<=", ">="];
+                    if !VALID_OPS.contains(&op.as_str()) {
+                        return Err(NeinError::InvalidRule(format!(
+                            "invalid fragment comparison operator: {op}"
+                        )));
+                    }
                 }
                 Match::Raw(_) => {
                     // Deliberately not validated — caller's responsibility.
@@ -302,6 +469,14 @@ impl Rule {
             }
             Verdict::Log(Some(prefix)) => {
                 validate::validate_log_prefix(prefix)?;
+            }
+            Verdict::LogAdvanced {
+                prefix: Some(p), ..
+            } => {
+                validate::validate_log_prefix(p)?;
+            }
+            Verdict::CounterNamed(name) => {
+                validate::validate_identifier(name)?;
             }
             _ => {}
         }
@@ -353,6 +528,19 @@ impl Rule {
                 }
                 Match::FlowOffload(name) => write!(out, "flow offload @{name}"),
                 Match::CtTimeoutSet(name) => write!(out, "ct timeout set \"{name}\""),
+                Match::IcmpTypeCode(t, code) => {
+                    write!(out, "icmp type {t} icmp code {code}")
+                }
+                Match::Icmpv6TypeCode(t, code) => {
+                    write!(out, "icmpv6 type {t} icmpv6 code {code}")
+                }
+                Match::VlanId(id) => write!(out, "vlan id {id}"),
+                Match::Dscp(val) => write!(out, "ip dscp {val}"),
+                Match::Ipv6ExtHdrExists(hdr) => write!(out, "exthdr {hdr} exists"),
+                Match::FragOff { mask, op, value } => {
+                    write!(out, "ip frag-off & 0x{mask:x} {op} 0x{value:x}")
+                }
+                Match::PktType(pt) => write!(out, "meta pkttype {pt}"),
                 Match::Raw(expr) => write!(out, "{expr}"),
             }
             .unwrap();
@@ -962,5 +1150,293 @@ mod tests {
     fn verdict_set_mark_display() {
         assert_eq!(Verdict::SetMark(1).to_string(), "meta mark set 1");
         assert_eq!(Verdict::SetCtMark(42).to_string(), "ct mark set 42");
+    }
+
+    // -- Phase 5: ICMP type+code --
+
+    #[test]
+    fn render_icmp_type_code() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::IcmpTypeCode("echo-request".into(), 0));
+        assert_eq!(rule.render(), "icmp type echo-request icmp code 0 drop");
+    }
+
+    #[test]
+    fn render_icmpv6_type_code() {
+        let rule =
+            Rule::new(Verdict::Drop).matching(Match::Icmpv6TypeCode("echo-request".into(), 0));
+        assert_eq!(rule.render(), "icmpv6 type echo-request icmpv6 code 0 drop");
+    }
+
+    #[test]
+    fn validate_icmp_type_code_good() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::IcmpTypeCode("echo-reply".into(), 3));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_icmp_type_code_bad() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::IcmpTypeCode("bad;type".into(), 0));
+        assert!(rule.validate().is_err());
+    }
+
+    // -- Phase 5: VLAN ID --
+
+    #[test]
+    fn render_vlan_id() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::VlanId(100));
+        assert_eq!(rule.render(), "vlan id 100 accept");
+    }
+
+    #[test]
+    fn validate_vlan_id_good() {
+        assert!(
+            Rule::new(Verdict::Accept)
+                .matching(Match::VlanId(0))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            Rule::new(Verdict::Accept)
+                .matching(Match::VlanId(4094))
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_vlan_id_out_of_range() {
+        assert!(
+            Rule::new(Verdict::Accept)
+                .matching(Match::VlanId(4095))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            Rule::new(Verdict::Accept)
+                .matching(Match::VlanId(65535))
+                .validate()
+                .is_err()
+        );
+    }
+
+    // -- Phase 5: DSCP --
+
+    #[test]
+    fn render_dscp() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::Dscp(46));
+        assert_eq!(rule.render(), "ip dscp 46 accept");
+    }
+
+    #[test]
+    fn validate_dscp_good() {
+        assert!(
+            Rule::new(Verdict::Accept)
+                .matching(Match::Dscp(0))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            Rule::new(Verdict::Accept)
+                .matching(Match::Dscp(63))
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_dscp_out_of_range() {
+        assert!(
+            Rule::new(Verdict::Accept)
+                .matching(Match::Dscp(64))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            Rule::new(Verdict::Accept)
+                .matching(Match::Dscp(255))
+                .validate()
+                .is_err()
+        );
+    }
+
+    // -- Phase 5: IPv6 extension headers --
+
+    #[test]
+    fn render_ipv6_ext_hdr() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::Ipv6ExtHdrExists(Ipv6ExtHdr::Routing));
+        assert_eq!(rule.render(), "exthdr rt exists drop");
+    }
+
+    #[test]
+    fn ipv6_ext_hdr_display() {
+        assert_eq!(Ipv6ExtHdr::HopByHop.to_string(), "hbh");
+        assert_eq!(Ipv6ExtHdr::Routing.to_string(), "rt");
+        assert_eq!(Ipv6ExtHdr::Fragment.to_string(), "frag");
+        assert_eq!(Ipv6ExtHdr::Destination.to_string(), "dst");
+        assert_eq!(Ipv6ExtHdr::Mobility.to_string(), "mh");
+        assert_eq!(Ipv6ExtHdr::Authentication.to_string(), "auth");
+    }
+
+    #[test]
+    fn validate_ipv6_ext_hdr() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::Ipv6ExtHdrExists(Ipv6ExtHdr::Fragment));
+        assert!(rule.validate().is_ok());
+    }
+
+    // -- Phase 5: Fragment matching --
+
+    #[test]
+    fn render_frag_more_fragments() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::FragOff {
+            mask: 0x2000,
+            op: "!=".into(),
+            value: 0,
+        });
+        assert_eq!(rule.render(), "ip frag-off & 0x2000 != 0x0 drop");
+    }
+
+    #[test]
+    fn render_frag_is_fragment() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::FragOff {
+            mask: 0x1fff,
+            op: "!=".into(),
+            value: 0,
+        });
+        assert_eq!(rule.render(), "ip frag-off & 0x1fff != 0x0 drop");
+    }
+
+    #[test]
+    fn validate_frag_good() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::FragOff {
+            mask: 0x2000,
+            op: "!=".into(),
+            value: 0,
+        });
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_frag_bad_op() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::FragOff {
+            mask: 0x2000,
+            op: "evil;op".into(),
+            value: 0,
+        });
+        assert!(rule.validate().is_err());
+    }
+
+    // -- Phase 5: Packet type --
+
+    #[test]
+    fn render_pkt_type_broadcast() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::PktType(PktType::Broadcast));
+        assert_eq!(rule.render(), "meta pkttype broadcast drop");
+    }
+
+    #[test]
+    fn render_pkt_type_multicast() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::PktType(PktType::Multicast));
+        assert_eq!(rule.render(), "meta pkttype multicast accept");
+    }
+
+    #[test]
+    fn pkt_type_display() {
+        assert_eq!(PktType::Unicast.to_string(), "unicast");
+        assert_eq!(PktType::Broadcast.to_string(), "broadcast");
+        assert_eq!(PktType::Multicast.to_string(), "multicast");
+    }
+
+    // -- Phase 5: Enhanced logging --
+
+    #[test]
+    fn render_log_advanced_full() {
+        let rule = Rule::new(Verdict::LogAdvanced {
+            prefix: Some("NEIN: ".into()),
+            level: Some(LogLevel::Warn),
+            group: Some(1),
+            snaplen: Some(128),
+        });
+        assert_eq!(
+            rule.render(),
+            "log prefix \"NEIN: \" level warn group 1 snaplen 128"
+        );
+    }
+
+    #[test]
+    fn render_log_advanced_level_only() {
+        let rule = Rule::new(Verdict::LogAdvanced {
+            prefix: None,
+            level: Some(LogLevel::Debug),
+            group: None,
+            snaplen: None,
+        });
+        assert_eq!(rule.render(), "log level debug");
+    }
+
+    #[test]
+    fn render_log_advanced_group_only() {
+        let rule = Rule::new(Verdict::LogAdvanced {
+            prefix: None,
+            level: None,
+            group: Some(5),
+            snaplen: None,
+        });
+        assert_eq!(rule.render(), "log group 5");
+    }
+
+    #[test]
+    fn validate_log_advanced_good() {
+        let rule = Rule::new(Verdict::LogAdvanced {
+            prefix: Some("TEST: ".into()),
+            level: Some(LogLevel::Info),
+            group: None,
+            snaplen: None,
+        });
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_log_advanced_bad_prefix() {
+        let rule = Rule::new(Verdict::LogAdvanced {
+            prefix: Some("bad;prefix".into()),
+            level: None,
+            group: None,
+            snaplen: None,
+        });
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn log_level_display() {
+        assert_eq!(LogLevel::Emerg.to_string(), "emerg");
+        assert_eq!(LogLevel::Alert.to_string(), "alert");
+        assert_eq!(LogLevel::Crit.to_string(), "crit");
+        assert_eq!(LogLevel::Err.to_string(), "err");
+        assert_eq!(LogLevel::Warn.to_string(), "warn");
+        assert_eq!(LogLevel::Notice.to_string(), "notice");
+        assert_eq!(LogLevel::Info.to_string(), "info");
+        assert_eq!(LogLevel::Debug.to_string(), "debug");
+    }
+
+    // -- Phase 5: Enhanced counters --
+
+    #[test]
+    fn render_counter_named() {
+        let rule = Rule::new(Verdict::CounterNamed("http_hits".into()))
+            .matching(Match::Protocol(Protocol::Tcp))
+            .matching(Match::DPort(80));
+        assert_eq!(rule.render(), "tcp dport 80 counter name \"http_hits\"");
+    }
+
+    #[test]
+    fn validate_counter_named_good() {
+        let rule = Rule::new(Verdict::CounterNamed("my-counter".into()));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_counter_named_bad() {
+        let rule = Rule::new(Verdict::CounterNamed("bad;counter".into()));
+        assert!(rule.validate().is_err());
     }
 }

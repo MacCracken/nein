@@ -7,7 +7,10 @@ use nein::geoip::{CountryBlock, GeoIpBlocklist};
 use nein::mesh::SidecarConfig;
 use nein::nat;
 use nein::policy;
-use nein::rule::{self, Match, Protocol, QuotaMode, QuotaUnit, RateUnit, Rule, Verdict};
+use nein::rule::{
+    self, Ipv6ExtHdr, LogLevel, Match, PktType, Protocol, QuotaMode, QuotaUnit, RateUnit, Rule,
+    Verdict,
+};
 use nein::set::{NftSet, SetFlag, SetType};
 use nein::table::{CtTimeout, Define, Family, Flowtable, Table};
 
@@ -324,6 +327,29 @@ fn bench_nat_range_render(c: &mut Criterion) {
     });
 }
 
+fn bench_deep_protocol_rule(c: &mut Criterion) {
+    let rule = Rule::new(Verdict::LogAdvanced {
+        prefix: Some("DEEP: ".into()),
+        level: Some(LogLevel::Warn),
+        group: None,
+        snaplen: Some(128),
+    })
+    .matching(Match::PktType(PktType::Broadcast))
+    .matching(Match::VlanId(100))
+    .matching(Match::Dscp(46))
+    .matching(Match::Ipv6ExtHdrExists(Ipv6ExtHdr::Fragment))
+    .matching(Match::IcmpTypeCode("echo-request".into(), 0))
+    .comment("deep protocol bench");
+
+    c.bench_function("deep_protocol_render", |b| {
+        b.iter(|| black_box(rule.render()));
+    });
+
+    c.bench_function("deep_protocol_validate", |b| {
+        b.iter(|| black_box(rule.validate()).unwrap());
+    });
+}
+
 criterion_group!(
     benches,
     bench_rule_render,
@@ -345,5 +371,6 @@ criterion_group!(
     bench_ct_timeout_render,
     bench_quota_render,
     bench_nat_range_render,
+    bench_deep_protocol_rule,
 );
 criterion_main!(benches);
