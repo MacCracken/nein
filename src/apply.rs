@@ -69,6 +69,76 @@ pub async fn delete_rule(
     .await
 }
 
+/// Insert a rule at the beginning of a chain.
+///
+/// Uses `insert rule` which places the rule before all existing rules.
+pub async fn insert_rule(
+    family: &str,
+    table: &str,
+    chain: &str,
+    rule: &str,
+) -> Result<(), NeinError> {
+    validate::validate_identifier(family)?;
+    validate::validate_identifier(table)?;
+    validate::validate_identifier(chain)?;
+    validate::validate_nft_element(rule)?;
+    tracing::debug!(family, table, chain, rule, "inserting rule at beginning");
+    run_nft_stdin(&format!("insert rule {family} {table} {chain} {rule}\n")).await
+}
+
+/// Add a rule after a specific rule handle.
+///
+/// The new rule is inserted immediately after the rule identified by
+/// `position_handle`. Handles can be obtained from
+/// [`list_ruleset_with_handles`].
+pub async fn add_rule_after(
+    family: &str,
+    table: &str,
+    chain: &str,
+    position_handle: u64,
+    rule: &str,
+) -> Result<(), NeinError> {
+    validate::validate_identifier(family)?;
+    validate::validate_identifier(table)?;
+    validate::validate_identifier(chain)?;
+    validate::validate_nft_element(rule)?;
+    tracing::debug!(
+        family,
+        table,
+        chain,
+        position_handle,
+        rule,
+        "adding rule after handle"
+    );
+    run_nft_stdin(&format!(
+        "add rule {family} {table} {chain} position {position_handle} {rule}\n"
+    ))
+    .await
+}
+
+/// Replace a rule atomically by its handle.
+///
+/// The rule identified by `handle` is replaced with `new_rule` in a
+/// single nft operation. Handles can be obtained from
+/// [`list_ruleset_with_handles`].
+pub async fn replace_rule(
+    family: &str,
+    table: &str,
+    chain: &str,
+    handle: u64,
+    new_rule: &str,
+) -> Result<(), NeinError> {
+    validate::validate_identifier(family)?;
+    validate::validate_identifier(table)?;
+    validate::validate_identifier(chain)?;
+    validate::validate_nft_element(new_rule)?;
+    tracing::debug!(family, table, chain, handle, new_rule, "replacing rule");
+    run_nft_stdin(&format!(
+        "replace rule {family} {table} {chain} handle {handle} {new_rule}\n"
+    ))
+    .await
+}
+
 /// List current ruleset (for inspection).
 pub async fn list_ruleset() -> Result<String, NeinError> {
     tracing::debug!("listing ruleset");

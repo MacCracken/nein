@@ -128,6 +128,15 @@ impl Firewall {
         tracing::debug!(tables = self.tables.len(), "validating firewall");
         for table in &self.tables {
             validate::validate_identifier(&table.name)?;
+            for define in &table.defines {
+                define.validate()?;
+            }
+            for ft in &table.flowtables {
+                ft.validate()?;
+            }
+            for ct in &table.ct_timeouts {
+                ct.validate()?;
+            }
             for set in &table.sets {
                 set.validate()?;
             }

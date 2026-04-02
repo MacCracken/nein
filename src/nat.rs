@@ -35,6 +35,19 @@ pub enum NatRule {
         to_port: u16,
         comment: Option<String>,
     },
+    /// Destination NAT with port range mapping.
+    ///
+    /// Maps a range of host ports to a range of container ports.
+    /// Source and destination ranges must be the same size.
+    DnatRange {
+        protocol: crate::rule::Protocol,
+        dest_port_start: u16,
+        dest_port_end: u16,
+        to_addr: String,
+        to_port_start: u16,
+        to_port_end: u16,
+        comment: Option<String>,
+    },
 }
 
 impl NatRule {
@@ -76,6 +89,35 @@ impl NatRule {
                 }
             }
             Self::Redirect { comment, .. } => {
+                if let Some(c) = comment {
+                    validate::validate_comment(c)?;
+                }
+            }
+            Self::DnatRange {
+                dest_port_start,
+                dest_port_end,
+                to_addr,
+                to_port_start,
+                to_port_end,
+                comment,
+                ..
+            } => {
+                validate::validate_addr(to_addr)?;
+                if dest_port_start > dest_port_end {
+                    return Err(NeinError::InvalidRule(format!(
+                        "dest port range start ({dest_port_start}) exceeds end ({dest_port_end})"
+                    )));
+                }
+                if to_port_start > to_port_end {
+                    return Err(NeinError::InvalidRule(format!(
+                        "to port range start ({to_port_start}) exceeds end ({to_port_end})"
+                    )));
+                }
+                if (dest_port_end - dest_port_start) != (to_port_end - to_port_start) {
+                    return Err(NeinError::InvalidRule(
+                        "source and destination port ranges must be the same size".into(),
+                    ));
+                }
                 if let Some(c) = comment {
                     validate::validate_comment(c)?;
                 }
@@ -145,6 +187,28 @@ impl NatRule {
                 }
                 r
             }
+            Self::DnatRange {
+                protocol,
+                dest_port_start,
+                dest_port_end,
+                to_addr,
+                to_port_start,
+                to_port_end,
+                comment,
+            } => {
+                let addr_str = if to_addr.contains(':') {
+                    format!("[{to_addr}]")
+                } else {
+                    to_addr.clone()
+                };
+                let mut r = format!(
+                    "{protocol} dport {dest_port_start}-{dest_port_end} dnat to {addr_str}:{to_port_start}-{to_port_end}"
+                );
+                if let Some(c) = comment {
+                    r.push_str(&format!(" comment \"{c}\""));
+                }
+                r
+            }
         }
     }
 }
@@ -158,6 +222,31 @@ pub fn port_forward(host_port: u16, container_addr: &str, container_port: u16) -
         to_addr: container_addr.to_string(),
         to_port: container_port,
         comment: Some(format!("container port {host_port}->{container_port}")),
+    }
+}
+
+/// Convenience: port range forward (DNAT) for container port range mapping.
+///
+/// Maps `host_start..=host_end` to `container_addr:container_start..=container_start+(host_end-host_start)`.
+#[must_use]
+pub fn port_range_forward(
+    host_start: u16,
+    host_end: u16,
+    container_addr: &str,
+    container_start: u16,
+) -> NatRule {
+    let range_size = host_end - host_start;
+    NatRule::DnatRange {
+        protocol: crate::rule::Protocol::Tcp,
+        dest_port_start: host_start,
+        dest_port_end: host_end,
+        to_addr: container_addr.to_string(),
+        to_port_start: container_start,
+        to_port_end: container_start + range_size,
+        comment: Some(format!(
+            "container ports {host_start}-{host_end}->{container_start}-{}",
+            container_start + range_size
+        )),
     }
 }
 
@@ -381,5 +470,108 @@ mod tests {
             comment: None,
         };
         assert_eq!(rule.render(), "tcp dport 80 dnat to 10.0.0.1:8080");
+    }
+
+    // -- DnatRange tests --
+
+    #[test]
+    fn render_dnat_range() {
+        let rule = port_range_forward(80, 89, "172.17.0.2", 8080);
+        let rendered = rule.render();
+        assert!(rendered.contains("tcp dport 80-89 dnat to 172.17.0.2:8080-8089"));
+    }
+
+    #[test]
+    fn render_dnat_range_ipv6() {
+        let rule = NatRule::DnatRange {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port_start: 80,
+            dest_port_end: 89,
+            to_addr: "2001:db8::1".to_string(),
+            to_port_start: 8080,
+            to_port_end: 8089,
+            comment: None,
+        };
+        assert_eq!(
+            rule.render(),
+            "tcp dport 80-89 dnat to [2001:db8::1]:8080-8089"
+        );
+    }
+
+    #[test]
+    fn render_dnat_range_with_comment() {
+        let rule = NatRule::DnatRange {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port_start: 80,
+            dest_port_end: 89,
+            to_addr: "10.0.0.1".to_string(),
+            to_port_start: 8080,
+            to_port_end: 8089,
+            comment: Some("web range".to_string()),
+        };
+        let rendered = rule.render();
+        assert!(rendered.contains("comment \"web range\""));
+    }
+
+    #[test]
+    fn validate_dnat_range_good() {
+        let rule = port_range_forward(80, 89, "172.17.0.2", 8080);
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_dnat_range_bad_addr() {
+        let rule = NatRule::DnatRange {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port_start: 80,
+            dest_port_end: 89,
+            to_addr: "evil;addr".to_string(),
+            to_port_start: 8080,
+            to_port_end: 8089,
+            comment: None,
+        };
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_dnat_range_inverted_dest() {
+        let rule = NatRule::DnatRange {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port_start: 89,
+            dest_port_end: 80,
+            to_addr: "10.0.0.1".to_string(),
+            to_port_start: 8080,
+            to_port_end: 8089,
+            comment: None,
+        };
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_dnat_range_size_mismatch() {
+        let rule = NatRule::DnatRange {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port_start: 80,
+            dest_port_end: 89,
+            to_addr: "10.0.0.1".to_string(),
+            to_port_start: 8080,
+            to_port_end: 8085,
+            comment: None,
+        };
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_dnat_range_single_port() {
+        let rule = NatRule::DnatRange {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port_start: 80,
+            dest_port_end: 80,
+            to_addr: "10.0.0.1".to_string(),
+            to_port_start: 8080,
+            to_port_end: 8080,
+            comment: None,
+        };
+        assert!(rule.validate().is_ok());
     }
 }

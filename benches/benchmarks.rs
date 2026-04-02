@@ -7,9 +7,9 @@ use nein::geoip::{CountryBlock, GeoIpBlocklist};
 use nein::mesh::SidecarConfig;
 use nein::nat;
 use nein::policy;
-use nein::rule::{self, Match, Protocol, RateUnit, Rule, Verdict};
+use nein::rule::{self, Match, Protocol, QuotaMode, QuotaUnit, RateUnit, Rule, Verdict};
 use nein::set::{NftSet, SetFlag, SetType};
-use nein::table::{Family, Table};
+use nein::table::{CtTimeout, Define, Family, Flowtable, Table};
 
 // -- Core rule benchmarks --
 
@@ -268,6 +268,62 @@ fn bench_firewall_validate(c: &mut Criterion) {
     });
 }
 
+// -- Phase 4 benchmarks --
+
+fn bench_define_render(c: &mut Criterion) {
+    let mut table = Table::new("filter", Family::Inet);
+    for i in 0..20 {
+        table.add_define(Define::new(&format!("VAR_{i}"), &format!("10.0.{i}.0/24")));
+    }
+    c.bench_function("table_20_defines_render", |b| {
+        b.iter(|| black_box(table.render()));
+    });
+}
+
+fn bench_flowtable_render(c: &mut Criterion) {
+    let ft = Flowtable::new(
+        "ft",
+        0,
+        vec!["eth0".into(), "eth1".into(), "eth2".into(), "eth3".into()],
+    );
+    c.bench_function("flowtable_render", |b| {
+        b.iter(|| black_box(ft.render()));
+    });
+}
+
+fn bench_ct_timeout_render(c: &mut Criterion) {
+    let ct = CtTimeout::new("tcp-long", Protocol::Tcp)
+        .l3proto(Family::Ip)
+        .timeout("established", 7200)
+        .timeout("close_wait", 60)
+        .timeout("time_wait", 120);
+    c.bench_function("ct_timeout_render", |b| {
+        b.iter(|| black_box(ct.render()));
+    });
+}
+
+fn bench_quota_render(c: &mut Criterion) {
+    let rule = Rule::new(Verdict::Drop)
+        .matching(Match::Protocol(Protocol::Tcp))
+        .matching(Match::DPort(80))
+        .matching(Match::Quota {
+            mode: QuotaMode::Over,
+            amount: 25,
+            unit: QuotaUnit::MBytes,
+        })
+        .comment("rate limit");
+    c.bench_function("quota_rule_render", |b| {
+        b.iter(|| black_box(rule.render()));
+    });
+}
+
+fn bench_nat_range_render(c: &mut Criterion) {
+    let rule = nat::port_range_forward(80, 99, "172.17.0.2", 8080);
+    c.bench_function("nat_range_render", |b| {
+        b.iter(|| black_box(rule.render()));
+    });
+}
+
 criterion_group!(
     benches,
     bench_rule_render,
@@ -284,5 +340,10 @@ criterion_group!(
     bench_set,
     bench_toml_parse,
     bench_firewall_validate,
+    bench_define_render,
+    bench_flowtable_render,
+    bench_ct_timeout_render,
+    bench_quota_render,
+    bench_nat_range_render,
 );
 criterion_main!(benches);

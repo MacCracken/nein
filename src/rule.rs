@@ -16,6 +16,10 @@ pub enum Verdict {
     Return,
     Log(Option<String>),
     Counter,
+    /// Set packet mark (`meta mark set {value}`).
+    SetMark(u32),
+    /// Set conntrack mark (`ct mark set {value}`).
+    SetCtMark(u32),
 }
 
 /// IP protocol.
@@ -51,6 +55,8 @@ impl std::fmt::Display for Verdict {
             Self::Log(Some(p)) => write!(f, "log prefix \"{p}\""),
             Self::Log(None) => write!(f, "log"),
             Self::Counter => write!(f, "counter"),
+            Self::SetMark(val) => write!(f, "meta mark set {val}"),
+            Self::SetCtMark(val) => write!(f, "ct mark set {val}"),
         }
     }
 }
@@ -72,6 +78,46 @@ impl std::fmt::Display for RateUnit {
             Self::Minute => write!(f, "minute"),
             Self::Hour => write!(f, "hour"),
             Self::Day => write!(f, "day"),
+        }
+    }
+}
+
+/// Quota direction (over or until a threshold).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum QuotaMode {
+    /// Match when quota is exceeded.
+    Over,
+    /// Match while quota remains.
+    Until,
+}
+
+impl std::fmt::Display for QuotaMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Over => write!(f, "over"),
+            Self::Until => write!(f, "until"),
+        }
+    }
+}
+
+/// Byte unit for quota rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum QuotaUnit {
+    Bytes,
+    KBytes,
+    MBytes,
+    GBytes,
+}
+
+impl std::fmt::Display for QuotaUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bytes => write!(f, "bytes"),
+            Self::KBytes => write!(f, "kbytes"),
+            Self::MBytes => write!(f, "mbytes"),
+            Self::GBytes => write!(f, "gbytes"),
         }
     }
 }
@@ -133,6 +179,22 @@ pub enum Match {
     ///
     /// Renders as `meta mark {value}`.
     MetaMark(u32),
+    /// Byte-based quota match.
+    ///
+    /// Renders as `quota {mode} {amount} {unit}`.
+    Quota {
+        mode: QuotaMode,
+        amount: u64,
+        unit: QuotaUnit,
+    },
+    /// Flow offload to a named flowtable.
+    ///
+    /// Renders as `flow offload @{name}`.
+    FlowOffload(String),
+    /// Set conntrack timeout for matching packets.
+    ///
+    /// Renders as `ct timeout set "{name}"`.
+    CtTimeoutSet(String),
     /// Raw nft expression (escape hatch).
     ///
     /// # Security
@@ -214,8 +276,11 @@ impl Rule {
                 Match::IcmpType(t) | Match::Icmpv6Type(t) => {
                     validate::validate_identifier(t)?;
                 }
-                Match::Limit { .. } | Match::MetaMark(_) => {
+                Match::Limit { .. } | Match::MetaMark(_) | Match::Quota { .. } => {
                     // Typed values, no injection possible.
+                }
+                Match::FlowOffload(name) | Match::CtTimeoutSet(name) => {
+                    validate::validate_identifier(name)?;
                 }
                 Match::Raw(_) => {
                     // Deliberately not validated — caller's responsibility.
@@ -283,6 +348,11 @@ impl Rule {
                 Match::IcmpType(t) => write!(out, "icmp type {t}"),
                 Match::Icmpv6Type(t) => write!(out, "icmpv6 type {t}"),
                 Match::MetaMark(val) => write!(out, "meta mark {val}"),
+                Match::Quota { mode, amount, unit } => {
+                    write!(out, "quota {mode} {amount} {unit}")
+                }
+                Match::FlowOffload(name) => write!(out, "flow offload @{name}"),
+                Match::CtTimeoutSet(name) => write!(out, "ct timeout set \"{name}\""),
                 Match::Raw(expr) => write!(out, "{expr}"),
             }
             .unwrap();
@@ -784,5 +854,113 @@ mod tests {
     fn validate_meta_mark() {
         let rule = Rule::new(Verdict::Accept).matching(Match::MetaMark(42));
         assert!(rule.validate().is_ok());
+    }
+
+    // -- Quota tests --
+
+    #[test]
+    fn render_quota_over() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::Quota {
+            mode: QuotaMode::Over,
+            amount: 25,
+            unit: QuotaUnit::MBytes,
+        });
+        assert_eq!(rule.render(), "quota over 25 mbytes drop");
+    }
+
+    #[test]
+    fn render_quota_until() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::Quota {
+            mode: QuotaMode::Until,
+            amount: 100,
+            unit: QuotaUnit::GBytes,
+        });
+        assert_eq!(rule.render(), "quota until 100 gbytes accept");
+    }
+
+    #[test]
+    fn validate_quota() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::Quota {
+            mode: QuotaMode::Over,
+            amount: 1,
+            unit: QuotaUnit::Bytes,
+        });
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn quota_mode_display() {
+        assert_eq!(QuotaMode::Over.to_string(), "over");
+        assert_eq!(QuotaMode::Until.to_string(), "until");
+    }
+
+    #[test]
+    fn quota_unit_display() {
+        assert_eq!(QuotaUnit::Bytes.to_string(), "bytes");
+        assert_eq!(QuotaUnit::KBytes.to_string(), "kbytes");
+        assert_eq!(QuotaUnit::MBytes.to_string(), "mbytes");
+        assert_eq!(QuotaUnit::GBytes.to_string(), "gbytes");
+    }
+
+    // -- Flow offload tests --
+
+    #[test]
+    fn render_flow_offload() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::FlowOffload("ft".into()));
+        assert_eq!(rule.render(), "flow offload @ft accept");
+    }
+
+    #[test]
+    fn validate_flow_offload_good() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::FlowOffload("myft".into()));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_flow_offload_bad() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::FlowOffload("bad;ft".into()));
+        assert!(rule.validate().is_err());
+    }
+
+    // -- CtTimeoutSet tests --
+
+    #[test]
+    fn render_ct_timeout_set() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::CtTimeoutSet("tcp-long".into()));
+        assert_eq!(rule.render(), "ct timeout set \"tcp-long\" accept");
+    }
+
+    #[test]
+    fn validate_ct_timeout_set_good() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::CtTimeoutSet("my-timeout".into()));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_ct_timeout_set_bad() {
+        let rule = Rule::new(Verdict::Accept).matching(Match::CtTimeoutSet("evil;timeout".into()));
+        assert!(rule.validate().is_err());
+    }
+
+    // -- Mark setting verdict tests --
+
+    #[test]
+    fn render_set_mark() {
+        let rule = Rule::new(Verdict::SetMark(42))
+            .matching(Match::Protocol(Protocol::Tcp))
+            .matching(Match::DPort(80));
+        assert_eq!(rule.render(), "tcp dport 80 meta mark set 42");
+    }
+
+    #[test]
+    fn render_set_ct_mark() {
+        let rule = Rule::new(Verdict::SetCtMark(0xff));
+        assert_eq!(rule.render(), "ct mark set 255");
+    }
+
+    #[test]
+    fn verdict_set_mark_display() {
+        assert_eq!(Verdict::SetMark(1).to_string(), "meta mark set 1");
+        assert_eq!(Verdict::SetCtMark(42).to_string(), "ct mark set 42");
     }
 }
