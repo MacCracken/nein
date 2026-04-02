@@ -1,4 +1,5 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use nein::Firewall;
 use nein::bridge::{BridgeConfig, BridgeFirewall, IsolationGroup, PortMapping};
 use nein::chain::{Chain, ChainType, Hook, Policy};

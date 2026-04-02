@@ -34,7 +34,7 @@ RUN_ID="${VERSION}_${COMMIT}_${TIMESTAMP}"
 echo "Running benchmarks for $VERSION ($COMMIT)..."
 
 # Run criterion benchmarks, capture output
-BENCH_OUTPUT=$(cargo bench --all-features --bench benchmarks 2>&1)
+BENCH_OUTPUT=$(cargo bench --features full --bench benchmarks 2>&1)
 
 # Save raw criterion output
 RAW_FILE="$BENCH_DIR/${VERSION}_${COMMIT}.txt"

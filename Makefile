@@ -1,7 +1,7 @@
 .PHONY: check fmt clippy test bench bench-track audit deny fuzz coverage build doc clean
 
 # Run all CI checks locally
-check: fmt clippy test audit
+check: fmt clippy test audit deny
 
 # Format check
 fmt:
@@ -9,15 +9,18 @@ fmt:
 
 # Lint (zero warnings)
 clippy:
-	cargo clippy --all-features --all-targets -- -D warnings
+	cargo clippy --all-targets -- -D warnings
+	cargo clippy --features full --all-targets -- -D warnings
+	cargo clippy --no-default-features --all-targets -- -D warnings
 
 # Run test suite
 test:
-	cargo test --all-features
+	cargo test --features full
+	cargo test --features full --doc
 
 # Run benchmarks (criterion)
 bench:
-	cargo bench --all-features --no-fail-fast
+	cargo bench --features full --no-fail-fast
 
 # Run benchmarks and record to historical log
 bench-track:
@@ -39,18 +42,17 @@ fuzz:
 
 # Generate coverage report
 coverage:
-	cargo tarpaulin --all-features --skip-clean
-	@echo "Coverage report generated"
+	cargo llvm-cov --features full --lcov --output-path lcov.info
 
 # Build release
 build:
-	cargo build --release --all-features
+	cargo build --release --features full
 
 # Generate documentation
 doc:
-	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features full
 
 # Clean build artifacts
 clean:
 	cargo clean
-	rm -rf coverage/
+	rm -rf coverage/ lcov.info

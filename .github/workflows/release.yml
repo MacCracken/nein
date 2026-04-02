@@ -33,21 +33,21 @@ jobs:
             exit 1
           fi
           echo "Version verified: $TAG_VERSION"
-      - name: Strip private dependencies
+      - name: Strip private dependencies for publish
         run: |
-          # Remove the netns feature and agnosys dep — agnosys is publish = false
-          # and cannot be resolved from crates.io
+          # Remove netns feature and agnosys dep — agnosys uses a git dep
+          # which crates.io does not allow in published crates.
+          # The netns module is excluded from the "full" feature set and
+          # is only available to consumers who depend on agnosys directly.
           sed -i '/^netns = /d' Cargo.toml
           sed -i '/^agnosys = /d' Cargo.toml
-          sed -i '/feature = "netns"/d' src/lib.rs
+          # Remove the netns module declaration from lib.rs
+          sed -i '/#\[cfg(feature = "netns")\]/d' src/lib.rs
           sed -i '/pub mod netns;/d' src/lib.rs
-          cargo check --quiet
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "strip private deps for publish"
+          # Verify the crate still builds without netns
+          cargo check --features full --quiet
       - name: Publish
-        run: cargo publish
+        run: cargo publish --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

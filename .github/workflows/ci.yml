@@ -31,10 +31,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Clippy (no default features)
         run: cargo clippy --no-default-features --all-targets -- -D warnings
-      - name: Clippy (all features)
+      - name: Clippy (full features)
         run: cargo clippy --features full --all-targets -- -D warnings
-      - name: Type check
-        run: cargo check
 
   security:
     name: Security Audit
@@ -78,7 +76,7 @@ jobs:
       - name: Run tests
         run: cargo test --features full
       - name: Run doc tests
-        run: cargo test --doc
+        run: cargo test --features full --doc
 
   test-minimal:
     name: Test (no default features)

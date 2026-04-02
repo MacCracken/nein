@@ -4,7 +4,7 @@
 [graph]
 targets = []
 # Use "full" instead of all-features: the "netns" feature depends on agnosys
-# which is a private (publish = false) path dependency, unavailable on crates.io.
+# which is a git dependency excluded from the "full" feature set.
 features = ["full"]
 
 [advisories]
@@ -34,3 +34,4 @@ highlight = "all"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = ["https://github.com/MacCracken/agnosys"]
