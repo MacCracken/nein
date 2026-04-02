@@ -420,20 +420,49 @@ impl Rule {
     /// Add multiple source IPv4 address matches using anonymous set syntax.
     ///
     /// Renders as `ip saddr { addr1, addr2, ... }`.
+    /// Each address is validated. Invalid addresses are skipped with a
+    /// tracing warning.
     #[must_use]
     pub fn matching_addrs(mut self, addrs: &[&str]) -> Self {
-        self.matches
-            .push(Match::Raw(format!("ip saddr {{ {} }}", addrs.join(", "))));
+        let valid: Vec<&str> = addrs
+            .iter()
+            .copied()
+            .filter(|a| {
+                let ok = validate::validate_addr(a).is_ok();
+                if !ok {
+                    tracing::warn!(addr = a, "skipping invalid address in matching_addrs");
+                }
+                ok
+            })
+            .collect();
+        if !valid.is_empty() {
+            self.matches
+                .push(Match::Raw(format!("ip saddr {{ {} }}", valid.join(", "))));
+        }
         self
     }
 
     /// Add multiple source IPv6 address matches using anonymous set syntax.
     ///
     /// Renders as `ip6 saddr { addr1, addr2, ... }`.
+    /// Each address is validated. Invalid addresses are skipped.
     #[must_use]
     pub fn matching_addrs6(mut self, addrs: &[&str]) -> Self {
-        self.matches
-            .push(Match::Raw(format!("ip6 saddr {{ {} }}", addrs.join(", "))));
+        let valid: Vec<&str> = addrs
+            .iter()
+            .copied()
+            .filter(|a| {
+                let ok = validate::validate_addr(a).is_ok();
+                if !ok {
+                    tracing::warn!(addr = a, "skipping invalid address in matching_addrs6");
+                }
+                ok
+            })
+            .collect();
+        if !valid.is_empty() {
+            self.matches
+                .push(Match::Raw(format!("ip6 saddr {{ {} }}", valid.join(", "))));
+        }
         self
     }
 
@@ -661,6 +690,36 @@ pub fn rate_limit_tcp(port: u16, rate: u32, unit: RateUnit) -> Rule {
             unit,
             burst: rate,
         })
+}
+
+/// Convenience: rate-limited accept on a UDP port.
+#[must_use]
+pub fn rate_limit_udp(port: u16, rate: u32, unit: RateUnit) -> Rule {
+    Rule::new(Verdict::Accept)
+        .matching(Match::Protocol(Protocol::Udp))
+        .matching(Match::DPort(port))
+        .matching(Match::Limit {
+            rate,
+            unit,
+            burst: rate,
+        })
+}
+
+/// Convenience: rate-limited accept for a QUIC port (UDP with QUIC semantics).
+///
+/// Protects against QUIC connection migration flooding by limiting
+/// the rate of new UDP packets to the QUIC port.
+#[must_use]
+pub fn rate_limit_quic(port: u16, rate: u32, unit: RateUnit) -> Rule {
+    Rule::new(Verdict::Accept)
+        .matching(Match::Protocol(Protocol::Udp))
+        .matching(Match::DPort(port))
+        .matching(Match::Limit {
+            rate,
+            unit,
+            burst: rate.saturating_mul(2),
+        })
+        .comment(&format!("quic rate limit port {port}"))
 }
 
 /// Convenience: drop traffic from an IPv6 source.
@@ -1526,5 +1585,24 @@ mod tests {
     fn matching_addrs6() {
         let rule = Rule::new(Verdict::Drop).matching_addrs6(&["fe80::/10", "::1"]);
         assert_eq!(rule.render(), "ip6 saddr { fe80::/10, ::1 } drop");
+    }
+
+    // -- Phase 8: QUIC rate limiting --
+
+    #[test]
+    fn render_rate_limit_udp() {
+        let rule = super::rate_limit_udp(53, 100, RateUnit::Second);
+        let rendered = rule.render();
+        assert!(rendered.contains("udp dport 53"));
+        assert!(rendered.contains("limit rate 100/second burst 100 packets"));
+    }
+
+    #[test]
+    fn render_rate_limit_quic() {
+        let rule = super::rate_limit_quic(443, 1000, RateUnit::Second);
+        let rendered = rule.render();
+        assert!(rendered.contains("udp dport 443"));
+        assert!(rendered.contains("limit rate 1000/second burst 2000 packets"));
+        assert!(rendered.contains("quic rate limit port 443"));
     }
 }

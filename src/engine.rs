@@ -33,11 +33,59 @@ pub struct AgentPolicy {
     pub allow_loopback: bool,
 }
 
+/// Transport type for policy port specifications.
+///
+/// Distinguishes QUIC from plain UDP at the policy level. Both QUIC and
+/// UDP map to `Protocol::Udp` in nftables rules, but QUIC ports get
+/// additional annotations in comments for audit visibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Transport {
+    /// Standard TCP.
+    Tcp,
+    /// Standard UDP.
+    Udp,
+    /// QUIC over UDP — semantically distinct for policy purposes.
+    Quic,
+}
+
+impl Transport {
+    /// The nftables protocol for this transport.
+    #[must_use]
+    #[inline]
+    pub fn protocol(self) -> Protocol {
+        match self {
+            Self::Tcp => Protocol::Tcp,
+            Self::Udp | Self::Quic => Protocol::Udp,
+        }
+    }
+
+    /// Label for comments and logging.
+    #[must_use]
+    #[inline]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            Self::Udp => "udp",
+            Self::Quic => "quic",
+        }
+    }
+}
+
+impl std::fmt::Display for Transport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label())
+    }
+}
+
 /// A port specification for policy rules.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortSpec {
     pub protocol: Protocol,
     pub port: u16,
+    /// Transport type (TCP, UDP, or QUIC). Defaults to matching `protocol`.
+    #[serde(default)]
+    pub transport: Option<Transport>,
 }
 
 impl PortSpec {
@@ -46,6 +94,7 @@ impl PortSpec {
         Self {
             protocol: Protocol::Tcp,
             port,
+            transport: Some(Transport::Tcp),
         }
     }
 
@@ -54,7 +103,31 @@ impl PortSpec {
         Self {
             protocol: Protocol::Udp,
             port,
+            transport: Some(Transport::Udp),
         }
+    }
+
+    /// Create a QUIC port spec (UDP transport, QUIC semantics).
+    #[must_use]
+    pub fn quic(port: u16) -> Self {
+        Self {
+            protocol: Protocol::Udp,
+            port,
+            transport: Some(Transport::Quic),
+        }
+    }
+
+    /// The transport label for comments.
+    #[must_use]
+    fn transport_label(&self) -> &str {
+        self.transport.map_or_else(
+            || match self.protocol {
+                Protocol::Tcp => "tcp",
+                Protocol::Udp => "udp",
+                _ => "other",
+            },
+            |t| t.label(),
+        )
     }
 }
 
@@ -129,7 +202,9 @@ impl AgentPolicy {
                     .matching(Match::DPort(spec.port))
                     .comment(&format!(
                         "{} inbound {}:{}",
-                        self.agent_id, spec.protocol, spec.port
+                        self.agent_id,
+                        spec.transport_label(),
+                        spec.port
                     )),
             );
         }
@@ -179,12 +254,16 @@ impl AgentPolicy {
                     })
                     .comment(&format!(
                         "{} outbound {}:{} restricted",
-                        self.agent_id, spec.protocol, spec.port
+                        self.agent_id,
+                        spec.transport_label(),
+                        spec.port
                     ));
             } else {
                 rule = rule.comment(&format!(
                     "{} outbound {}:{}",
-                    self.agent_id, spec.protocol, spec.port
+                    self.agent_id,
+                    spec.transport_label(),
+                    spec.port
                 ));
             }
             rules.push(rule);
@@ -610,6 +689,46 @@ mod tests {
         let spec = PortSpec::udp(53);
         assert_eq!(spec.protocol, Protocol::Udp);
         assert_eq!(spec.port, 53);
+    }
+
+    #[test]
+    fn port_spec_quic() {
+        let spec = PortSpec::quic(443);
+        assert_eq!(spec.protocol, Protocol::Udp);
+        assert_eq!(spec.port, 443);
+        assert_eq!(spec.transport, Some(Transport::Quic));
+        assert_eq!(spec.transport_label(), "quic");
+    }
+
+    #[test]
+    fn transport_display() {
+        assert_eq!(Transport::Tcp.to_string(), "tcp");
+        assert_eq!(Transport::Udp.to_string(), "udp");
+        assert_eq!(Transport::Quic.to_string(), "quic");
+    }
+
+    #[test]
+    fn transport_protocol() {
+        assert_eq!(Transport::Tcp.protocol(), Protocol::Tcp);
+        assert_eq!(Transport::Udp.protocol(), Protocol::Udp);
+        assert_eq!(Transport::Quic.protocol(), Protocol::Udp);
+    }
+
+    #[test]
+    fn quic_agent_policy() {
+        let mut engine = PolicyEngine::new();
+        engine.add_agent(
+            AgentPolicy::new("relay", "10.0.0.1")
+                .allow_inbound(PortSpec::quic(443))
+                .allow_outbound(PortSpec::quic(443)),
+        );
+
+        let rendered = engine.to_firewall().render();
+        // QUIC uses UDP protocol in nftables
+        assert!(rendered.contains("udp dport 443"));
+        // But comments say "quic"
+        assert!(rendered.contains("relay inbound quic:443"));
+        assert!(rendered.contains("relay outbound quic:443"));
     }
 
     #[test]

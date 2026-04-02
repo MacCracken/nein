@@ -138,6 +138,7 @@ pub struct IsolationGroup {
 
 impl IsolationGroup {
     /// Create a new isolation group.
+    #[must_use]
     pub fn new(name: &str, cidrs: Vec<String>) -> Self {
         Self {
             name: name.to_string(),

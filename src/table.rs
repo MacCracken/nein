@@ -115,6 +115,11 @@ impl Flowtable {
                 "flowtable hook must be ingress".into(),
             ));
         }
+        if self.devices.is_empty() {
+            return Err(NeinError::InvalidRule(
+                "flowtable requires at least one device".into(),
+            ));
+        }
         for dev in &self.devices {
             validate::validate_iface(dev)?;
         }
@@ -190,6 +195,19 @@ impl CtTimeout {
     /// Validate conntrack timeout fields.
     pub fn validate(&self) -> Result<(), NeinError> {
         validate::validate_identifier(&self.name)?;
+        if !matches!(self.protocol, Protocol::Tcp | Protocol::Udp) {
+            return Err(NeinError::InvalidRule(format!(
+                "ct timeout protocol must be tcp or udp, got {}",
+                self.protocol
+            )));
+        }
+        if let Some(l3) = &self.l3proto
+            && !matches!(l3, Family::Ip | Family::Ip6)
+        {
+            return Err(NeinError::InvalidRule(format!(
+                "ct timeout l3proto must be ip or ip6, got {l3}"
+            )));
+        }
         for (state, _) in &self.policy {
             validate::validate_identifier(state)?;
         }
@@ -434,6 +452,24 @@ mod tests {
         let rendered = ft.render();
         assert!(rendered.contains("hook ingress priority -10;"));
         assert!(!rendered.contains("devices"));
+    }
+
+    #[test]
+    fn flowtable_validate_empty_devices() {
+        let ft = Flowtable::new("ft", 0, vec![]);
+        assert!(ft.validate().is_err());
+    }
+
+    #[test]
+    fn ct_timeout_validate_bad_protocol() {
+        let ct = CtTimeout::new("t", Protocol::Icmp);
+        assert!(ct.validate().is_err());
+    }
+
+    #[test]
+    fn ct_timeout_validate_bad_l3proto() {
+        let ct = CtTimeout::new("t", Protocol::Tcp).l3proto(Family::Bridge);
+        assert!(ct.validate().is_err());
     }
 
     #[test]
