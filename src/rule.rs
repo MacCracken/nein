@@ -202,6 +202,31 @@ impl std::fmt::Display for Ipv6ExtHdr {
     }
 }
 
+/// Comparison operator for bitfield matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+}
+
+impl std::fmt::Display for CmpOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Eq => write!(f, "=="),
+            Self::Ne => write!(f, "!="),
+            Self::Lt => write!(f, "<"),
+            Self::Gt => write!(f, ">"),
+            Self::Le => write!(f, "<="),
+            Self::Ge => write!(f, ">="),
+        }
+    }
+}
+
 /// Log level for enhanced logging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -328,7 +353,7 @@ pub enum Match {
     ///
     /// Renders as `ip frag-off & 0x{mask:x} {op} 0x{value:x}`.
     /// Common: more-fragments (`0x2000 != 0`), is-fragment (`0x1fff != 0`).
-    FragOff { mask: u16, op: String, value: u16 },
+    FragOff { mask: u16, op: CmpOp, value: u16 },
     /// Match packet type (unicast, broadcast, multicast).
     ///
     /// Renders as `meta pkttype {type}`.
@@ -441,13 +466,8 @@ impl Rule {
                 Match::IcmpTypeCode(t, _) | Match::Icmpv6TypeCode(t, _) => {
                     validate::validate_identifier(t)?;
                 }
-                Match::FragOff { op, .. } => {
-                    const VALID_OPS: &[&str] = &["==", "!=", "<", ">", "<=", ">="];
-                    if !VALID_OPS.contains(&op.as_str()) {
-                        return Err(NeinError::InvalidRule(format!(
-                            "invalid fragment comparison operator: {op}"
-                        )));
-                    }
+                Match::FragOff { .. } => {
+                    // All fields are typed (u16, CmpOp, u16), no injection possible.
                 }
                 Match::Raw(_) => {
                     // Deliberately not validated — caller's responsibility.
@@ -1289,7 +1309,7 @@ mod tests {
     fn render_frag_more_fragments() {
         let rule = Rule::new(Verdict::Drop).matching(Match::FragOff {
             mask: 0x2000,
-            op: "!=".into(),
+            op: CmpOp::Ne,
             value: 0,
         });
         assert_eq!(rule.render(), "ip frag-off & 0x2000 != 0x0 drop");
@@ -1299,7 +1319,7 @@ mod tests {
     fn render_frag_is_fragment() {
         let rule = Rule::new(Verdict::Drop).matching(Match::FragOff {
             mask: 0x1fff,
-            op: "!=".into(),
+            op: CmpOp::Ne,
             value: 0,
         });
         assert_eq!(rule.render(), "ip frag-off & 0x1fff != 0x0 drop");
@@ -1309,20 +1329,20 @@ mod tests {
     fn validate_frag_good() {
         let rule = Rule::new(Verdict::Drop).matching(Match::FragOff {
             mask: 0x2000,
-            op: "!=".into(),
+            op: CmpOp::Ne,
             value: 0,
         });
         assert!(rule.validate().is_ok());
     }
 
     #[test]
-    fn validate_frag_bad_op() {
-        let rule = Rule::new(Verdict::Drop).matching(Match::FragOff {
-            mask: 0x2000,
-            op: "evil;op".into(),
-            value: 0,
-        });
-        assert!(rule.validate().is_err());
+    fn cmp_op_display() {
+        assert_eq!(CmpOp::Eq.to_string(), "==");
+        assert_eq!(CmpOp::Ne.to_string(), "!=");
+        assert_eq!(CmpOp::Lt.to_string(), "<");
+        assert_eq!(CmpOp::Gt.to_string(), ">");
+        assert_eq!(CmpOp::Le.to_string(), "<=");
+        assert_eq!(CmpOp::Ge.to_string(), ">=");
     }
 
     // -- Phase 5: Packet type --
@@ -1382,6 +1402,17 @@ mod tests {
             snaplen: None,
         });
         assert_eq!(rule.render(), "log group 5");
+    }
+
+    #[test]
+    fn render_log_advanced_bare() {
+        let rule = Rule::new(Verdict::LogAdvanced {
+            prefix: None,
+            level: None,
+            group: None,
+            snaplen: None,
+        });
+        assert_eq!(rule.render(), "log");
     }
 
     #[test]
