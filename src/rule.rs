@@ -22,6 +22,37 @@ use crate::error::NeinError;
 use crate::validate;
 use serde::{Deserialize, Serialize};
 
+/// Reject reason for `Verdict::RejectWith`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum RejectReason {
+    /// ICMP host unreachable.
+    IcmpHostUnreachable,
+    /// ICMP port unreachable (default reject behavior).
+    IcmpPortUnreachable,
+    /// ICMP network unreachable.
+    IcmpNetUnreachable,
+    /// ICMP admin prohibited.
+    IcmpAdminProhibited,
+    /// ICMPx admin prohibited (works for both IPv4 and IPv6).
+    IcmpxAdminProhibited,
+    /// TCP RST (reset the connection).
+    TcpReset,
+}
+
+impl std::fmt::Display for RejectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IcmpHostUnreachable => write!(f, "icmp type host-unreachable"),
+            Self::IcmpPortUnreachable => write!(f, "icmp type port-unreachable"),
+            Self::IcmpNetUnreachable => write!(f, "icmp type net-unreachable"),
+            Self::IcmpAdminProhibited => write!(f, "icmp type admin-prohibited"),
+            Self::IcmpxAdminProhibited => write!(f, "icmpx type admin-prohibited"),
+            Self::TcpReset => write!(f, "tcp reset"),
+        }
+    }
+}
+
 /// A firewall rule verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -29,6 +60,12 @@ pub enum Verdict {
     Accept,
     Drop,
     Reject,
+    /// Reject with a specific ICMP/TCP reason.
+    ///
+    /// Renders as `reject with {reason}`.
+    /// Common reasons: `icmp host-unreachable`, `icmp port-unreachable`,
+    /// `icmpx admin-prohibited`, `tcp reset`.
+    RejectWith(RejectReason),
     Jump(String),
     GoTo(String),
     Return,
@@ -81,6 +118,7 @@ impl std::fmt::Display for Verdict {
             Self::Accept => write!(f, "accept"),
             Self::Drop => write!(f, "drop"),
             Self::Reject => write!(f, "reject"),
+            Self::RejectWith(reason) => write!(f, "reject with {reason}"),
             Self::Jump(chain) => write!(f, "jump {chain}"),
             Self::GoTo(chain) => write!(f, "goto {chain}"),
             Self::Return => write!(f, "return"),
@@ -376,6 +414,11 @@ pub enum Match {
     ///
     /// Renders as `meta pkttype {type}`.
     PktType(PktType),
+    /// Connection count limit per source address.
+    ///
+    /// Renders as `ct count over {count}` to match when the connection count
+    /// from a single source exceeds the threshold.
+    ConnLimit(u32),
     /// Raw nft expression (escape hatch).
     ///
     /// # Security
@@ -524,7 +567,8 @@ impl Rule {
                 | Match::MetaMark(_)
                 | Match::Quota { .. }
                 | Match::Ipv6ExtHdrExists(_)
-                | Match::PktType(_) => {
+                | Match::PktType(_)
+                | Match::ConnLimit(_) => {
                     // Typed values, no injection possible.
                 }
                 Match::Dscp(val) => {
@@ -642,6 +686,7 @@ impl Rule {
                     write!(out, "ip frag-off & 0x{mask:x} {op} 0x{value:x}")
                 }
                 Match::PktType(pt) => write!(out, "meta pkttype {pt}"),
+                Match::ConnLimit(count) => write!(out, "ct count over {count}"),
                 Match::Raw(expr) => write!(out, "{expr}"),
             }
             .unwrap();
@@ -1694,6 +1739,82 @@ mod tests {
     #[test]
     fn match_ipv6_ext_hdr_serde_roundtrip() {
         let m = Match::Ipv6ExtHdrExists(Ipv6ExtHdr::Fragment);
+        let json = serde_json::to_string(&m).unwrap();
+        let back: Match = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    // -- RejectWith tests --
+
+    #[test]
+    fn render_reject_with_tcp_reset() {
+        let rule = Rule::new(Verdict::RejectWith(RejectReason::TcpReset))
+            .matching(Match::Protocol(Protocol::Tcp))
+            .matching(Match::DPort(80));
+        assert_eq!(rule.render(), "tcp dport 80 reject with tcp reset");
+    }
+
+    #[test]
+    fn render_reject_with_icmp() {
+        let rule = Rule::new(Verdict::RejectWith(RejectReason::IcmpHostUnreachable));
+        assert_eq!(rule.render(), "reject with icmp type host-unreachable");
+    }
+
+    #[test]
+    fn render_reject_with_icmpx() {
+        let rule = Rule::new(Verdict::RejectWith(RejectReason::IcmpxAdminProhibited));
+        assert_eq!(rule.render(), "reject with icmpx type admin-prohibited");
+    }
+
+    #[test]
+    fn reject_reason_display() {
+        assert_eq!(
+            RejectReason::IcmpPortUnreachable.to_string(),
+            "icmp type port-unreachable"
+        );
+        assert_eq!(
+            RejectReason::IcmpNetUnreachable.to_string(),
+            "icmp type net-unreachable"
+        );
+        assert_eq!(
+            RejectReason::IcmpAdminProhibited.to_string(),
+            "icmp type admin-prohibited"
+        );
+        assert_eq!(RejectReason::TcpReset.to_string(), "tcp reset");
+    }
+
+    #[test]
+    fn reject_with_serde_roundtrip() {
+        let v = Verdict::RejectWith(RejectReason::TcpReset);
+        let json = serde_json::to_string(&v).unwrap();
+        let back: Verdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    // -- ConnLimit tests --
+
+    #[test]
+    fn render_conn_limit() {
+        let rule = Rule::new(Verdict::Drop)
+            .matching(Match::Protocol(Protocol::Tcp))
+            .matching(Match::DPort(22))
+            .matching(Match::ConnLimit(10))
+            .comment("SSH conn limit");
+        assert_eq!(
+            rule.render(),
+            "tcp dport 22 ct count over 10 drop comment \"SSH conn limit\""
+        );
+    }
+
+    #[test]
+    fn validate_conn_limit() {
+        let rule = Rule::new(Verdict::Drop).matching(Match::ConnLimit(50));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn conn_limit_serde_roundtrip() {
+        let m = Match::ConnLimit(100);
         let json = serde_json::to_string(&m).unwrap();
         let back: Match = serde_json::from_str(&json).unwrap();
         assert_eq!(m, back);

@@ -206,6 +206,8 @@ pub enum MatchConfig {
     PktType { pkt_type: String },
     #[serde(rename = "frag_off")]
     FragOff { mask: u16, op: String, value: u16 },
+    #[serde(rename = "conn_limit")]
+    ConnLimit { count: u32 },
     #[serde(rename = "raw")]
     Raw { expr: String },
 }
@@ -341,6 +343,7 @@ fn parse_match(mc: &MatchConfig) -> Result<Match, NeinError> {
             op: parse_cmp_op(op)?,
             value: *value,
         },
+        MatchConfig::ConnLimit { count } => Match::ConnLimit(*count),
         MatchConfig::Raw { expr } => Match::Raw(expr.clone()),
     })
 }
@@ -432,6 +435,11 @@ fn parse_verdict(rc: &RuleConfig) -> Result<Verdict, NeinError> {
             group: rc.log_group,
             snaplen: rc.log_snaplen,
         }),
+        "reject_with" => Ok(Verdict::RejectWith(parse_reject_reason(
+            rc.verdict_name
+                .as_deref()
+                .ok_or_else(|| NeinError::Parse("reject_with requires verdict_name".into()))?,
+        )?)),
         s => Err(NeinError::Parse(format!("unknown verdict: {s}"))),
     }
 }
@@ -519,6 +527,20 @@ fn parse_log_level(s: &str) -> Result<crate::rule::LogLevel, NeinError> {
         "debug" => Ok(crate::rule::LogLevel::Debug),
         _ => Err(NeinError::Parse(format!(
             "unknown log level: {s} (valid: emerg, alert, crit, err, warn, notice, info, debug)"
+        ))),
+    }
+}
+
+fn parse_reject_reason(s: &str) -> Result<crate::rule::RejectReason, NeinError> {
+    match s {
+        "icmp-host-unreachable" => Ok(crate::rule::RejectReason::IcmpHostUnreachable),
+        "icmp-port-unreachable" => Ok(crate::rule::RejectReason::IcmpPortUnreachable),
+        "icmp-net-unreachable" => Ok(crate::rule::RejectReason::IcmpNetUnreachable),
+        "icmp-admin-prohibited" => Ok(crate::rule::RejectReason::IcmpAdminProhibited),
+        "icmpx-admin-prohibited" => Ok(crate::rule::RejectReason::IcmpxAdminProhibited),
+        "tcp-reset" => Ok(crate::rule::RejectReason::TcpReset),
+        _ => Err(NeinError::Parse(format!(
+            "unknown reject reason: {s} (valid: icmp-host-unreachable, icmp-port-unreachable, icmp-net-unreachable, icmp-admin-prohibited, icmpx-admin-prohibited, tcp-reset)"
         ))),
     }
 }
