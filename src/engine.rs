@@ -3,6 +3,26 @@
 //! Manages network policies across multiple agents, generating a coherent
 //! nftables firewall from all active policies. Supports agent lifecycle
 //! (add/remove) with automatic rule generation and cleanup.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use nein::engine::{PolicyEngine, AgentPolicy, PortSpec};
+//!
+//! let mut engine = PolicyEngine::new();
+//! engine.add_agent(
+//!     AgentPolicy::new("web", "10.100.1.2")
+//!         .allow_inbound(PortSpec::tcp(80))
+//!         .allow_inbound(PortSpec::tcp(443))
+//!         .allow_outbound(PortSpec::quic(443))
+//! );
+//!
+//! let fw = engine.to_firewall();
+//! fw.validate().unwrap();
+//! let rendered = fw.render();
+//! assert!(rendered.contains("dport 80"));
+//! assert!(rendered.contains("dport 443"));
+//! ```
 
 use crate::Firewall;
 use crate::chain::{Chain, ChainType, Hook, Policy};
@@ -39,7 +59,7 @@ pub struct AgentPolicy {
 /// Distinguishes QUIC from plain UDP at the policy level. Both QUIC and
 /// UDP map to `Protocol::Udp` in nftables rules, but QUIC ports get
 /// additional annotations in comments for audit visibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Transport {
     /// Standard TCP.
@@ -279,7 +299,7 @@ impl AgentPolicy {
 ///
 /// Generates a unified nftables `Firewall` with per-agent chains for
 /// inbound and outbound traffic control.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct PolicyEngine {
     /// Active agent policies, keyed by agent ID.

@@ -1,11 +1,29 @@
 //! nftables rules — match expressions and verdicts.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use nein::rule::{Rule, Match, Verdict, Protocol, RateUnit};
+//!
+//! // Rate-limited SSH access
+//! let rule = Rule::new(Verdict::Accept)
+//!     .matching(Match::Protocol(Protocol::Tcp))
+//!     .matching(Match::DPort(22))
+//!     .matching(Match::Limit { rate: 3, unit: RateUnit::Minute, burst: 5 })
+//!     .comment("SSH rate limited");
+//!
+//! assert_eq!(
+//!     rule.render(),
+//!     "tcp dport 22 limit rate 3/minute burst 5 packets accept comment \"SSH rate limited\""
+//! );
+//! ```
 
 use crate::error::NeinError;
 use crate::validate;
 use serde::{Deserialize, Serialize};
 
 /// A firewall rule verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Verdict {
     Accept,
@@ -37,7 +55,7 @@ pub enum Verdict {
 }
 
 /// IP protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Protocol {
     Tcp,
@@ -98,7 +116,7 @@ impl std::fmt::Display for Verdict {
 }
 
 /// Rate limit time unit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum RateUnit {
     Second,
@@ -119,7 +137,7 @@ impl std::fmt::Display for RateUnit {
 }
 
 /// Quota direction (over or until a threshold).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum QuotaMode {
     /// Match when quota is exceeded.
@@ -138,7 +156,7 @@ impl std::fmt::Display for QuotaMode {
 }
 
 /// Byte unit for quota rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum QuotaUnit {
     Bytes,
@@ -159,7 +177,7 @@ impl std::fmt::Display for QuotaUnit {
 }
 
 /// Packet type for meta matching.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PktType {
     Unicast,
@@ -178,7 +196,7 @@ impl std::fmt::Display for PktType {
 }
 
 /// IPv6 extension header type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Ipv6ExtHdr {
     HopByHop,
@@ -203,7 +221,7 @@ impl std::fmt::Display for Ipv6ExtHdr {
 }
 
 /// Comparison operator for bitfield matching.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum CmpOp {
     Eq,
@@ -228,7 +246,7 @@ impl std::fmt::Display for CmpOp {
 }
 
 /// Log level for enhanced logging.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum LogLevel {
     Emerg,
@@ -257,7 +275,7 @@ impl std::fmt::Display for LogLevel {
 }
 
 /// A match expression in a rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Match {
     /// Match source IPv4 address/CIDR (`ip saddr`).
@@ -369,7 +387,7 @@ pub enum Match {
 }
 
 /// An nftables rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Rule {
     pub matches: Vec<Match>,

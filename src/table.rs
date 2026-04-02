@@ -8,7 +8,7 @@ use crate::validate;
 use serde::{Deserialize, Serialize};
 
 /// nftables address family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Family {
     Inet,

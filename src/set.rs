@@ -8,7 +8,7 @@ use crate::validate;
 use serde::{Deserialize, Serialize};
 
 /// Element type for a named set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum SetType {
     Ipv4Addr,
@@ -31,7 +31,7 @@ impl std::fmt::Display for SetType {
 }
 
 /// Set flags controlling behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum SetFlag {
     Constant,
@@ -50,7 +50,7 @@ impl std::fmt::Display for SetFlag {
 }
 
 /// A named nftables set.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct NftSet {
     /// Set name.
@@ -126,7 +126,7 @@ impl NftSet {
 }
 
 /// Verdict for a map entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum MapVerdict {
     Accept,
@@ -145,7 +145,7 @@ impl std::fmt::Display for MapVerdict {
 }
 
 /// A named nftables verdict map.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct NftMap {
     /// Map name.

@@ -35,21 +35,21 @@ use crate::table::{Family, Table};
 use serde::{Deserialize, Serialize};
 
 /// Top-level TOML firewall config.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FirewallConfig {
     #[serde(default)]
     pub tables: Vec<TableConfig>,
 }
 
 /// Define variable configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DefineConfig {
     pub name: String,
     pub value: String,
 }
 
 /// Flowtable configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlowtableConfig {
     pub name: String,
     #[serde(default = "default_priority")]
@@ -63,7 +63,7 @@ fn default_priority() -> i32 {
 }
 
 /// Conntrack timeout configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CtTimeoutConfig {
     pub name: String,
     pub protocol: String,
@@ -74,14 +74,14 @@ pub struct CtTimeoutConfig {
 }
 
 /// A single timeout entry (state name + seconds).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CtTimeoutEntry {
     pub state: String,
     pub seconds: u32,
 }
 
 /// Table configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TableConfig {
     pub name: String,
     pub family: String,
@@ -96,7 +96,7 @@ pub struct TableConfig {
 }
 
 /// Chain configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChainConfig {
     pub name: String,
     #[serde(default)]
@@ -112,7 +112,7 @@ pub struct ChainConfig {
 }
 
 /// Rule configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleConfig {
     #[serde(default)]
     pub matches: Vec<MatchConfig>,
@@ -139,7 +139,7 @@ pub struct RuleConfig {
 }
 
 /// Match configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 #[serde(tag = "type")]
 pub enum MatchConfig {

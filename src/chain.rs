@@ -5,7 +5,7 @@ use crate::rule::Rule;
 use serde::{Deserialize, Serialize};
 
 /// Chain type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum ChainType {
     Filter,
@@ -24,7 +24,7 @@ impl std::fmt::Display for ChainType {
 }
 
 /// Chain hook point.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Hook {
     Prerouting,
@@ -49,7 +49,7 @@ impl std::fmt::Display for Hook {
 }
 
 /// Default chain policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Policy {
     Accept,
@@ -66,7 +66,7 @@ impl std::fmt::Display for Policy {
 }
 
 /// An entry in a chain — either a filter rule or a NAT rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum ChainRule {
     /// A standard filter/routing rule.
@@ -112,7 +112,7 @@ impl From<crate::nat::NatRule> for ChainRule {
 }
 
 /// An nftables chain.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Chain {
     pub name: String,

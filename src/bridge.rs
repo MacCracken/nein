@@ -2,6 +2,21 @@
 //!
 //! Manages the nftables ruleset for a container bridge network: forwarding,
 //! NAT (masquerade + port mappings), and network isolation between groups.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use nein::bridge::{BridgeConfig, BridgeFirewall, PortMapping};
+//!
+//! let mut bf = BridgeFirewall::new(BridgeConfig::new("br0", "172.17.0.0/16", "eth0"));
+//! bf.add_port_mapping(PortMapping::tcp(8080, "172.17.0.2", 80)).unwrap();
+//!
+//! let fw = bf.to_firewall();
+//! fw.validate().unwrap();
+//! let rendered = fw.render();
+//! assert!(rendered.contains("dnat to 172.17.0.2:80"));
+//! assert!(rendered.contains("masquerade"));
+//! ```
 
 use crate::Firewall;
 use crate::chain::{Chain, ChainType, Hook, Policy};
@@ -14,7 +29,7 @@ use crate::validate;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for a container bridge network.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BridgeConfig {
     /// Bridge interface name (e.g., "br0", "nein0").
@@ -57,7 +72,7 @@ impl BridgeConfig {
 }
 
 /// A port mapping for a container.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct PortMapping {
     /// Port on the host.
@@ -130,7 +145,7 @@ impl PortMapping {
 ///
 /// Containers in the same group can communicate. Traffic between different
 /// groups is dropped unless explicitly allowed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct IsolationGroup {
     /// Group name (used in chain names and comments).
@@ -163,7 +178,7 @@ impl IsolationGroup {
 ///
 /// Tracks port mappings and isolation groups, and generates a complete
 /// nftables `Firewall` via [`to_firewall`](Self::to_firewall).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BridgeFirewall {
     config: BridgeConfig,

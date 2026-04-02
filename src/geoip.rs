@@ -48,7 +48,7 @@ impl CountryBlock {
 }
 
 /// GeoIP blocklist configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct GeoIpBlocklist {
     /// Countries to block.

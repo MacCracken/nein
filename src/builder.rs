@@ -1,4 +1,13 @@
 //! Fluent builder for common firewall configurations.
+//!
+//! # Examples
+//!
+//! ```rust
+//! let fw = nein::builder::basic_host_firewall();
+//! let rendered = fw.render();
+//! assert!(rendered.contains("policy drop"));
+//! assert!(rendered.contains("dport 22"));
+//! ```
 
 use crate::Firewall;
 use crate::chain::{Chain, ChainType, Hook, Policy};

@@ -23,3 +23,6 @@ Each ADR follows the template:
 | [0004](0004-raw-match-escape-hatch.md) | Provide Raw match variant as escape hatch | Accepted |
 | [0005](0005-chain-rule-enum.md) | Unify filter and NAT rules via ChainRule enum | Accepted |
 | [0006](0006-sets-in-tables.md) | Named sets and maps rendered inside table blocks | Accepted |
+| [0007](0007-set-based-isolation.md) | Set-based isolation rules replace O(n^2) explicit rules | Accepted |
+| [0008](0008-typed-enums-over-strings.md) | Typed enums over strings for closed value sets | Accepted |
+| [0009](0009-non-exhaustive-structs.md) | Non-exhaustive public structs for forward compatibility | Accepted |

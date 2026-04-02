@@ -10,7 +10,7 @@ use bote::{ToolDef, ToolSchema};
 use serde::{Deserialize, Serialize};
 
 /// Result from an MCP tool call.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolResult {
     pub content: String,
     #[serde(default)]
@@ -38,11 +38,11 @@ impl ToolResult {
 // -- nein_status --
 
 /// Request for `nein_status` tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatusRequest {}
 
 /// Response for `nein_status` tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatusResponse {
     pub tables: Vec<String>,
     pub total_rules: usize,
@@ -52,7 +52,7 @@ pub struct StatusResponse {
 // -- nein_allow --
 
 /// Request for `nein_allow` tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AllowRequest {
     /// Protocol: "tcp" or "udp".
     pub protocol: String,
@@ -80,7 +80,7 @@ fn default_input_chain() -> String {
 // -- nein_deny --
 
 /// Request for `nein_deny` tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DenyRequest {
     /// Protocol: "tcp" or "udp".
     pub protocol: String,
@@ -100,7 +100,7 @@ pub struct DenyRequest {
 // -- nein_list --
 
 /// Request for `nein_list` tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListRequest {
     /// Optional table filter.
     #[serde(default)]
@@ -111,7 +111,7 @@ pub struct ListRequest {
 }
 
 /// A rule entry in a list response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListEntry {
     pub table: String,
     pub chain: String,
@@ -121,7 +121,7 @@ pub struct ListEntry {
 }
 
 /// Response for `nein_list` tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListResponse {
     pub rules: Vec<ListEntry>,
     pub count: usize,

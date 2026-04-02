@@ -5,7 +5,7 @@ use crate::validate;
 use serde::{Deserialize, Serialize};
 
 /// A NAT rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum NatRule {
     /// Destination NAT (port forwarding).

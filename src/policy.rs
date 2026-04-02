@@ -6,7 +6,7 @@ use crate::validate;
 use serde::{Deserialize, Serialize};
 
 /// A network policy (like k8s NetworkPolicy but for AGNOS agents/containers).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct NetworkPolicy {
     pub name: String,
@@ -21,7 +21,7 @@ pub struct NetworkPolicy {
 }
 
 /// A policy rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct PolicyRule {
     /// Source/destination (agent ID, CIDR, or "any").
@@ -31,7 +31,7 @@ pub struct PolicyRule {
 }
 
 /// A port in a policy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct PolicyPort {
     pub protocol: Protocol,
@@ -39,7 +39,7 @@ pub struct PolicyPort {
 }
 
 /// Default policy action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PolicyAction {
     Allow,

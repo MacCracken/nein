@@ -22,6 +22,33 @@
 //! | `geoip`   | `geoip`    | GeoIP country-based blocking with nftables sets |
 //! | `netns`   | `netns`    | Agent network namespace firewall (requires agnosys) |
 //!
+//! ## Quick Start
+//!
+//! ```rust
+//! use nein::Firewall;
+//! use nein::chain::{Chain, ChainType, Hook, Policy};
+//! use nein::rule::{self, Match, Protocol, Verdict};
+//! use nein::table::{Family, Table};
+//!
+//! // Build a host firewall
+//! let mut fw = Firewall::new();
+//! let mut table = Table::new("filter", Family::Inet);
+//! let mut input = Chain::base("input", ChainType::Filter, Hook::Input, 0, Policy::Drop);
+//!
+//! input.add_rule(rule::allow_established());
+//! input.add_rule(rule::allow_tcp(22).comment("SSH"));
+//! input.add_rule(rule::allow_tcp(443).comment("HTTPS"));
+//!
+//! table.add_chain(input);
+//! fw.add_table(table);
+//!
+//! // Validate and render
+//! fw.validate().unwrap();
+//! let ruleset = fw.render();
+//! assert!(ruleset.contains("policy drop"));
+//! assert!(ruleset.contains("dport 22"));
+//! ```
+//!
 //! ## Consumers
 //!
 //! - **stiva** — container bridge/NAT, port mapping, network isolation
@@ -74,8 +101,10 @@ pub mod netns;
 mod error;
 pub use error::NeinError;
 
+use serde::{Deserialize, Serialize};
+
 /// Top-level firewall manager.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Firewall {
     tables: Vec<table::Table>,

@@ -174,7 +174,7 @@ pub async fn list_ruleset_with_handles() -> Result<String, NeinError> {
 }
 
 /// A rule handle found in the live ruleset.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct RuleHandle {
     pub table: String,

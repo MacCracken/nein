@@ -1,9 +1,10 @@
 //! Inspect current firewall state.
 
 use crate::error::NeinError;
+use serde::{Deserialize, Serialize};
 
 /// Summary of current firewall state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct FirewallStatus {
     pub tables: Vec<String>,
