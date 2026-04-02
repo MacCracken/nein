@@ -2,6 +2,81 @@
 
 All notable changes to nein are documented here.
 
+## [0.90.0] — 2026-04-02
+
+### Added
+
+#### Phase 4 — Production Hardening
+- **Define variables**: `Define` struct for `define $VAR = value;` inside tables
+- **Flowtables**: `Flowtable` struct for hardware offload (`flowtable ft { hook ingress priority 0; devices = { eth0 }; }`)
+- **Conntrack timeout policies**: `CtTimeout` struct with per-protocol timeout tuning (`ct timeout name { protocol tcp; policy = { established: 7200 }; }`)
+- **Quota rules**: `QuotaMode`/`QuotaUnit` enums + `Match::Quota` for byte-based rate limiting (`quota over 25 mbytes`)
+- **Mark setting verdicts**: `Verdict::SetMark(u32)`, `Verdict::SetCtMark(u32)` for packet/conntrack marking
+- **NAT port range mappings**: `NatRule::DnatRange` + `port_range_forward()` for range-to-range DNAT (`80-89 -> 8080-8089`)
+- **Rule insertion ordering**: `insert_rule()` (beginning of chain), `add_rule_after()` (after handle)
+- **Rule replacement**: `replace_rule()` for atomic handle-based rule updates
+- **Chain operations**: `flush_chain()`, `delete_chain()` in apply module
+- `Table` struct extended with `defines`, `flowtables`, `ct_timeouts` fields
+- Render order: defines, flowtables, ct_timeouts, sets, maps, chains
+
+#### Phase 5 — Deep Protocol Support
+- **ICMP type+code**: `Match::IcmpTypeCode(String, u8)`, `Match::Icmpv6TypeCode(String, u8)`
+- **VLAN ID matching**: `Match::VlanId(u16)` — validated 0-4094
+- **DSCP/ToS matching**: `Match::Dscp(u8)` — validated 0-63
+- **IPv6 extension headers**: `Ipv6ExtHdr` enum + `Match::Ipv6ExtHdrExists` (hbh, rt, frag, dst, mh, auth)
+- **Fragment matching**: `Match::FragOff { mask, op, value }` with typed `CmpOp` enum
+- **Packet type matching**: `PktType` enum + `Match::PktType` (unicast, broadcast, multicast)
+- **Enhanced logging**: `LogLevel` enum + `Verdict::LogAdvanced { prefix, level, group, snaplen }`
+- **Named counters**: `Verdict::CounterNamed(String)` for `counter name "name"` references
+
+#### Phase 6 — Ergonomics
+- **Bulk match builders**: `Rule::matching_ports()`, `matching_addrs()`, `matching_addrs6()` — anonymous set syntax with input validation
+- **Set-based isolation**: bridge isolation groups now use O(1) nftables set lookups instead of O(n^2) explicit rules
+- **Set-based outbound hosts**: PolicyEngine outbound host restrictions use named sets instead of O(n*M) rules
+- **Rule deduplication**: `Firewall::deduplicate()` removes adjacent duplicate rules
+
+#### Phase 7 — Ecosystem Integration
+- **daimon**: `firewall` feature wires `nein_status`/`nein_allow`/`nein_deny`/`nein_list` MCP tools into daimon's handler registry
+- **aegis**: `firewall` feature adds `isolate_agent()`, `rate_limit_agent()`, `hardened_host()` firewall profiles
+- **sutra**: `nein` module implementing `SutraModule` trait with `apply`/`check`/`flush` actions for fleet firewall configs
+- **stiva**: container port mapping NAT rules now applied to nftables via `nft -f -` on container connect
+
+#### Phase 8 — QUIC Support
+- **Transport enum**: `Transport::Tcp`/`Udp`/`Quic` in PolicyEngine — QUIC maps to UDP protocol with semantic distinction in policy comments
+- **QUIC rate limiting**: `rate_limit_quic()` convenience function with 2x burst for connection migration protection
+- `rate_limit_udp()` convenience function
+- `PortSpec::quic(port)` constructor
+
+### Changed
+- `bote` dependency changed from path to crates.io `v0.91`
+- `validate_addr()` now parses actual IP/CIDR via `std::net::IpAddr` instead of character-set-only checks
+- `validate_family()` added — closed set validation for nftables address families
+- All `apply.rs` incremental functions validate `family` param against closed set
+- `Rule::render()` rewritten with `write!` to single buffer (was `Vec<String>` + `join`) — **60% faster rendering**
+- `Chain::render()`, `Table::render()` use `write!` with pre-allocation
+- `mcp::build_allow_rule`/`build_deny_rule` now validate `table` and `chain` fields
+- `port_range_forward()` uses `saturating_sub`/`saturating_add` to prevent overflow
+- `#[non_exhaustive]` added to all 21 public enums
+- `#[must_use]` added to ~70 pure/builder functions
+- `#[inline]` added to hot-path functions (`Rule::new`, `render`, `matching`)
+
+### Fixed
+- `mcp.rs` formatting (was only `cargo fmt` failure at session start)
+- `config.rs` redundant `let mut chain = chain;` re-binding
+- `apply.rs` incremental functions (`flush_table`, `delete_table`, `add_rule`, `delete_rule`) now validate all parameters before interpolation into nft commands (security)
+
+### Performance
+- `rule_render`: 305 ns → 123 ns (**-60%**)
+- `rule_complex_render`: 497 ns → 268 ns (**-46%**)
+- `bridge_large_render`: 45.4 µs → 27.0 µs (**-41%**)
+- `engine_10_agents_render`: 40.8 µs → 14.9 µs (**-63%**)
+- `mesh_render`: 2.96 µs → 1.22 µs (**-59%**)
+- Bridge isolation: O(n^2) → O(1) per group via nftables sets
+- PolicyEngine outbound hosts: O(ports * hosts) → O(ports) via named sets
+
+### Tests
+- 372 unit tests, 7 integration tests, 1 doctest (up from 217 unit tests)
+
 ## [0.24.3] — 2026-03-24
 
 ### Added
