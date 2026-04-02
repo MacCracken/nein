@@ -7,6 +7,7 @@ use crate::rule::{self, Match, Protocol, Rule, Verdict};
 use crate::table::{Family, Table};
 
 /// Build a basic host firewall (allow established, SSH, drop rest).
+#[must_use]
 pub fn basic_host_firewall() -> Firewall {
     let mut fw = Firewall::new();
 
@@ -26,6 +27,7 @@ pub fn basic_host_firewall() -> Firewall {
 }
 
 /// Build container bridge networking rules.
+#[must_use]
 pub fn container_bridge(bridge_name: &str, subnet: &str, outbound_iface: &str) -> Firewall {
     let mut fw = Firewall::new();
 
@@ -67,6 +69,7 @@ pub fn container_bridge(bridge_name: &str, subnet: &str, outbound_iface: &str) -
 }
 
 /// Build agent-to-agent service policy rules.
+#[must_use]
 pub fn service_policy(agent_source: &str, ports: &[(Protocol, u16)]) -> Firewall {
     let mut fw = Firewall::new();
     let mut table = Table::new("agnos_policy", Family::Inet);

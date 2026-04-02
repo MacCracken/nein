@@ -80,6 +80,7 @@ pub struct RuleConfig {
 
 /// Match configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 #[serde(tag = "type")]
 pub enum MatchConfig {
     #[serde(rename = "source_addr")]
@@ -128,6 +129,7 @@ pub enum MatchConfig {
 }
 
 /// Parse a TOML string into a `Firewall`.
+#[must_use = "parsing returns a Firewall, which should be used"]
 pub fn from_toml(toml_str: &str) -> Result<Firewall, NeinError> {
     let config: FirewallConfig =
         toml::from_str(toml_str).map_err(|e| NeinError::Parse(e.to_string()))?;
@@ -157,7 +159,7 @@ fn parse_table(tc: &TableConfig) -> Result<Table, NeinError> {
 }
 
 fn parse_chain(cc: &ChainConfig) -> Result<Chain, NeinError> {
-    let chain = if let (Some(ct), Some(hook), Some(prio), Some(pol)) =
+    let mut chain = if let (Some(ct), Some(hook), Some(prio), Some(pol)) =
         (&cc.chain_type, &cc.hook, &cc.priority, &cc.policy)
     {
         Chain::base(
@@ -170,8 +172,6 @@ fn parse_chain(cc: &ChainConfig) -> Result<Chain, NeinError> {
     } else {
         Chain::regular(&cc.name)
     };
-
-    let mut chain = chain;
     for rc in &cc.rules {
         chain.add_rule(parse_rule(rc)?);
     }

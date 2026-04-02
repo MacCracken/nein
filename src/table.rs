@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// nftables address family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Family {
     Inet,
     Ip,
@@ -42,6 +43,7 @@ pub struct Table {
 
 impl Table {
     /// Create a new table.
+    #[must_use]
     pub fn new(name: &str, family: Family) -> Self {
         Self {
             name: name.to_string(),
@@ -68,8 +70,12 @@ impl Table {
     }
 
     /// Render this table as nftables syntax.
+    #[must_use]
     pub fn render(&self) -> String {
-        let mut out = format!("table {} {} {{\n", self.family, self.name);
+        use std::fmt::Write;
+
+        let mut out = String::with_capacity(256);
+        let _ = writeln!(out, "table {} {} {{", self.family, self.name);
         for set in &self.sets {
             out.push_str(&set.render());
         }

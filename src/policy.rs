@@ -37,6 +37,7 @@ pub struct PolicyPort {
 
 /// Default policy action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PolicyAction {
     Allow,
     Deny,
@@ -58,6 +59,7 @@ impl NetworkPolicy {
     }
 
     /// Convert this policy to nftables rules.
+    #[must_use]
     pub fn to_rules(&self) -> Vec<Rule> {
         let mut rules = vec![];
 
@@ -101,6 +103,7 @@ impl NetworkPolicy {
 }
 
 /// Convenience: allow agent A to talk to agent B on a port.
+#[must_use]
 pub fn agent_to_agent(
     name: &str,
     source: &str,

@@ -31,7 +31,7 @@ full = ["nat", "policy", "inspect", "apply", "builder", "bridge", "engine", "mes
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", optional = true }
-bote = { path = "../bote", optional = true }
+bote = { version = "0.91", optional = true }
 thiserror = "2"
 toml = { version = "0.8", optional = true }
 tracing = "0.1"

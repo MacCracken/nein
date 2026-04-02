@@ -27,6 +27,7 @@ pub struct BridgeConfig {
 
 impl BridgeConfig {
     /// Create a new bridge configuration.
+    #[must_use]
     pub fn new(bridge_name: &str, subnet: &str, outbound_iface: &str) -> Self {
         Self {
             bridge_name: bridge_name.to_string(),
@@ -37,6 +38,7 @@ impl BridgeConfig {
     }
 
     /// Set a custom table name prefix.
+    #[must_use]
     pub fn table_prefix(mut self, prefix: &str) -> Self {
         self.table_prefix = prefix.to_string();
         self
@@ -67,6 +69,7 @@ pub struct PortMapping {
 
 impl PortMapping {
     /// Create a TCP port mapping.
+    #[must_use]
     pub fn tcp(host_port: u16, container_addr: &str, container_port: u16) -> Self {
         Self {
             host_port,
@@ -77,6 +80,7 @@ impl PortMapping {
     }
 
     /// Create a UDP port mapping.
+    #[must_use]
     pub fn udp(host_port: u16, container_addr: &str, container_port: u16) -> Self {
         Self {
             host_port,
@@ -163,6 +167,7 @@ pub struct BridgeFirewall {
 
 impl BridgeFirewall {
     /// Create a new bridge firewall manager.
+    #[must_use]
     pub fn new(config: BridgeConfig) -> Self {
         Self {
             config,
@@ -172,6 +177,7 @@ impl BridgeFirewall {
     }
 
     /// Access the bridge configuration.
+    #[must_use]
     pub fn config(&self) -> &BridgeConfig {
         &self.config
     }
@@ -217,6 +223,7 @@ impl BridgeFirewall {
     }
 
     /// Access current port mappings.
+    #[must_use]
     pub fn port_mappings(&self) -> &[PortMapping] {
         &self.port_mappings
     }
@@ -229,6 +236,7 @@ impl BridgeFirewall {
     }
 
     /// Access current isolation groups.
+    #[must_use]
     pub fn isolation_groups(&self) -> &[IsolationGroup] {
         &self.isolation_groups
     }
@@ -256,6 +264,7 @@ impl BridgeFirewall {
     ///   forwarding, isolation rules, and port-mapping forward allows.
     /// - `{prefix}_nat` (ip): prerouting DNAT for port mappings,
     ///   postrouting masquerade for outbound.
+    #[must_use]
     pub fn to_firewall(&self) -> Firewall {
         let mut fw = Firewall::new();
 

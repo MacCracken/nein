@@ -36,12 +36,13 @@ pub fn validate_identifier(s: &str) -> Result<(), NeinError> {
 
 /// Validate an IP address or CIDR string.
 ///
-/// Allows digits, hex chars, `.`, `:`, `/` for IPv4/IPv6 CIDR notation.
-/// Rejects dangerous injection characters.
+/// Parses the string as a valid IPv4/IPv6 address or CIDR block.
+/// Rejects malformed addresses and dangerous injection characters.
 pub fn validate_addr(s: &str) -> Result<(), NeinError> {
     if s.is_empty() {
         return Err(NeinError::InvalidRule("address must not be empty".into()));
     }
+    // Fast reject: only allow characters valid in IP/CIDR notation
     if !s
         .chars()
         .all(|c| c.is_ascii_hexdigit() || matches!(c, '.' | ':' | '/'))
@@ -49,6 +50,24 @@ pub fn validate_addr(s: &str) -> Result<(), NeinError> {
         return Err(NeinError::InvalidRule(format!(
             "address contains invalid characters: {s}"
         )));
+    }
+    // Parse as IP or CIDR
+    if let Some((addr_part, prefix_part)) = s.split_once('/') {
+        addr_part
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| NeinError::InvalidRule(format!("invalid IP in CIDR: {s}")))?;
+        let prefix: u8 = prefix_part
+            .parse()
+            .map_err(|_| NeinError::InvalidRule(format!("invalid prefix length in CIDR: {s}")))?;
+        let max = if addr_part.contains(':') { 128 } else { 32 };
+        if prefix > max {
+            return Err(NeinError::InvalidRule(format!(
+                "prefix length {prefix} exceeds max {max} for {s}"
+            )));
+        }
+    } else {
+        s.parse::<std::net::IpAddr>()
+            .map_err(|_| NeinError::InvalidRule(format!("invalid IP address: {s}")))?;
     }
     Ok(())
 }

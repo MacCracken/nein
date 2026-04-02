@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Chain type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ChainType {
     Filter,
     Nat,
@@ -24,6 +25,7 @@ impl std::fmt::Display for ChainType {
 
 /// Chain hook point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Hook {
     Prerouting,
     Input,
@@ -48,6 +50,7 @@ impl std::fmt::Display for Hook {
 
 /// Default chain policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Policy {
     Accept,
     Drop,
@@ -64,6 +67,7 @@ impl std::fmt::Display for Policy {
 
 /// An entry in a chain — either a filter rule or a NAT rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ChainRule {
     /// A standard filter/routing rule.
     Rule(Rule),
@@ -74,6 +78,8 @@ pub enum ChainRule {
 
 impl ChainRule {
     /// Render this chain rule as nftables syntax.
+    #[must_use]
+    #[inline]
     pub fn render(&self) -> String {
         match self {
             Self::Rule(r) => r.render(),
@@ -118,6 +124,7 @@ pub struct Chain {
 
 impl Chain {
     /// Create a base chain (attached to a hook).
+    #[must_use]
     pub fn base(
         name: &str,
         chain_type: ChainType,
@@ -136,6 +143,7 @@ impl Chain {
     }
 
     /// Create a regular (non-base) chain.
+    #[must_use]
     pub fn regular(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -159,18 +167,22 @@ impl Chain {
     }
 
     /// Render this chain as nftables syntax.
+    #[must_use]
     pub fn render(&self) -> String {
-        let mut out = format!("  chain {} {{\n", self.name);
+        use std::fmt::Write;
+
+        let mut out = String::with_capacity(128);
+        let _ = writeln!(out, "  chain {} {{", self.name);
         if let (Some(ct), Some(hook), Some(prio), Some(pol)) =
             (&self.chain_type, &self.hook, &self.priority, &self.policy)
         {
-            out.push_str(&format!(
-                "    type {} hook {} priority {}; policy {};\n",
-                ct, hook, prio, pol
-            ));
+            let _ = writeln!(
+                out,
+                "    type {ct} hook {hook} priority {prio}; policy {pol};"
+            );
         }
         for rule in &self.rules {
-            out.push_str(&format!("    {}\n", rule.render()));
+            let _ = writeln!(out, "    {}", rule.render());
         }
         out.push_str("  }\n");
         out

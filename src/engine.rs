@@ -40,6 +40,7 @@ pub struct PortSpec {
 }
 
 impl PortSpec {
+    #[must_use]
     pub fn tcp(port: u16) -> Self {
         Self {
             protocol: Protocol::Tcp,
@@ -47,6 +48,7 @@ impl PortSpec {
         }
     }
 
+    #[must_use]
     pub fn udp(port: u16) -> Self {
         Self {
             protocol: Protocol::Udp,
@@ -59,6 +61,7 @@ impl AgentPolicy {
     /// Create a new agent policy with sensible defaults.
     ///
     /// Defaults: allow established, allow loopback, deny all inbound/outbound.
+    #[must_use]
     pub fn new(agent_id: &str, agent_addr: &str) -> Self {
         Self {
             agent_id: agent_id.to_string(),
@@ -72,18 +75,21 @@ impl AgentPolicy {
     }
 
     /// Add an allowed inbound port.
+    #[must_use]
     pub fn allow_inbound(mut self, spec: PortSpec) -> Self {
         self.allowed_inbound.push(spec);
         self
     }
 
     /// Add an allowed outbound port.
+    #[must_use]
     pub fn allow_outbound(mut self, spec: PortSpec) -> Self {
         self.allowed_outbound.push(spec);
         self
     }
 
     /// Add an allowed outbound host CIDR.
+    #[must_use]
     pub fn allow_outbound_host(mut self, cidr: &str) -> Self {
         self.allowed_outbound_hosts.push(cidr.to_string());
         self
@@ -192,6 +198,7 @@ pub struct PolicyEngine {
 
 impl PolicyEngine {
     /// Create a new policy engine.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             agents: BTreeMap::new(),
@@ -200,6 +207,7 @@ impl PolicyEngine {
     }
 
     /// Set a custom table name.
+    #[must_use]
     pub fn table_name(mut self, name: &str) -> Self {
         self.table_name = name.to_string();
         self
@@ -229,16 +237,19 @@ impl PolicyEngine {
     }
 
     /// Get an agent's current policy.
+    #[must_use]
     pub fn get_agent(&self, agent_id: &str) -> Option<&AgentPolicy> {
         self.agents.get(agent_id)
     }
 
     /// List all active agent IDs.
+    #[must_use]
     pub fn agent_ids(&self) -> Vec<&str> {
         self.agents.keys().map(|s| s.as_str()).collect()
     }
 
     /// Number of active agents.
+    #[must_use]
     pub fn agent_count(&self) -> usize {
         self.agents.len()
     }
@@ -258,6 +269,7 @@ impl PolicyEngine {
     /// - A dispatch `input` chain that jumps to per-agent inbound chains
     /// - A dispatch `output` chain that jumps to per-agent outbound chains
     /// - Per-agent `{agent_id}_in` and `{agent_id}_out` chains
+    #[must_use]
     pub fn to_firewall(&self) -> Firewall {
         let mut fw = Firewall::new();
 

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Element type for a named set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SetType {
     Ipv4Addr,
     Ipv6Addr,
@@ -31,6 +32,7 @@ impl std::fmt::Display for SetType {
 
 /// Set flags controlling behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SetFlag {
     Constant,
     Interval,
@@ -62,6 +64,7 @@ pub struct NftSet {
 
 impl NftSet {
     /// Create a new named set.
+    #[must_use]
     pub fn new(name: &str, set_type: SetType) -> Self {
         Self {
             name: name.to_string(),
@@ -72,18 +75,21 @@ impl NftSet {
     }
 
     /// Add a flag.
+    #[must_use]
     pub fn flag(mut self, flag: SetFlag) -> Self {
         self.flags.push(flag);
         self
     }
 
     /// Add an element.
+    #[must_use]
     pub fn element(mut self, elem: &str) -> Self {
         self.elements.push(elem.to_string());
         self
     }
 
     /// Add multiple elements.
+    #[must_use]
     pub fn elements(mut self, elems: &[&str]) -> Self {
         self.elements.extend(elems.iter().map(|s| s.to_string()));
         self
@@ -99,6 +105,7 @@ impl NftSet {
     }
 
     /// Render as nftables set definition (inside a table block).
+    #[must_use]
     pub fn render(&self) -> String {
         let mut out = format!("  set {} {{\n", self.name);
         out.push_str(&format!("    type {};\n", self.set_type));
@@ -119,6 +126,7 @@ impl NftSet {
 
 /// Verdict for a map entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MapVerdict {
     Accept,
     Drop,
@@ -148,6 +156,7 @@ pub struct NftMap {
 
 impl NftMap {
     /// Create a new verdict map.
+    #[must_use]
     pub fn new(name: &str, key_type: SetType) -> Self {
         Self {
             name: name.to_string(),
@@ -157,6 +166,7 @@ impl NftMap {
     }
 
     /// Add an entry.
+    #[must_use]
     pub fn entry(mut self, key: &str, verdict: MapVerdict) -> Self {
         self.entries.push((key.to_string(), verdict));
         self
@@ -175,6 +185,7 @@ impl NftMap {
     }
 
     /// Render as nftables map definition (inside a table block).
+    #[must_use]
     pub fn render(&self) -> String {
         let mut out = format!("  map {} {{\n", self.name);
         out.push_str(&format!("    type {} : verdict;\n", self.key_type));

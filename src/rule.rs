@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// A firewall rule verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Verdict {
     Accept,
     Drop,
@@ -19,6 +20,7 @@ pub enum Verdict {
 
 /// IP protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Protocol {
     Tcp,
     Udp,
@@ -55,6 +57,7 @@ impl std::fmt::Display for Verdict {
 
 /// Rate limit time unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RateUnit {
     Second,
     Minute,
@@ -75,6 +78,7 @@ impl std::fmt::Display for RateUnit {
 
 /// A match expression in a rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Match {
     /// Match source IPv4 address/CIDR (`ip saddr`).
     SourceAddr(String),
@@ -150,6 +154,8 @@ pub struct Rule {
 
 impl Rule {
     /// Create a new rule with a verdict.
+    #[must_use]
+    #[inline]
     pub fn new(verdict: Verdict) -> Self {
         Self {
             matches: vec![],
@@ -159,12 +165,15 @@ impl Rule {
     }
 
     /// Add a match expression.
+    #[must_use]
+    #[inline]
     pub fn matching(mut self, m: Match) -> Self {
         self.matches.push(m);
         self
     }
 
     /// Add a comment.
+    #[must_use]
     pub fn comment(mut self, c: &str) -> Self {
         self.comment = Some(c.to_string());
         self
@@ -240,48 +249,60 @@ impl Rule {
     }
 
     /// Render this rule as nftables syntax.
+    #[must_use]
+    #[inline]
     pub fn render(&self) -> String {
-        let mut parts: Vec<String> = vec![];
+        use std::fmt::Write;
+
+        let mut out = String::with_capacity(64);
 
         for m in &self.matches {
-            parts.push(match m {
-                Match::SourceAddr(addr) => format!("ip saddr {addr}"),
-                Match::DestAddr(addr) => format!("ip daddr {addr}"),
-                Match::SourceAddr6(addr) => format!("ip6 saddr {addr}"),
-                Match::DestAddr6(addr) => format!("ip6 daddr {addr}"),
-                Match::Protocol(proto) => format!("{proto}"),
-                Match::DPort(port) => format!("dport {port}"),
-                Match::SPort(port) => format!("sport {port}"),
-                Match::DPortRange(lo, hi) => format!("dport {lo}-{hi}"),
-                Match::Iif(iface) => format!("iif \"{iface}\""),
-                Match::Oif(iface) => format!("oif \"{iface}\""),
-                Match::CtState(states) => format!("ct state {{ {} }}", states.join(", ")),
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            match m {
+                Match::SourceAddr(addr) => write!(out, "ip saddr {addr}"),
+                Match::DestAddr(addr) => write!(out, "ip daddr {addr}"),
+                Match::SourceAddr6(addr) => write!(out, "ip6 saddr {addr}"),
+                Match::DestAddr6(addr) => write!(out, "ip6 daddr {addr}"),
+                Match::Protocol(proto) => write!(out, "{proto}"),
+                Match::DPort(port) => write!(out, "dport {port}"),
+                Match::SPort(port) => write!(out, "sport {port}"),
+                Match::DPortRange(lo, hi) => write!(out, "dport {lo}-{hi}"),
+                Match::Iif(iface) => write!(out, "iif \"{iface}\""),
+                Match::Oif(iface) => write!(out, "oif \"{iface}\""),
+                Match::CtState(states) => write!(out, "ct state {{ {} }}", states.join(", ")),
                 Match::Limit { rate, unit, burst } => {
-                    format!("limit rate {rate}/{unit} burst {burst} packets")
+                    write!(out, "limit rate {rate}/{unit} burst {burst} packets")
                 }
-                Match::SetLookup { field, set_name } => format!("{field} @{set_name}"),
-                Match::CtHelper(helper) => format!("ct helper \"{helper}\""),
+                Match::SetLookup { field, set_name } => write!(out, "{field} @{set_name}"),
+                Match::CtHelper(helper) => write!(out, "ct helper \"{helper}\""),
                 Match::TcpFlags(flags) => {
-                    format!("tcp flags {{ {} }}", flags.join(", "))
+                    write!(out, "tcp flags {{ {} }}", flags.join(", "))
                 }
-                Match::IcmpType(t) => format!("icmp type {t}"),
-                Match::Icmpv6Type(t) => format!("icmpv6 type {t}"),
-                Match::MetaMark(val) => format!("meta mark {val}"),
-                Match::Raw(expr) => expr.clone(),
-            });
+                Match::IcmpType(t) => write!(out, "icmp type {t}"),
+                Match::Icmpv6Type(t) => write!(out, "icmpv6 type {t}"),
+                Match::MetaMark(val) => write!(out, "meta mark {val}"),
+                Match::Raw(expr) => write!(out, "{expr}"),
+            }
+            .unwrap();
         }
 
-        parts.push(self.verdict.to_string());
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        write!(out, "{}", self.verdict).unwrap();
 
         if let Some(comment) = &self.comment {
-            parts.push(format!("comment \"{comment}\""));
+            write!(out, " comment \"{comment}\"").unwrap();
         }
 
-        parts.join(" ")
+        out
     }
 }
 
 /// Convenience: allow TCP port.
+#[must_use]
 pub fn allow_tcp(port: u16) -> Rule {
     Rule::new(Verdict::Accept)
         .matching(Match::Protocol(Protocol::Tcp))
@@ -289,6 +310,7 @@ pub fn allow_tcp(port: u16) -> Rule {
 }
 
 /// Convenience: allow UDP port.
+#[must_use]
 pub fn allow_udp(port: u16) -> Rule {
     Rule::new(Verdict::Accept)
         .matching(Match::Protocol(Protocol::Udp))
@@ -296,17 +318,20 @@ pub fn allow_udp(port: u16) -> Rule {
 }
 
 /// Convenience: allow established/related connections.
+#[must_use]
 pub fn allow_established() -> Rule {
     Rule::new(Verdict::Accept)
         .matching(Match::CtState(vec!["established".into(), "related".into()]))
 }
 
 /// Convenience: drop from source CIDR.
+#[must_use]
 pub fn deny_source(cidr: &str) -> Rule {
     Rule::new(Verdict::Drop).matching(Match::SourceAddr(cidr.to_string()))
 }
 
 /// Convenience: allow specific source to specific port (service policy).
+#[must_use]
 pub fn allow_service(source_cidr: &str, protocol: Protocol, port: u16) -> Rule {
     Rule::new(Verdict::Accept)
         .matching(Match::SourceAddr(source_cidr.to_string()))
@@ -315,6 +340,7 @@ pub fn allow_service(source_cidr: &str, protocol: Protocol, port: u16) -> Rule {
 }
 
 /// Convenience: rate-limited accept on a TCP port.
+#[must_use]
 pub fn rate_limit_tcp(port: u16, rate: u32, unit: RateUnit) -> Rule {
     Rule::new(Verdict::Accept)
         .matching(Match::Protocol(Protocol::Tcp))
@@ -327,11 +353,13 @@ pub fn rate_limit_tcp(port: u16, rate: u32, unit: RateUnit) -> Rule {
 }
 
 /// Convenience: drop traffic from an IPv6 source.
+#[must_use]
 pub fn deny_source6(cidr: &str) -> Rule {
     Rule::new(Verdict::Drop).matching(Match::SourceAddr6(cidr.to_string()))
 }
 
 /// Convenience: match against a named set.
+#[must_use]
 pub fn match_set(field: &str, set_name: &str) -> Match {
     Match::SetLookup {
         field: field.to_string(),

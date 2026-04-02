@@ -83,6 +83,7 @@ pub struct Firewall {
 
 impl Firewall {
     /// Create a new firewall manager.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             tables: vec![],
@@ -91,6 +92,7 @@ impl Firewall {
     }
 
     /// Enable dry-run mode (generate rules but don't apply).
+    #[must_use]
     pub fn dry_run(mut self, enabled: bool) -> Self {
         self.dry_run = enabled;
         self
@@ -102,8 +104,9 @@ impl Firewall {
     }
 
     /// Generate the nftables ruleset as a string.
+    #[must_use]
     pub fn render(&self) -> String {
-        let mut output = String::new();
+        let mut output = String::with_capacity(self.tables.len() * 256);
         for table in &self.tables {
             output.push_str(&table.render());
             output.push('\n');
@@ -112,6 +115,7 @@ impl Firewall {
     }
 
     /// Access the tables in this firewall.
+    #[must_use]
     pub fn tables(&self) -> &[table::Table] {
         &self.tables
     }

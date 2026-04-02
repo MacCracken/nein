@@ -18,6 +18,7 @@ pub struct ToolResult {
 }
 
 impl ToolResult {
+    #[must_use]
     pub fn ok(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
@@ -25,6 +26,7 @@ impl ToolResult {
         }
     }
 
+    #[must_use]
     pub fn err(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
@@ -142,11 +144,26 @@ pub fn tool_descriptors() -> Vec<ToolDef> {
             ToolSchema::new(
                 "object",
                 HashMap::from([
-                    ("protocol".into(), serde_json::json!({"type": "string", "enum": ["tcp", "udp"]})),
-                    ("port".into(), serde_json::json!({"type": "integer", "minimum": 1, "maximum": 65535})),
-                    ("source".into(), serde_json::json!({"type": "string", "description": "Source CIDR (optional)"})),
-                    ("table".into(), serde_json::json!({"type": "string", "default": "filter"})),
-                    ("chain".into(), serde_json::json!({"type": "string", "default": "input"})),
+                    (
+                        "protocol".into(),
+                        serde_json::json!({"type": "string", "enum": ["tcp", "udp"]}),
+                    ),
+                    (
+                        "port".into(),
+                        serde_json::json!({"type": "integer", "minimum": 1, "maximum": 65535}),
+                    ),
+                    (
+                        "source".into(),
+                        serde_json::json!({"type": "string", "description": "Source CIDR (optional)"}),
+                    ),
+                    (
+                        "table".into(),
+                        serde_json::json!({"type": "string", "default": "filter"}),
+                    ),
+                    (
+                        "chain".into(),
+                        serde_json::json!({"type": "string", "default": "input"}),
+                    ),
                 ]),
                 vec!["protocol".into(), "port".into()],
             ),
@@ -157,11 +174,26 @@ pub fn tool_descriptors() -> Vec<ToolDef> {
             ToolSchema::new(
                 "object",
                 HashMap::from([
-                    ("protocol".into(), serde_json::json!({"type": "string", "enum": ["tcp", "udp"]})),
-                    ("port".into(), serde_json::json!({"type": "integer", "minimum": 1, "maximum": 65535})),
-                    ("source".into(), serde_json::json!({"type": "string", "description": "Source CIDR (optional)"})),
-                    ("table".into(), serde_json::json!({"type": "string", "default": "filter"})),
-                    ("chain".into(), serde_json::json!({"type": "string", "default": "input"})),
+                    (
+                        "protocol".into(),
+                        serde_json::json!({"type": "string", "enum": ["tcp", "udp"]}),
+                    ),
+                    (
+                        "port".into(),
+                        serde_json::json!({"type": "integer", "minimum": 1, "maximum": 65535}),
+                    ),
+                    (
+                        "source".into(),
+                        serde_json::json!({"type": "string", "description": "Source CIDR (optional)"}),
+                    ),
+                    (
+                        "table".into(),
+                        serde_json::json!({"type": "string", "default": "filter"}),
+                    ),
+                    (
+                        "chain".into(),
+                        serde_json::json!({"type": "string", "default": "input"}),
+                    ),
                 ]),
                 vec!["protocol".into(), "port".into()],
             ),
@@ -172,8 +204,14 @@ pub fn tool_descriptors() -> Vec<ToolDef> {
             ToolSchema::new(
                 "object",
                 HashMap::from([
-                    ("table".into(), serde_json::json!({"type": "string", "description": "Filter by table name"})),
-                    ("chain".into(), serde_json::json!({"type": "string", "description": "Filter by chain name"})),
+                    (
+                        "table".into(),
+                        serde_json::json!({"type": "string", "description": "Filter by table name"}),
+                    ),
+                    (
+                        "chain".into(),
+                        serde_json::json!({"type": "string", "description": "Filter by chain name"}),
+                    ),
                 ]),
                 vec![],
             ),
@@ -185,6 +223,8 @@ pub fn tool_descriptors() -> Vec<ToolDef> {
 ///
 /// Validates the source CIDR if provided.
 pub fn build_allow_rule(req: &AllowRequest) -> Result<String, String> {
+    crate::validate::validate_identifier(&req.table).map_err(|e| e.to_string())?;
+    crate::validate::validate_identifier(&req.chain).map_err(|e| e.to_string())?;
     let proto = parse_protocol(&req.protocol)?;
     let mut parts = vec![format!("{proto} dport {}", req.port)];
     if let Some(src) = &req.source {
@@ -200,6 +240,8 @@ pub fn build_allow_rule(req: &AllowRequest) -> Result<String, String> {
 ///
 /// Validates the source CIDR if provided.
 pub fn build_deny_rule(req: &DenyRequest) -> Result<String, String> {
+    crate::validate::validate_identifier(&req.table).map_err(|e| e.to_string())?;
+    crate::validate::validate_identifier(&req.chain).map_err(|e| e.to_string())?;
     let proto = parse_protocol(&req.protocol)?;
     let mut parts = vec![format!("{proto} dport {}", req.port)];
     if let Some(src) = &req.source {

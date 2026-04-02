@@ -4,6 +4,7 @@ use thiserror::Error;
 
 /// Errors returned by nein operations.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum NeinError {
     /// The `nft` command failed with an error message.
     #[error("nft command failed: {0}")]

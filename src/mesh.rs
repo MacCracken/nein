@@ -38,6 +38,7 @@ impl SidecarConfig {
     /// - Outbound port: 15001
     /// - Proxy UID: 1337 (Istio convention)
     /// - Excludes localhost (127.0.0.0/8) from outbound
+    #[must_use]
     pub fn envoy() -> Self {
         Self {
             inbound_port: 15006,
@@ -51,42 +52,49 @@ impl SidecarConfig {
     }
 
     /// Set custom inbound proxy port.
+    #[must_use]
     pub fn inbound_port(mut self, port: u16) -> Self {
         self.inbound_port = port;
         self
     }
 
     /// Set custom outbound proxy port.
+    #[must_use]
     pub fn outbound_port(mut self, port: u16) -> Self {
         self.outbound_port = port;
         self
     }
 
     /// Set the proxy process UID.
+    #[must_use]
     pub fn proxy_uid(mut self, uid: u32) -> Self {
         self.proxy_uid = uid;
         self
     }
 
     /// Add a CIDR to exclude from outbound interception.
+    #[must_use]
     pub fn exclude_outbound_cidr(mut self, cidr: &str) -> Self {
         self.exclude_outbound_cidrs.push(cidr.to_string());
         self
     }
 
     /// Add a port to exclude from outbound interception.
+    #[must_use]
     pub fn exclude_outbound_port(mut self, port: u16) -> Self {
         self.exclude_outbound_ports.push(port);
         self
     }
 
     /// Add a port to exclude from inbound interception.
+    #[must_use]
     pub fn exclude_inbound_port(mut self, port: u16) -> Self {
         self.exclude_inbound_ports.push(port);
         self
     }
 
     /// Set custom table name.
+    #[must_use]
     pub fn table_name(mut self, name: &str) -> Self {
         self.table_name = name.to_string();
         self
@@ -108,6 +116,7 @@ impl SidecarConfig {
     ///   skipping proxy's own traffic and excluded CIDRs/ports.
     /// - `mesh_inbound` (prerouting chain): redirects inbound TCP to the proxy,
     ///   skipping excluded ports.
+    #[must_use]
     pub fn to_firewall(&self) -> Firewall {
         let mut fw = Firewall::new();
         let mut table = Table::new(&self.table_name, Family::Ip);

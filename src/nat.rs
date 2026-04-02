@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// A NAT rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum NatRule {
     /// Destination NAT (port forwarding).
     Dnat {
@@ -84,6 +85,7 @@ impl NatRule {
     }
 
     /// Render as nftables syntax.
+    #[must_use]
     pub fn render(&self) -> String {
         match self {
             Self::Dnat {
@@ -148,6 +150,7 @@ impl NatRule {
 }
 
 /// Convenience: port forward (DNAT) for container port mapping.
+#[must_use]
 pub fn port_forward(host_port: u16, container_addr: &str, container_port: u16) -> NatRule {
     NatRule::Dnat {
         protocol: crate::rule::Protocol::Tcp,
@@ -159,6 +162,7 @@ pub fn port_forward(host_port: u16, container_addr: &str, container_port: u16) -
 }
 
 /// Convenience: masquerade for container outbound traffic.
+#[must_use]
 pub fn container_masquerade(subnet: &str, outbound_iface: &str) -> NatRule {
     NatRule::Masquerade {
         source_cidr: subnet.to_string(),

@@ -26,6 +26,7 @@ pub struct CountryBlock {
 
 impl CountryBlock {
     /// Create a new country block with IPv4 CIDRs.
+    #[must_use]
     pub fn v4(code: &str, cidrs: Vec<String>) -> Self {
         Self {
             code: code.to_uppercase(),
@@ -35,6 +36,7 @@ impl CountryBlock {
     }
 
     /// Create a new country block with both IPv4 and IPv6 CIDRs.
+    #[must_use]
     pub fn dual(code: &str, cidrs_v4: Vec<String>, cidrs_v6: Vec<String>) -> Self {
         Self {
             code: code.to_uppercase(),
@@ -57,6 +59,7 @@ pub struct GeoIpBlocklist {
 
 impl GeoIpBlocklist {
     /// Create a new GeoIP blocklist.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             countries: vec![],
@@ -66,12 +69,14 @@ impl GeoIpBlocklist {
     }
 
     /// Set custom table name.
+    #[must_use]
     pub fn table_name(mut self, name: &str) -> Self {
         self.table_name = name.to_string();
         self
     }
 
     /// Set the hook point (default: Input).
+    #[must_use]
     pub fn hook(mut self, hook: Hook) -> Self {
         self.hook = hook;
         self
@@ -83,6 +88,7 @@ impl GeoIpBlocklist {
     }
 
     /// Access blocked countries.
+    #[must_use]
     pub fn countries(&self) -> &[CountryBlock] {
         &self.countries
     }
@@ -111,6 +117,7 @@ impl GeoIpBlocklist {
     ///
     /// Creates sets for each blocked country's CIDRs, then rules that
     /// drop traffic matching those sets.
+    #[must_use]
     pub fn to_firewall(&self) -> Firewall {
         let mut fw = Firewall::new();
 

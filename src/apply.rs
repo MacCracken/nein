@@ -5,6 +5,7 @@
 //! management during agent lifecycle events.
 
 use crate::error::NeinError;
+use crate::validate;
 
 /// Apply a ruleset string via `nft -f -`.
 pub async fn apply_ruleset(ruleset: &str) -> Result<(), NeinError> {
@@ -22,12 +23,16 @@ pub async fn flush_ruleset() -> Result<(), NeinError> {
 
 /// Flush a specific table.
 pub async fn flush_table(family: &str, table: &str) -> Result<(), NeinError> {
+    validate::validate_identifier(family)?;
+    validate::validate_identifier(table)?;
     tracing::info!(family, table, "flushing table");
     run_nft_stdin(&format!("flush table {family} {table}\n")).await
 }
 
 /// Delete a specific table.
 pub async fn delete_table(family: &str, table: &str) -> Result<(), NeinError> {
+    validate::validate_identifier(family)?;
+    validate::validate_identifier(table)?;
     tracing::info!(family, table, "deleting table");
     run_nft_stdin(&format!("delete table {family} {table}\n")).await
 }
@@ -37,6 +42,10 @@ pub async fn delete_table(family: &str, table: &str) -> Result<(), NeinError> {
 /// The rule string should be the nftables rule body (matches + verdict),
 /// without the leading `add rule` prefix.
 pub async fn add_rule(family: &str, table: &str, chain: &str, rule: &str) -> Result<(), NeinError> {
+    validate::validate_identifier(family)?;
+    validate::validate_identifier(table)?;
+    validate::validate_identifier(chain)?;
+    validate::validate_nft_element(rule)?;
     tracing::debug!(family, table, chain, rule, "adding rule");
     run_nft_stdin(&format!("add rule {family} {table} {chain} {rule}\n")).await
 }
@@ -50,6 +59,9 @@ pub async fn delete_rule(
     chain: &str,
     handle: u64,
 ) -> Result<(), NeinError> {
+    validate::validate_identifier(family)?;
+    validate::validate_identifier(table)?;
+    validate::validate_identifier(chain)?;
     tracing::debug!(family, table, chain, handle, "deleting rule");
     run_nft_stdin(&format!(
         "delete rule {family} {table} {chain} handle {handle}\n"
@@ -90,6 +102,9 @@ pub async fn find_rules_by_comment(
     table: &str,
     comment_prefix: &str,
 ) -> Result<Vec<RuleHandle>, NeinError> {
+    validate::validate_identifier(family)?;
+    validate::validate_identifier(table)?;
+    validate::validate_comment(comment_prefix)?;
     tracing::debug!(family, table, comment_prefix, "finding rules by comment");
     let raw = run_nft_cmd(&["-a", "list", "table", family, table]).await?;
     let handles = parse_rules_with_handles(&raw, comment_prefix);
@@ -100,10 +115,12 @@ pub async fn find_rules_by_comment(
 /// Parse `nft -a` output, extracting rules matching a comment prefix.
 ///
 /// This is a pure function for testability.
+#[must_use]
 pub fn parse_rules_with_handles(nft_output: &str, comment_prefix: &str) -> Vec<RuleHandle> {
     let mut results = vec![];
     let mut current_table = String::new();
     let mut current_chain = String::new();
+    let comment_needle = format!("comment \"{}", comment_prefix);
 
     for line in nft_output.lines() {
         let trimmed = line.trim();
@@ -112,7 +129,7 @@ pub fn parse_rules_with_handles(nft_output: &str, comment_prefix: &str) -> Vec<R
             current_table = rest.trim_end_matches(" {").to_string();
         } else if let Some(rest) = trimmed.strip_prefix("chain ") {
             current_chain = rest.trim_end_matches(" {").to_string();
-        } else if trimmed.contains(&format!("comment \"{}", comment_prefix))
+        } else if trimmed.contains(&comment_needle)
             && trimmed.contains("# handle ")
             && let Some(handle) = extract_handle(trimmed)
         {
