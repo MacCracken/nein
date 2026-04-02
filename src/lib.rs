@@ -76,6 +76,7 @@ pub use error::NeinError;
 
 /// Top-level firewall manager.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Firewall {
     tables: Vec<table::Table>,
     dry_run: bool,

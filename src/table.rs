@@ -39,6 +39,7 @@ impl std::fmt::Display for Family {
 /// Renders as `define $name = value;` inside a table block.
 /// Useful for reusable constants (IPs, ports, interface names).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Define {
     pub name: String,
     pub value: String,
@@ -88,6 +89,7 @@ impl Define {
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Flowtable {
     pub name: String,
     pub hook: Hook,
@@ -158,6 +160,7 @@ impl Flowtable {
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CtTimeout {
     pub name: String,
     pub protocol: Protocol,
@@ -242,6 +245,7 @@ impl CtTimeout {
 
 /// An nftables table.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Table {
     pub name: String,
     pub family: Family,
@@ -564,5 +568,43 @@ mod tests {
         );
         let rendered = table.render();
         assert!(rendered.contains("ct timeout tcp-long {"));
+    }
+
+    // -- Serde roundtrip tests --
+
+    #[test]
+    fn define_serde_roundtrip() {
+        let d = Define::new("WAN", "eth0");
+        let json = serde_json::to_string(&d).unwrap();
+        let back: Define = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
+    }
+
+    #[test]
+    fn flowtable_serde_roundtrip() {
+        let ft = Flowtable::new("ft", 0, vec!["eth0".into(), "eth1".into()]);
+        let json = serde_json::to_string(&ft).unwrap();
+        let back: Flowtable = serde_json::from_str(&json).unwrap();
+        assert_eq!(ft, back);
+    }
+
+    #[test]
+    fn ct_timeout_serde_roundtrip() {
+        let ct = CtTimeout::new("tcp-long", Protocol::Tcp)
+            .l3proto(Family::Ip)
+            .timeout("established", 7200)
+            .timeout("close_wait", 60);
+        let json = serde_json::to_string(&ct).unwrap();
+        let back: CtTimeout = serde_json::from_str(&json).unwrap();
+        assert_eq!(ct, back);
+    }
+
+    #[test]
+    fn table_serde_roundtrip() {
+        let mut table = Table::new("filter", Family::Inet);
+        table.add_define(Define::new("LAN", "192.168.0.0/16"));
+        let json = serde_json::to_string(&table).unwrap();
+        let back: Table = serde_json::from_str(&json).unwrap();
+        assert_eq!(table, back);
     }
 }

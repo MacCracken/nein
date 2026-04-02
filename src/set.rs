@@ -51,6 +51,7 @@ impl std::fmt::Display for SetFlag {
 
 /// A named nftables set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct NftSet {
     /// Set name.
     pub name: String,
@@ -145,6 +146,7 @@ impl std::fmt::Display for MapVerdict {
 
 /// A named nftables verdict map.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct NftMap {
     /// Map name.
     pub name: String,

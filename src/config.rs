@@ -41,11 +41,56 @@ pub struct FirewallConfig {
     pub tables: Vec<TableConfig>,
 }
 
+/// Define variable configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefineConfig {
+    pub name: String,
+    pub value: String,
+}
+
+/// Flowtable configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowtableConfig {
+    pub name: String,
+    #[serde(default = "default_priority")]
+    pub priority: i32,
+    #[serde(default)]
+    pub devices: Vec<String>,
+}
+
+fn default_priority() -> i32 {
+    0
+}
+
+/// Conntrack timeout configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CtTimeoutConfig {
+    pub name: String,
+    pub protocol: String,
+    #[serde(default)]
+    pub l3proto: Option<String>,
+    #[serde(default)]
+    pub policy: Vec<CtTimeoutEntry>,
+}
+
+/// A single timeout entry (state name + seconds).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CtTimeoutEntry {
+    pub state: String,
+    pub seconds: u32,
+}
+
 /// Table configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableConfig {
     pub name: String,
     pub family: String,
+    #[serde(default)]
+    pub defines: Vec<DefineConfig>,
+    #[serde(default)]
+    pub flowtables: Vec<FlowtableConfig>,
+    #[serde(default)]
+    pub ct_timeouts: Vec<CtTimeoutConfig>,
     #[serde(default)]
     pub chains: Vec<ChainConfig>,
 }
@@ -74,6 +119,21 @@ pub struct RuleConfig {
     pub verdict: String,
     #[serde(default)]
     pub verdict_chain: Option<String>,
+    /// Numeric value for verdicts like `set_mark`, `set_ct_mark`, `counter_named`.
+    #[serde(default)]
+    pub verdict_value: Option<u32>,
+    /// String value for `counter_named` name or `log_advanced` prefix.
+    #[serde(default)]
+    pub verdict_name: Option<String>,
+    /// Log level for `log_advanced`.
+    #[serde(default)]
+    pub log_level: Option<String>,
+    /// Log group for `log_advanced`.
+    #[serde(default)]
+    pub log_group: Option<u16>,
+    /// Log snaplen for `log_advanced`.
+    #[serde(default)]
+    pub log_snaplen: Option<u32>,
     #[serde(default)]
     pub comment: Option<String>,
 }
@@ -124,6 +184,28 @@ pub enum MatchConfig {
     Icmpv6Type { icmp_type: String },
     #[serde(rename = "meta_mark")]
     MetaMark { value: u32 },
+    #[serde(rename = "quota")]
+    Quota {
+        mode: String,
+        amount: u64,
+        unit: String,
+    },
+    #[serde(rename = "flow_offload")]
+    FlowOffload { name: String },
+    #[serde(rename = "ct_timeout_set")]
+    CtTimeoutSet { name: String },
+    #[serde(rename = "icmp_type_code")]
+    IcmpTypeCode { icmp_type: String, code: u8 },
+    #[serde(rename = "icmpv6_type_code")]
+    Icmpv6TypeCode { icmp_type: String, code: u8 },
+    #[serde(rename = "vlan_id")]
+    VlanId { id: u16 },
+    #[serde(rename = "dscp")]
+    Dscp { value: u8 },
+    #[serde(rename = "pkt_type")]
+    PktType { pkt_type: String },
+    #[serde(rename = "frag_off")]
+    FragOff { mask: u16, op: String, value: u16 },
     #[serde(rename = "raw")]
     Raw { expr: String },
 }
@@ -152,6 +234,27 @@ fn config_to_firewall(config: &FirewallConfig) -> Result<Firewall, NeinError> {
 fn parse_table(tc: &TableConfig) -> Result<Table, NeinError> {
     let family = parse_family(&tc.family)?;
     let mut table = Table::new(&tc.name, family);
+    for d in &tc.defines {
+        table.add_define(crate::table::Define::new(&d.name, &d.value));
+    }
+    for ft in &tc.flowtables {
+        table.add_flowtable(crate::table::Flowtable::new(
+            &ft.name,
+            ft.priority,
+            ft.devices.clone(),
+        ));
+    }
+    for ct in &tc.ct_timeouts {
+        let proto = parse_protocol(&ct.protocol)?;
+        let mut timeout = crate::table::CtTimeout::new(&ct.name, proto);
+        if let Some(ref l3) = ct.l3proto {
+            timeout = timeout.l3proto(parse_family(l3)?);
+        }
+        for entry in &ct.policy {
+            timeout = timeout.timeout(&entry.state, entry.seconds);
+        }
+        table.add_ct_timeout(timeout);
+    }
     for cc in &tc.chains {
         table.add_chain(parse_chain(cc)?);
     }
@@ -179,7 +282,7 @@ fn parse_chain(cc: &ChainConfig) -> Result<Chain, NeinError> {
 }
 
 fn parse_rule(rc: &RuleConfig) -> Result<Rule, NeinError> {
-    let verdict = parse_verdict(&rc.verdict, &rc.verdict_chain)?;
+    let verdict = parse_verdict(rc)?;
     let mut rule = Rule::new(verdict);
     for mc in &rc.matches {
         rule = rule.matching(parse_match(mc)?);
@@ -217,6 +320,27 @@ fn parse_match(mc: &MatchConfig) -> Result<Match, NeinError> {
         MatchConfig::IcmpType { icmp_type } => Match::IcmpType(icmp_type.clone()),
         MatchConfig::Icmpv6Type { icmp_type } => Match::Icmpv6Type(icmp_type.clone()),
         MatchConfig::MetaMark { value } => Match::MetaMark(*value),
+        MatchConfig::Quota { mode, amount, unit } => Match::Quota {
+            mode: parse_quota_mode(mode)?,
+            amount: *amount,
+            unit: parse_quota_unit(unit)?,
+        },
+        MatchConfig::FlowOffload { name } => Match::FlowOffload(name.clone()),
+        MatchConfig::CtTimeoutSet { name } => Match::CtTimeoutSet(name.clone()),
+        MatchConfig::IcmpTypeCode { icmp_type, code } => {
+            Match::IcmpTypeCode(icmp_type.clone(), *code)
+        }
+        MatchConfig::Icmpv6TypeCode { icmp_type, code } => {
+            Match::Icmpv6TypeCode(icmp_type.clone(), *code)
+        }
+        MatchConfig::VlanId { id } => Match::VlanId(*id),
+        MatchConfig::Dscp { value } => Match::Dscp(*value),
+        MatchConfig::PktType { pkt_type } => Match::PktType(parse_pkt_type(pkt_type)?),
+        MatchConfig::FragOff { mask, op, value } => Match::FragOff {
+            mask: *mask,
+            op: parse_cmp_op(op)?,
+            value: *value,
+        },
         MatchConfig::Raw { expr } => Match::Raw(expr.clone()),
     })
 }
@@ -270,29 +394,45 @@ fn parse_policy(s: &str) -> Result<Policy, NeinError> {
     }
 }
 
-fn parse_verdict(s: &str, chain: &Option<String>) -> Result<Verdict, NeinError> {
-    match s {
+fn parse_verdict(rc: &RuleConfig) -> Result<Verdict, NeinError> {
+    match rc.verdict.as_str() {
         "accept" => Ok(Verdict::Accept),
         "drop" => Ok(Verdict::Drop),
         "reject" => Ok(Verdict::Reject),
         "return" => Ok(Verdict::Return),
         "counter" => Ok(Verdict::Counter),
-        "log" => Ok(Verdict::Log(None)),
+        "log" => Ok(Verdict::Log(rc.verdict_name.clone())),
         "jump" => Ok(Verdict::Jump(
-            chain
+            rc.verdict_chain
                 .as_ref()
                 .ok_or_else(|| NeinError::Parse("jump requires verdict_chain".into()))?
                 .clone(),
         )),
         "goto" => Ok(Verdict::GoTo(
-            chain
+            rc.verdict_chain
                 .as_ref()
                 .ok_or_else(|| NeinError::Parse("goto requires verdict_chain".into()))?
                 .clone(),
         )),
-        _ => Err(NeinError::Parse(format!(
-            "unknown verdict: {s} (valid: accept, drop, reject, return, counter, log, jump, goto)"
-        ))),
+        "set_mark" => Ok(Verdict::SetMark(rc.verdict_value.ok_or_else(|| {
+            NeinError::Parse("set_mark requires verdict_value".into())
+        })?)),
+        "set_ct_mark" => Ok(Verdict::SetCtMark(rc.verdict_value.ok_or_else(|| {
+            NeinError::Parse("set_ct_mark requires verdict_value".into())
+        })?)),
+        "counter_named" => Ok(Verdict::CounterNamed(
+            rc.verdict_name
+                .as_ref()
+                .ok_or_else(|| NeinError::Parse("counter_named requires verdict_name".into()))?
+                .clone(),
+        )),
+        "log_advanced" => Ok(Verdict::LogAdvanced {
+            prefix: rc.verdict_name.clone(),
+            level: rc.log_level.as_deref().map(parse_log_level).transpose()?,
+            group: rc.log_group,
+            snaplen: rc.log_snaplen,
+        }),
+        s => Err(NeinError::Parse(format!("unknown verdict: {s}"))),
     }
 }
 
@@ -316,6 +456,69 @@ fn parse_rate_unit(s: &str) -> Result<RateUnit, NeinError> {
         "day" => Ok(RateUnit::Day),
         _ => Err(NeinError::Parse(format!(
             "unknown rate unit: {s} (valid: second, minute, hour, day)"
+        ))),
+    }
+}
+
+fn parse_quota_mode(s: &str) -> Result<crate::rule::QuotaMode, NeinError> {
+    match s {
+        "over" => Ok(crate::rule::QuotaMode::Over),
+        "until" => Ok(crate::rule::QuotaMode::Until),
+        _ => Err(NeinError::Parse(format!(
+            "unknown quota mode: {s} (valid: over, until)"
+        ))),
+    }
+}
+
+fn parse_quota_unit(s: &str) -> Result<crate::rule::QuotaUnit, NeinError> {
+    match s {
+        "bytes" => Ok(crate::rule::QuotaUnit::Bytes),
+        "kbytes" => Ok(crate::rule::QuotaUnit::KBytes),
+        "mbytes" => Ok(crate::rule::QuotaUnit::MBytes),
+        "gbytes" => Ok(crate::rule::QuotaUnit::GBytes),
+        _ => Err(NeinError::Parse(format!(
+            "unknown quota unit: {s} (valid: bytes, kbytes, mbytes, gbytes)"
+        ))),
+    }
+}
+
+fn parse_pkt_type(s: &str) -> Result<crate::rule::PktType, NeinError> {
+    match s {
+        "unicast" => Ok(crate::rule::PktType::Unicast),
+        "broadcast" => Ok(crate::rule::PktType::Broadcast),
+        "multicast" => Ok(crate::rule::PktType::Multicast),
+        _ => Err(NeinError::Parse(format!(
+            "unknown packet type: {s} (valid: unicast, broadcast, multicast)"
+        ))),
+    }
+}
+
+fn parse_cmp_op(s: &str) -> Result<crate::rule::CmpOp, NeinError> {
+    match s {
+        "==" => Ok(crate::rule::CmpOp::Eq),
+        "!=" => Ok(crate::rule::CmpOp::Ne),
+        "<" => Ok(crate::rule::CmpOp::Lt),
+        ">" => Ok(crate::rule::CmpOp::Gt),
+        "<=" => Ok(crate::rule::CmpOp::Le),
+        ">=" => Ok(crate::rule::CmpOp::Ge),
+        _ => Err(NeinError::Parse(format!(
+            "unknown comparison operator: {s} (valid: ==, !=, <, >, <=, >=)"
+        ))),
+    }
+}
+
+fn parse_log_level(s: &str) -> Result<crate::rule::LogLevel, NeinError> {
+    match s {
+        "emerg" => Ok(crate::rule::LogLevel::Emerg),
+        "alert" => Ok(crate::rule::LogLevel::Alert),
+        "crit" => Ok(crate::rule::LogLevel::Crit),
+        "err" => Ok(crate::rule::LogLevel::Err),
+        "warn" => Ok(crate::rule::LogLevel::Warn),
+        "notice" => Ok(crate::rule::LogLevel::Notice),
+        "info" => Ok(crate::rule::LogLevel::Info),
+        "debug" => Ok(crate::rule::LogLevel::Debug),
+        _ => Err(NeinError::Parse(format!(
+            "unknown log level: {s} (valid: emerg, alert, crit, err, warn, notice, info, debug)"
         ))),
     }
 }
@@ -573,6 +776,9 @@ verdict = "jump"
             tables: vec![TableConfig {
                 name: "filter".to_string(),
                 family: "inet".to_string(),
+                defines: vec![],
+                flowtables: vec![],
+                ct_timeouts: vec![],
                 chains: vec![ChainConfig {
                     name: "input".to_string(),
                     chain_type: Some("filter".to_string()),
@@ -585,6 +791,11 @@ verdict = "jump"
                         }],
                         verdict: "accept".to_string(),
                         verdict_chain: None,
+                        verdict_value: None,
+                        verdict_name: None,
+                        log_level: None,
+                        log_group: None,
+                        log_snaplen: None,
                         comment: Some("allow TCP".to_string()),
                     }],
                 }],

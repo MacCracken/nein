@@ -4,6 +4,7 @@ use crate::error::NeinError;
 
 /// Summary of current firewall state.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct FirewallStatus {
     pub tables: Vec<String>,
     pub total_rules: usize,

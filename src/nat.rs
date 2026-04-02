@@ -588,4 +588,20 @@ mod tests {
         };
         assert!(rule.validate().is_ok());
     }
+
+    #[test]
+    fn dnat_range_serde_roundtrip() {
+        let rule = port_range_forward(80, 89, "172.17.0.2", 8080);
+        let json = serde_json::to_string(&rule).unwrap();
+        let back: NatRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule, back);
+    }
+
+    #[test]
+    fn nat_rule_serde_roundtrip() {
+        let rule = port_forward(8080, "10.0.0.1", 80);
+        let json = serde_json::to_string(&rule).unwrap();
+        let back: NatRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule, back);
+    }
 }

@@ -350,6 +350,57 @@ fn bench_deep_protocol_rule(c: &mut Criterion) {
     });
 }
 
+// -- Scale benchmarks --
+
+fn bench_1000_rule_firewall(c: &mut Criterion) {
+    let mut fw = Firewall::new();
+    let mut table = Table::new("scale", Family::Inet);
+    let mut chain = Chain::base("input", ChainType::Filter, Hook::Input, 0, Policy::Drop);
+    for i in 0..1000u16 {
+        chain.add_rule(rule::allow_tcp(1000 + i).comment(&format!("rule {i}")));
+    }
+    table.add_chain(chain);
+    fw.add_table(table);
+
+    c.bench_function("firewall_1000_rules_render", |b| {
+        b.iter(|| black_box(fw.render()));
+    });
+
+    c.bench_function("firewall_1000_rules_validate", |b| {
+        b.iter(|| black_box(fw.validate()).unwrap());
+    });
+}
+
+fn bench_100_agent_engine(c: &mut Criterion) {
+    let mut engine = PolicyEngine::new();
+    for i in 0..100 {
+        engine.add_agent(
+            AgentPolicy::new(
+                &format!("agent-{i}"),
+                &format!("10.{}.{}.2", i / 256, i % 256),
+            )
+            .allow_inbound(PortSpec::tcp(80))
+            .allow_inbound(PortSpec::tcp(443))
+            .allow_outbound(PortSpec::tcp(8090))
+            .allow_outbound(PortSpec::udp(53))
+            .allow_outbound(PortSpec::quic(443)),
+        );
+    }
+
+    c.bench_function("engine_100_agents_to_firewall", |b| {
+        b.iter(|| black_box(engine.to_firewall()));
+    });
+
+    let fw = engine.to_firewall();
+    c.bench_function("engine_100_agents_render", |b| {
+        b.iter(|| black_box(fw.render()));
+    });
+
+    c.bench_function("engine_100_agents_validate", |b| {
+        b.iter(|| black_box(engine.validate()).unwrap());
+    });
+}
+
 criterion_group!(
     benches,
     bench_rule_render,
@@ -372,5 +423,7 @@ criterion_group!(
     bench_quota_render,
     bench_nat_range_render,
     bench_deep_protocol_rule,
+    bench_1000_rule_firewall,
+    bench_100_agent_engine,
 );
 criterion_main!(benches);

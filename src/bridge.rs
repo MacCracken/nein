@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for a container bridge network.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct BridgeConfig {
     /// Bridge interface name (e.g., "br0", "nein0").
     pub bridge_name: String,
@@ -57,6 +58,7 @@ impl BridgeConfig {
 
 /// A port mapping for a container.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PortMapping {
     /// Port on the host.
     pub host_port: u16,
@@ -129,6 +131,7 @@ impl PortMapping {
 /// Containers in the same group can communicate. Traffic between different
 /// groups is dropped unless explicitly allowed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct IsolationGroup {
     /// Group name (used in chain names and comments).
     pub name: String,
@@ -161,6 +164,7 @@ impl IsolationGroup {
 /// Tracks port mappings and isolation groups, and generates a complete
 /// nftables `Firewall` via [`to_firewall`](Self::to_firewall).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct BridgeFirewall {
     config: BridgeConfig,
     port_mappings: Vec<PortMapping>,

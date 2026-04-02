@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for sidecar proxy traffic interception.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SidecarConfig {
     /// Local port where the proxy listens for redirected inbound traffic.
     pub inbound_port: u16,

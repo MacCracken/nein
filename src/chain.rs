@@ -113,6 +113,7 @@ impl From<crate::nat::NatRule> for ChainRule {
 
 /// An nftables chain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Chain {
     pub name: String,
     pub chain_type: Option<ChainType>,

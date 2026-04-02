@@ -36,6 +36,7 @@ use crate::table::{Family, Table};
 /// chains, established/related tracking, loopback access, and DNS resolution
 /// by default.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct NamespaceFirewall {
     agent_name: String,
     allowed_inbound: Vec<PortSpec>,

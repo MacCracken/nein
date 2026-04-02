@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 /// A country block entry: country code + its CIDR ranges.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CountryBlock {
     /// ISO 3166-1 alpha-2 country code (e.g., "CN", "RU").
     pub code: String,
@@ -48,6 +49,7 @@ impl CountryBlock {
 
 /// GeoIP blocklist configuration.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct GeoIpBlocklist {
     /// Countries to block.
     countries: Vec<CountryBlock>,

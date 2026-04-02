@@ -370,6 +370,7 @@ pub enum Match {
 
 /// An nftables rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Rule {
     pub matches: Vec<Match>,
     pub verdict: Verdict,
@@ -1604,5 +1605,79 @@ mod tests {
         assert!(rendered.contains("udp dport 443"));
         assert!(rendered.contains("limit rate 1000/second burst 2000 packets"));
         assert!(rendered.contains("quic rate limit port 443"));
+    }
+
+    // -- Serde roundtrip tests --
+
+    #[test]
+    fn rule_serde_roundtrip() {
+        let rule = Rule::new(Verdict::Accept)
+            .matching(Match::Protocol(Protocol::Tcp))
+            .matching(Match::DPort(443))
+            .comment("test");
+        let json = serde_json::to_string(&rule).unwrap();
+        let back: Rule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule, back);
+    }
+
+    #[test]
+    fn quota_match_serde_roundtrip() {
+        let m = Match::Quota {
+            mode: QuotaMode::Over,
+            amount: 100,
+            unit: QuotaUnit::MBytes,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let back: Match = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn verdict_log_advanced_serde_roundtrip() {
+        let v = Verdict::LogAdvanced {
+            prefix: Some("TEST: ".into()),
+            level: Some(LogLevel::Warn),
+            group: Some(1),
+            snaplen: Some(128),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: Verdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn verdict_counter_named_serde_roundtrip() {
+        let v = Verdict::CounterNamed("hits".into());
+        let json = serde_json::to_string(&v).unwrap();
+        let back: Verdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn match_frag_off_serde_roundtrip() {
+        let m = Match::FragOff {
+            mask: 0x2000,
+            op: CmpOp::Ne,
+            value: 0,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let back: Match = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn match_pkt_type_serde_roundtrip() {
+        let m = Match::PktType(PktType::Broadcast);
+        let json = serde_json::to_string(&m).unwrap();
+        let back: Match = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn match_ipv6_ext_hdr_serde_roundtrip() {
+        let m = Match::Ipv6ExtHdrExists(Ipv6ExtHdr::Fragment);
+        let json = serde_json::to_string(&m).unwrap();
+        let back: Match = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
     }
 }

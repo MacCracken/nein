@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 
 /// Network policy for a single agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AgentPolicy {
     /// Agent identifier (used in table/chain names and comments).
     pub agent_id: String,
@@ -80,6 +81,7 @@ impl std::fmt::Display for Transport {
 
 /// A port specification for policy rules.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PortSpec {
     pub protocol: Protocol,
     pub port: u16,
@@ -278,6 +280,7 @@ impl AgentPolicy {
 /// Generates a unified nftables `Firewall` with per-agent chains for
 /// inbound and outbound traffic control.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PolicyEngine {
     /// Active agent policies, keyed by agent ID.
     agents: BTreeMap<String, AgentPolicy>,
@@ -741,5 +744,34 @@ mod tests {
         assert_eq!(policy.allowed_inbound.len(), 2);
         assert_eq!(policy.allowed_outbound.len(), 1);
         assert_eq!(policy.allowed_outbound_hosts.len(), 1);
+    }
+
+    // -- Serde roundtrip tests --
+
+    #[test]
+    fn port_spec_serde_roundtrip() {
+        let spec = PortSpec::quic(443);
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: PortSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(spec, back);
+    }
+
+    #[test]
+    fn transport_serde_roundtrip() {
+        for t in [Transport::Tcp, Transport::Udp, Transport::Quic] {
+            let json = serde_json::to_string(&t).unwrap();
+            let back: Transport = serde_json::from_str(&json).unwrap();
+            assert_eq!(t, back);
+        }
+    }
+
+    #[test]
+    fn agent_policy_serde_roundtrip() {
+        let policy = AgentPolicy::new("web", "10.0.0.1")
+            .allow_inbound(PortSpec::tcp(80))
+            .allow_outbound(PortSpec::quic(443));
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: AgentPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
     }
 }

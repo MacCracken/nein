@@ -175,6 +175,7 @@ pub async fn list_ruleset_with_handles() -> Result<String, NeinError> {
 
 /// A rule handle found in the live ruleset.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RuleHandle {
     pub table: String,
     pub chain: String,
