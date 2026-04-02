@@ -47,8 +47,22 @@ All notable changes to nein are documented here.
 - `rate_limit_udp()` convenience function
 - `PortSpec::quic(port)` constructor
 
+#### Production Firewall Completeness
+- **Reject with reason**: `Verdict::RejectWith(RejectReason)` — TCP RST, ICMP host/port/net/admin-unreachable, ICMPx admin-prohibited
+- **Connection count limiting**: `Match::ConnLimit(u32)` for per-source connection count (`ct count over N`)
+
+#### v1.0 Readiness
+- **Serde roundtrip tests**: 19 tests across all modules (rule, table, nat, engine types)
+- **Config module**: TOML parsing for all Phase 4-8 types (defines, flowtables, ct_timeouts, quota, dscp, vlan, frag, pkttype, log_advanced, counter_named, set_mark, reject_with, conn_limit)
+- **Doc-tests**: 6 doc-tests on key entry points (lib.rs, rule.rs, builder.rs, engine.rs, bridge.rs, netns.rs)
+- **Scale benchmarks**: 1000-rule firewall (176µs render, 82µs validate), 100-agent engine (548µs to_firewall, 320µs render)
+- **ADRs**: 3 new records — set-based isolation (007), typed enums over strings (008), non-exhaustive structs (009)
+- **Tracing**: added structured logging to bridge, mesh, geoip, engine, policy, config, inspect modules
+
 ### Changed
 - `bote` dependency changed from path to crates.io `v0.91`
+- `agnosys` dependency changed from path to git tag `v0.50.0`
+- `criterion` upgraded from `0.5` to `0.8` (`black_box` migrated to `std::hint::black_box`)
 - `validate_addr()` now parses actual IP/CIDR via `std::net::IpAddr` instead of character-set-only checks
 - `validate_family()` added — closed set validation for nftables address families
 - All `apply.rs` incremental functions validate `family` param against closed set
@@ -56,14 +70,28 @@ All notable changes to nein are documented here.
 - `Chain::render()`, `Table::render()` use `write!` with pre-allocation
 - `mcp::build_allow_rule`/`build_deny_rule` now validate `table` and `chain` fields
 - `port_range_forward()` uses `saturating_sub`/`saturating_add` to prevent overflow
-- `#[non_exhaustive]` added to all 21 public enums
+- `#[non_exhaustive]` added to all public enums and structs
 - `#[must_use]` added to ~70 pure/builder functions
 - `#[inline]` added to hot-path functions (`Rule::new`, `render`, `matching`)
+- `Hash` derived on all public enums and value structs
+- `Serialize`/`Deserialize` added to `Firewall`, `PolicyEngine`, `GeoIpBlocklist`, `BridgeFirewall`, `FirewallStatus`, `RuleHandle`
+- `PartialEq`/`Eq` added to all config and MCP types
+- Makefile, bench-track.sh, CI workflows switched from `--all-features` to `--features full`
+- `deny.toml` updated with `allow-git` for agnosys GitHub URL
+- SECURITY.md updated with v0.90.0 support, new attack surfaces, standards compliance section
+- Threat model updated with incremental apply injection, MCP tool input, supply chain sections
 
 ### Fixed
 - `mcp.rs` formatting (was only `cargo fmt` failure at session start)
 - `config.rs` redundant `let mut chain = chain;` re-binding
-- `apply.rs` incremental functions (`flush_table`, `delete_table`, `add_rule`, `delete_rule`) now validate all parameters before interpolation into nft commands (security)
+- `apply.rs` incremental functions now validate all parameters before interpolation (security)
+- `matching_addrs()`/`matching_addrs6()` now validate each address before embedding in `Raw` (security)
+- `rate_limit_quic()` burst uses `saturating_mul` to prevent overflow
+- `CtTimeout` validates protocol is TCP/UDP only, l3proto is Ip/Ip6 only
+- `Flowtable` validates at least one device is present
+- CI `cargo test --doc` now uses `--features full` so feature-gated doc-tests run
+- Release workflow `sed` patterns fixed for `#[cfg(feature = "netns")]` stripping
+- Release workflow uses `--allow-dirty` for publish after stripping private deps
 
 ### Performance
 - `rule_render`: 305 ns → 123 ns (**-60%**)
@@ -73,9 +101,10 @@ All notable changes to nein are documented here.
 - `mesh_render`: 2.96 µs → 1.22 µs (**-59%**)
 - Bridge isolation: O(n^2) → O(1) per group via nftables sets
 - PolicyEngine outbound hosts: O(ports * hosts) → O(ports) via named sets
+- Scale: 1000-rule render 176µs, 100-agent engine 548µs
 
 ### Tests
-- 372 unit tests, 7 integration tests, 1 doctest (up from 217 unit tests)
+- 396 unit tests, 7 integration tests, 6 doc-tests = **409 total** (up from 217 unit tests)
 
 ## [0.24.3] — 2026-03-24
 
