@@ -66,8 +66,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-vet
         run: cargo install cargo-vet
+      - name: Generate lockfile
+        run: cargo generate-lockfile
       - name: Check
-        run: cargo vet check --locked
+        run: cargo vet check
 
   test:
     name: Test (${{ matrix.os }})
