@@ -23,7 +23,7 @@ pub async fn flush_ruleset() -> Result<(), NeinError> {
 
 /// Flush a specific table.
 pub async fn flush_table(family: &str, table: &str) -> Result<(), NeinError> {
-    validate::validate_identifier(family)?;
+    validate::validate_family(family)?;
     validate::validate_identifier(table)?;
     tracing::info!(family, table, "flushing table");
     run_nft_stdin(&format!("flush table {family} {table}\n")).await
@@ -31,7 +31,7 @@ pub async fn flush_table(family: &str, table: &str) -> Result<(), NeinError> {
 
 /// Delete a specific table.
 pub async fn delete_table(family: &str, table: &str) -> Result<(), NeinError> {
-    validate::validate_identifier(family)?;
+    validate::validate_family(family)?;
     validate::validate_identifier(table)?;
     tracing::info!(family, table, "deleting table");
     run_nft_stdin(&format!("delete table {family} {table}\n")).await
@@ -42,7 +42,7 @@ pub async fn delete_table(family: &str, table: &str) -> Result<(), NeinError> {
 /// The rule string should be the nftables rule body (matches + verdict),
 /// without the leading `add rule` prefix.
 pub async fn add_rule(family: &str, table: &str, chain: &str, rule: &str) -> Result<(), NeinError> {
-    validate::validate_identifier(family)?;
+    validate::validate_family(family)?;
     validate::validate_identifier(table)?;
     validate::validate_identifier(chain)?;
     validate::validate_nft_element(rule)?;
@@ -59,7 +59,7 @@ pub async fn delete_rule(
     chain: &str,
     handle: u64,
 ) -> Result<(), NeinError> {
-    validate::validate_identifier(family)?;
+    validate::validate_family(family)?;
     validate::validate_identifier(table)?;
     validate::validate_identifier(chain)?;
     tracing::debug!(family, table, chain, handle, "deleting rule");
@@ -78,7 +78,7 @@ pub async fn insert_rule(
     chain: &str,
     rule: &str,
 ) -> Result<(), NeinError> {
-    validate::validate_identifier(family)?;
+    validate::validate_family(family)?;
     validate::validate_identifier(table)?;
     validate::validate_identifier(chain)?;
     validate::validate_nft_element(rule)?;
@@ -98,7 +98,7 @@ pub async fn add_rule_after(
     position_handle: u64,
     rule: &str,
 ) -> Result<(), NeinError> {
-    validate::validate_identifier(family)?;
+    validate::validate_family(family)?;
     validate::validate_identifier(table)?;
     validate::validate_identifier(chain)?;
     validate::validate_nft_element(rule)?;
@@ -128,7 +128,7 @@ pub async fn replace_rule(
     handle: u64,
     new_rule: &str,
 ) -> Result<(), NeinError> {
-    validate::validate_identifier(family)?;
+    validate::validate_family(family)?;
     validate::validate_identifier(table)?;
     validate::validate_identifier(chain)?;
     validate::validate_nft_element(new_rule)?;
@@ -172,7 +172,7 @@ pub async fn find_rules_by_comment(
     table: &str,
     comment_prefix: &str,
 ) -> Result<Vec<RuleHandle>, NeinError> {
-    validate::validate_identifier(family)?;
+    validate::validate_family(family)?;
     validate::validate_identifier(table)?;
     validate::validate_comment(comment_prefix)?;
     tracing::debug!(family, table, comment_prefix, "finding rules by comment");

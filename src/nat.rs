@@ -235,17 +235,17 @@ pub fn port_range_forward(
     container_addr: &str,
     container_start: u16,
 ) -> NatRule {
-    let range_size = host_end - host_start;
+    let range_size = host_end.saturating_sub(host_start);
+    let container_end = container_start.saturating_add(range_size);
     NatRule::DnatRange {
         protocol: crate::rule::Protocol::Tcp,
         dest_port_start: host_start,
         dest_port_end: host_end,
         to_addr: container_addr.to_string(),
         to_port_start: container_start,
-        to_port_end: container_start + range_size,
+        to_port_end: container_end,
         comment: Some(format!(
-            "container ports {host_start}-{host_end}->{container_start}-{}",
-            container_start + range_size
+            "container ports {host_start}-{host_end}->{container_start}-{container_end}"
         )),
     }
 }
@@ -557,6 +557,20 @@ mod tests {
             to_port_start: 8080,
             to_port_end: 8085,
             comment: None,
+        };
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn validate_dnat_range_bad_comment() {
+        let rule = NatRule::DnatRange {
+            protocol: crate::rule::Protocol::Tcp,
+            dest_port_start: 80,
+            dest_port_end: 89,
+            to_addr: "10.0.0.1".to_string(),
+            to_port_start: 8080,
+            to_port_end: 8089,
+            comment: Some("bad;comment".to_string()),
         };
         assert!(rule.validate().is_err());
     }

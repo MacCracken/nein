@@ -64,7 +64,10 @@ impl Define {
     /// Render as nftables syntax.
     #[must_use]
     pub fn render(&self) -> String {
-        format!("  define ${} = {};\n", self.name, self.value)
+        use std::fmt::Write;
+        let mut out = String::with_capacity(32);
+        let _ = writeln!(out, "  define ${} = {};", self.name, self.value);
+        out
     }
 }
 

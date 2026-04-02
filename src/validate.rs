@@ -72,6 +72,19 @@ pub fn validate_addr(s: &str) -> Result<(), NeinError> {
     Ok(())
 }
 
+/// Validate an nftables address family string.
+///
+/// Must be one of: inet, ip, ip6, arp, bridge, netdev.
+pub fn validate_family(s: &str) -> Result<(), NeinError> {
+    const VALID_FAMILIES: &[&str] = &["inet", "ip", "ip6", "arp", "bridge", "netdev"];
+    if !VALID_FAMILIES.contains(&s) {
+        return Err(NeinError::InvalidRule(format!(
+            "unknown address family: {s} (valid: inet, ip, ip6, arp, bridge, netdev)"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate a network interface name.
 ///
 /// Linux interface names: up to 15 chars, alphanumeric plus `-`, `_`, `.`.
@@ -354,5 +367,20 @@ mod tests {
             assert!(validate_comment(&s).is_err(), "should reject {c:?}");
             assert!(validate_log_prefix(&s).is_err(), "should reject {c:?}");
         }
+    }
+
+    #[test]
+    fn valid_families() {
+        for f in ["inet", "ip", "ip6", "arp", "bridge", "netdev"] {
+            assert!(validate_family(f).is_ok(), "should accept {f}");
+        }
+    }
+
+    #[test]
+    fn invalid_families() {
+        assert!(validate_family("").is_err());
+        assert!(validate_family("ipv4").is_err());
+        assert!(validate_family("filter").is_err());
+        assert!(validate_family("inet; drop").is_err());
     }
 }
