@@ -404,6 +404,39 @@ impl Rule {
         self
     }
 
+    /// Add a protocol match with multiple destination ports.
+    ///
+    /// Renders as `{proto} dport { port1, port2, ... }` using nftables
+    /// anonymous set syntax.
+    #[must_use]
+    pub fn matching_ports(mut self, proto: Protocol, ports: &[u16]) -> Self {
+        let port_list: Vec<String> = ports.iter().map(|p| p.to_string()).collect();
+        self.matches.push(Match::Protocol(proto));
+        self.matches
+            .push(Match::Raw(format!("dport {{ {} }}", port_list.join(", "))));
+        self
+    }
+
+    /// Add multiple source IPv4 address matches using anonymous set syntax.
+    ///
+    /// Renders as `ip saddr { addr1, addr2, ... }`.
+    #[must_use]
+    pub fn matching_addrs(mut self, addrs: &[&str]) -> Self {
+        self.matches
+            .push(Match::Raw(format!("ip saddr {{ {} }}", addrs.join(", "))));
+        self
+    }
+
+    /// Add multiple source IPv6 address matches using anonymous set syntax.
+    ///
+    /// Renders as `ip6 saddr { addr1, addr2, ... }`.
+    #[must_use]
+    pub fn matching_addrs6(mut self, addrs: &[&str]) -> Self {
+        self.matches
+            .push(Match::Raw(format!("ip6 saddr {{ {} }}", addrs.join(", "))));
+        self
+    }
+
     /// Validate all string fields in this rule for dangerous input.
     ///
     /// `Raw` matches are skipped — they are the caller's responsibility.
@@ -1469,5 +1502,29 @@ mod tests {
     fn validate_counter_named_bad() {
         let rule = Rule::new(Verdict::CounterNamed("bad;counter".into()));
         assert!(rule.validate().is_err());
+    }
+
+    // -- Phase 6: Bulk match builders --
+
+    #[test]
+    fn matching_ports() {
+        let rule = Rule::new(Verdict::Accept).matching_ports(Protocol::Tcp, &[80, 443, 8080]);
+        let rendered = rule.render();
+        assert_eq!(rendered, "tcp dport { 80, 443, 8080 } accept");
+    }
+
+    #[test]
+    fn matching_addrs() {
+        let rule = Rule::new(Verdict::Drop).matching_addrs(&["10.0.0.0/8", "192.168.0.0/16"]);
+        assert_eq!(
+            rule.render(),
+            "ip saddr { 10.0.0.0/8, 192.168.0.0/16 } drop"
+        );
+    }
+
+    #[test]
+    fn matching_addrs6() {
+        let rule = Rule::new(Verdict::Drop).matching_addrs6(&["fe80::/10", "::1"]);
+        assert_eq!(rule.render(), "ip6 saddr { fe80::/10, ::1 } drop");
     }
 }

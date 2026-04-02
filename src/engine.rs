@@ -8,6 +8,7 @@ use crate::Firewall;
 use crate::chain::{Chain, ChainType, Hook, Policy};
 use crate::error::NeinError;
 use crate::rule::{Match, Protocol, Rule, Verdict};
+use crate::set::{NftSet, SetFlag, SetType};
 use crate::table::{Family, Table};
 use crate::validate;
 use serde::{Deserialize, Serialize};
@@ -136,8 +137,8 @@ impl AgentPolicy {
         rules
     }
 
-    /// Generate nftables rules for this agent's outbound chain.
-    fn build_outbound_rules(&self) -> Vec<Rule> {
+    /// Generate nftables rules and optional host set for this agent's outbound chain.
+    fn build_outbound_rules(&self) -> (Vec<Rule>, Option<NftSet>) {
         let mut rules = vec![];
 
         if self.allow_established {
@@ -152,35 +153,44 @@ impl AgentPolicy {
             );
         }
 
-        // DNS is typically always allowed for outbound
+        // Build host restriction set if needed
+        let host_set = if !self.allowed_outbound_hosts.is_empty() {
+            let set_name = format!("{}_hosts", self.agent_id);
+            let mut set = NftSet::new(&set_name, SetType::Ipv4Addr).flag(SetFlag::Interval);
+            for host in &self.allowed_outbound_hosts {
+                set = set.element(host);
+            }
+            Some(set)
+        } else {
+            None
+        };
+
         for spec in &self.allowed_outbound {
             let mut rule = Rule::new(Verdict::Accept)
                 .matching(Match::Protocol(spec.protocol))
                 .matching(Match::DPort(spec.port));
 
-            // If outbound hosts are restricted, add dest filter
-            if !self.allowed_outbound_hosts.is_empty() {
-                for host in &self.allowed_outbound_hosts {
-                    let host_rule = rule
-                        .clone()
-                        .matching(Match::DestAddr(host.clone()))
-                        .comment(&format!(
-                            "{} outbound {}:{} -> {}",
-                            self.agent_id, spec.protocol, spec.port, host
-                        ));
-                    rules.push(host_rule);
-                }
-                continue;
+            if let Some(ref hs) = host_set {
+                // Single set lookup instead of O(hosts) rules per port
+                rule = rule
+                    .matching(Match::SetLookup {
+                        field: "ip daddr".to_string(),
+                        set_name: hs.name.clone(),
+                    })
+                    .comment(&format!(
+                        "{} outbound {}:{} restricted",
+                        self.agent_id, spec.protocol, spec.port
+                    ));
+            } else {
+                rule = rule.comment(&format!(
+                    "{} outbound {}:{}",
+                    self.agent_id, spec.protocol, spec.port
+                ));
             }
-
-            rule = rule.comment(&format!(
-                "{} outbound {}:{}",
-                self.agent_id, spec.protocol, spec.port
-            ));
             rules.push(rule);
         }
 
-        rules
+        (rules, host_set)
     }
 }
 
@@ -309,7 +319,11 @@ impl PolicyEngine {
 
             // Per-agent outbound chain
             let mut out_chain = Chain::regular(&format!("{agent_id}_out"));
-            for rule in policy.build_outbound_rules() {
+            let (outbound_rules, host_set) = policy.build_outbound_rules();
+            if let Some(set) = host_set {
+                table.add_set(set);
+            }
+            for rule in outbound_rules {
                 out_chain.add_rule(rule);
             }
             out_chain.add_rule(
@@ -436,11 +450,11 @@ mod tests {
         engine.add_agent(policy);
 
         let rendered = engine.to_firewall().render();
-        // Should have dest-restricted rules
-        assert!(rendered.contains("ip daddr 1.2.3.0/24"));
-        assert!(rendered.contains("ip daddr 4.5.6.0/24"));
-        assert!(rendered.contains("restricted outbound tcp:443 -> 1.2.3.0/24"));
-        assert!(rendered.contains("restricted outbound tcp:443 -> 4.5.6.0/24"));
+        // Set-based: hosts in a named set, single rule per port
+        assert!(rendered.contains("set restricted_hosts"));
+        assert!(rendered.contains("1.2.3.0/24, 4.5.6.0/24"));
+        assert!(rendered.contains("ip daddr @restricted_hosts"));
+        assert!(rendered.contains("restricted outbound tcp:443 restricted"));
     }
 
     #[test]
@@ -555,7 +569,7 @@ mod tests {
 
     #[test]
     fn outbound_hosts_cross_ports() {
-        // 2 ports × 2 hosts = 4 outbound rules
+        // 2 ports with set-based host restriction: 2 rules (one per port), 1 set
         let mut engine = PolicyEngine::new();
         engine.add_agent(
             AgentPolicy::new("api", "10.0.0.1")
@@ -566,12 +580,12 @@ mod tests {
         );
 
         let rendered = engine.to_firewall().render();
-        // 4 outbound rules (2 ports × 2 hosts)
-        assert_eq!(rendered.matches("api outbound tcp:").count(), 4);
-        assert!(rendered.contains("tcp:443 -> 1.2.3.0/24"));
-        assert!(rendered.contains("tcp:443 -> 4.5.6.0/24"));
-        assert!(rendered.contains("tcp:80 -> 1.2.3.0/24"));
-        assert!(rendered.contains("tcp:80 -> 4.5.6.0/24"));
+        // 2 rules (one per port), not 4
+        assert_eq!(rendered.matches("api outbound tcp:").count(), 2);
+        // Host set with both CIDRs
+        assert!(rendered.contains("set api_hosts"));
+        assert!(rendered.contains("1.2.3.0/24, 4.5.6.0/24"));
+        assert!(rendered.contains("ip daddr @api_hosts"));
     }
 
     #[test]
@@ -587,8 +601,8 @@ mod tests {
         let rendered = engine.to_firewall().render();
         assert!(!rendered.contains("ct state"));
         assert!(!rendered.contains("\"lo\""));
-        // Still has the host-restricted outbound rule
-        assert!(rendered.contains("tcp:443 -> 1.2.3.0/24"));
+        // Set-based host restriction
+        assert!(rendered.contains("ip daddr @locked_hosts"));
     }
 
     #[test]

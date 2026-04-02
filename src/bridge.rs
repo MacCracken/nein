@@ -8,6 +8,7 @@ use crate::chain::{Chain, ChainType, Hook, Policy};
 use crate::error::NeinError;
 use crate::nat::{self, NatRule};
 use crate::rule::{self, Match, Protocol, Rule, Verdict};
+use crate::set::{NftSet, SetFlag, SetType};
 use crate::table::{Family, Table};
 use crate::validate;
 use serde::{Deserialize, Serialize};
@@ -311,18 +312,30 @@ impl BridgeFirewall {
                     .comment("bridge to outbound"),
             );
 
-            // Per-group: allow intra-group traffic (all src×dest CIDR pairs)
+            // Per-group: allow intra-group traffic via set lookup (O(1) per group)
             for group in &self.isolation_groups {
-                for src in &group.cidrs {
-                    for dst in &group.cidrs {
-                        forward.add_rule(
-                            Rule::new(Verdict::Accept)
-                                .matching(Match::SourceAddr(src.clone()))
-                                .matching(Match::DestAddr(dst.clone()))
-                                .comment(&format!("intra-group: {}", group.name)),
-                        );
-                    }
+                if group.cidrs.is_empty() {
+                    continue;
                 }
+                let set_name = format!("iso_{}", group.name);
+                let mut set = NftSet::new(&set_name, SetType::Ipv4Addr).flag(SetFlag::Interval);
+                for cidr in &group.cidrs {
+                    set = set.element(cidr);
+                }
+                table.add_set(set);
+
+                forward.add_rule(
+                    Rule::new(Verdict::Accept)
+                        .matching(Match::SetLookup {
+                            field: "ip saddr".to_string(),
+                            set_name: set_name.clone(),
+                        })
+                        .matching(Match::SetLookup {
+                            field: "ip daddr".to_string(),
+                            set_name: set_name.clone(),
+                        })
+                        .comment(&format!("intra-group: {}", group.name)),
+                );
             }
 
             // Inter-group bridge traffic is dropped by the chain's default policy.
@@ -474,6 +487,9 @@ mod tests {
         let fw = bf.to_firewall();
         let rendered = fw.render();
 
+        // Set-based isolation: one set + one rule per group
+        assert!(rendered.contains("set iso_frontend"));
+        assert!(rendered.contains("set iso_backend"));
         assert!(rendered.contains("intra-group: frontend"));
         assert!(rendered.contains("intra-group: backend"));
         assert!(rendered.contains("bridge to outbound"));
@@ -573,13 +589,13 @@ mod tests {
 
         let rendered = bf.to_firewall().render();
 
-        // All src×dst pairs should be present (2×2 = 4 rules)
-        let count = rendered.matches("intra-group: web").count();
-        assert_eq!(count, 4);
-
-        // Cross-CIDR traffic within group should be allowed
-        assert!(rendered.contains("ip saddr 172.17.1.0/24"));
-        assert!(rendered.contains("ip daddr 172.17.2.0/24"));
+        // Set-based: one set with both CIDRs, one rule (not 4)
+        assert!(rendered.contains("set iso_web"));
+        assert!(rendered.contains("172.17.1.0/24, 172.17.2.0/24"));
+        assert_eq!(rendered.matches("intra-group: web").count(), 1);
+        // Set lookup for both saddr and daddr
+        assert!(rendered.contains("ip saddr @iso_web"));
+        assert!(rendered.contains("ip daddr @iso_web"));
     }
 
     #[test]

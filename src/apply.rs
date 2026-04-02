@@ -37,6 +37,26 @@ pub async fn delete_table(family: &str, table: &str) -> Result<(), NeinError> {
     run_nft_stdin(&format!("delete table {family} {table}\n")).await
 }
 
+/// Flush all rules in a specific chain.
+pub async fn flush_chain(family: &str, table: &str, chain: &str) -> Result<(), NeinError> {
+    validate::validate_family(family)?;
+    validate::validate_identifier(table)?;
+    validate::validate_identifier(chain)?;
+    tracing::info!(family, table, chain, "flushing chain");
+    run_nft_stdin(&format!("flush chain {family} {table} {chain}\n")).await
+}
+
+/// Delete a chain from a table.
+///
+/// The chain must be empty (flushed) and not referenced by other chains.
+pub async fn delete_chain(family: &str, table: &str, chain: &str) -> Result<(), NeinError> {
+    validate::validate_family(family)?;
+    validate::validate_identifier(table)?;
+    validate::validate_identifier(chain)?;
+    tracing::info!(family, table, chain, "deleting chain");
+    run_nft_stdin(&format!("delete chain {family} {table} {chain}\n")).await
+}
+
 /// Add an individual rule to an existing chain.
 ///
 /// The rule string should be the nftables rule body (matches + verdict),

@@ -154,6 +154,26 @@ impl Firewall {
         Ok(())
     }
 
+    /// Remove duplicate rules within each chain.
+    ///
+    /// Two rules are duplicates if they have the same matches, verdict, and
+    /// comment. Returns the number of rules removed.
+    #[must_use = "returns the count of removed duplicates"]
+    pub fn deduplicate(&mut self) -> usize {
+        let mut removed = 0;
+        for table in &mut self.tables {
+            for chain in &mut table.chains {
+                let before = chain.rules.len();
+                chain.rules.dedup();
+                removed += before - chain.rules.len();
+            }
+        }
+        if removed > 0 {
+            tracing::info!(removed, "deduplicated rules");
+        }
+        removed
+    }
+
     /// Apply the ruleset via `nft -f`.
     ///
     /// Validates all rule inputs before applying. In dry-run mode, logs the
@@ -273,5 +293,39 @@ mod tests {
         table.add_chain(chain::Chain::regular("bad;chain"));
         fw.add_table(table);
         assert!(fw.validate().is_err());
+    }
+
+    #[test]
+    fn deduplicate_removes_adjacent_dupes() {
+        use crate::rule;
+        let mut fw = Firewall::new();
+        let mut table = table::Table::new("test", table::Family::Inet);
+        let mut ch = chain::Chain::regular("input");
+        ch.add_rule(rule::allow_tcp(80));
+        ch.add_rule(rule::allow_tcp(80)); // duplicate
+        ch.add_rule(rule::allow_tcp(443));
+        ch.add_rule(rule::allow_tcp(443)); // duplicate
+        ch.add_rule(rule::allow_tcp(443)); // duplicate
+        table.add_chain(ch);
+        fw.add_table(table);
+
+        let removed = fw.deduplicate();
+        assert_eq!(removed, 3);
+        assert_eq!(fw.tables()[0].chains[0].rules.len(), 2);
+    }
+
+    #[test]
+    fn deduplicate_no_dupes() {
+        use crate::rule;
+        let mut fw = Firewall::new();
+        let mut table = table::Table::new("test", table::Family::Inet);
+        let mut ch = chain::Chain::regular("input");
+        ch.add_rule(rule::allow_tcp(80));
+        ch.add_rule(rule::allow_tcp(443));
+        table.add_chain(ch);
+        fw.add_table(table);
+
+        let removed = fw.deduplicate();
+        assert_eq!(removed, 0);
     }
 }
