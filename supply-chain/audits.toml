@@ -1,8 +1,77 @@
-# cargo-vet audits for nein
-# Audit entries are added as dependencies are reviewed.
 
-[criteria.safe-to-deploy]
-description = "No unsafe code, no network I/O, no filesystem I/O outside intended scope."
+# cargo-vet audits file
 
-[criteria.safe-to-run]
-description = "Safe to execute in development and CI environments."
+[[audits.bote]]
+criteria = "safe-to-deploy"
+version = "0.91.0"
+notes = "AGNOS MCP core library. First-party dependency."
+
+[[audits.cfg-if]]
+criteria = "safe-to-deploy"
+version = "1.0.4"
+notes = "Conditional compilation macro. Zero runtime code."
+
+[[audits.criterion]]
+criteria = "safe-to-run"
+version = "0.8.2"
+notes = "Dev dependency only. Benchmarking framework."
+
+[[audits.pin-project-lite]]
+criteria = "safe-to-deploy"
+version = "0.2.17"
+notes = "Pin projection macro. No unsafe in generated code."
+
+[[audits.serde]]
+criteria = "safe-to-deploy"
+version = "1.0.228"
+notes = "Widely used serialization framework. No unsafe beyond macro-generated code."
+
+[[audits.serde_derive]]
+criteria = "safe-to-deploy"
+version = "1.0.228"
+notes = "Proc macro for serde. Generates safe serialization code."
+
+[[audits.serde_json]]
+criteria = "safe-to-deploy"
+version = "1.0.149"
+notes = "Standard JSON serialization. Unsafe limited to SIMD optimizations."
+
+[[audits.tempfile]]
+criteria = "safe-to-run"
+version = "3.27.0"
+notes = "Dev dependency only. Creates temporary files for tests."
+
+[[audits.thiserror]]
+criteria = "safe-to-deploy"
+version = "2.0.18"
+notes = "Error derive macro. No runtime code, only generates Display/Error impls."
+
+[[audits.thiserror-impl]]
+criteria = "safe-to-deploy"
+version = "2.0.18"
+notes = "Proc macro for thiserror. Pure code generation."
+
+[[audits.tokio]]
+criteria = "safe-to-deploy"
+version = "1.50.0"
+notes = "Async runtime. Used only for nft process spawning. Extensively audited."
+
+[[audits.toml]]
+criteria = "safe-to-deploy"
+version = "0.8.23"
+notes = "TOML parser/serializer. No unsafe code."
+
+[[audits.tracing]]
+criteria = "safe-to-deploy"
+version = "0.1.44"
+notes = "Structured logging framework from tokio project. Widely deployed."
+
+[[audits.tracing-core]]
+criteria = "safe-to-deploy"
+version = "0.1.36"
+notes = "Core traits for tracing. Minimal unsafe for global subscriber registration."
+
+[[audits.uuid]]
+criteria = "safe-to-deploy"
+version = "1.23.0"
+notes = "UUID generation. Unsafe limited to SIMD and platform RNG."

@@ -57,6 +57,18 @@ jobs:
       - name: Check
         run: cargo deny check
 
+  vet:
+    name: Supply Chain (cargo-vet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-vet
+        run: cargo install cargo-vet
+      - name: Check
+        run: cargo vet check
+
   test:
     name: Test (${{ matrix.os }})
     needs: [check]

@@ -1,7 +1,7 @@
-.PHONY: check fmt clippy test bench bench-track audit deny fuzz coverage build doc clean
+.PHONY: check fmt clippy test bench bench-track audit deny vet fuzz coverage build doc clean
 
 # Run all CI checks locally
-check: fmt clippy test audit deny
+check: fmt clippy test audit deny vet
 
 # Format check
 fmt:
@@ -33,6 +33,10 @@ audit:
 # Supply-chain checks (license + advisory + source)
 deny:
 	cargo deny check
+
+# Supply-chain vetting
+vet:
+	cargo vet check
 
 # Run fuzz targets (30 seconds each)
 fuzz:
