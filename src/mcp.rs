@@ -4,15 +4,10 @@
 //! nein operations as MCP tools: `nein_status`, `nein_allow`, `nein_deny`,
 //! `nein_list`.
 
-use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-/// An MCP tool descriptor.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDescriptor {
-    pub name: String,
-    pub description: String,
-    pub input_schema: serde_json::Value,
-}
+use bote::{ToolDef, ToolSchema};
+use serde::{Deserialize, Serialize};
 
 /// Result from an MCP tool call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,62 +128,56 @@ pub struct ListResponse {
 // -- Tool descriptors --
 
 /// Return MCP tool descriptors for all nein tools.
-pub fn tool_descriptors() -> Vec<ToolDescriptor> {
+#[must_use]
+pub fn tool_descriptors() -> Vec<ToolDef> {
     vec![
-        ToolDescriptor {
-            name: "nein_status".to_string(),
-            description: "Get current nftables firewall status — tables, rule count, raw ruleset"
-                .to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {},
-                "required": []
-            }),
-        },
-        ToolDescriptor {
-            name: "nein_allow".to_string(),
-            description: "Allow traffic on a port — adds an accept rule to the firewall"
-                .to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "protocol": { "type": "string", "enum": ["tcp", "udp"] },
-                    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-                    "source": { "type": "string", "description": "Source CIDR (optional)" },
-                    "table": { "type": "string", "default": "filter" },
-                    "chain": { "type": "string", "default": "input" }
-                },
-                "required": ["protocol", "port"]
-            }),
-        },
-        ToolDescriptor {
-            name: "nein_deny".to_string(),
-            description: "Deny traffic on a port — adds a drop rule to the firewall".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "protocol": { "type": "string", "enum": ["tcp", "udp"] },
-                    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-                    "source": { "type": "string", "description": "Source CIDR (optional)" },
-                    "table": { "type": "string", "default": "filter" },
-                    "chain": { "type": "string", "default": "input" }
-                },
-                "required": ["protocol", "port"]
-            }),
-        },
-        ToolDescriptor {
-            name: "nein_list".to_string(),
-            description: "List current firewall rules, optionally filtered by table/chain"
-                .to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "table": { "type": "string", "description": "Filter by table name" },
-                    "chain": { "type": "string", "description": "Filter by chain name" }
-                },
-                "required": []
-            }),
-        },
+        ToolDef::new(
+            "nein_status",
+            "Get current nftables firewall status — tables, rule count, raw ruleset",
+            ToolSchema::new("object", HashMap::new(), vec![]),
+        ),
+        ToolDef::new(
+            "nein_allow",
+            "Allow traffic on a port — adds an accept rule to the firewall",
+            ToolSchema::new(
+                "object",
+                HashMap::from([
+                    ("protocol".into(), serde_json::json!({"type": "string", "enum": ["tcp", "udp"]})),
+                    ("port".into(), serde_json::json!({"type": "integer", "minimum": 1, "maximum": 65535})),
+                    ("source".into(), serde_json::json!({"type": "string", "description": "Source CIDR (optional)"})),
+                    ("table".into(), serde_json::json!({"type": "string", "default": "filter"})),
+                    ("chain".into(), serde_json::json!({"type": "string", "default": "input"})),
+                ]),
+                vec!["protocol".into(), "port".into()],
+            ),
+        ),
+        ToolDef::new(
+            "nein_deny",
+            "Deny traffic on a port — adds a drop rule to the firewall",
+            ToolSchema::new(
+                "object",
+                HashMap::from([
+                    ("protocol".into(), serde_json::json!({"type": "string", "enum": ["tcp", "udp"]})),
+                    ("port".into(), serde_json::json!({"type": "integer", "minimum": 1, "maximum": 65535})),
+                    ("source".into(), serde_json::json!({"type": "string", "description": "Source CIDR (optional)"})),
+                    ("table".into(), serde_json::json!({"type": "string", "default": "filter"})),
+                    ("chain".into(), serde_json::json!({"type": "string", "default": "input"})),
+                ]),
+                vec!["protocol".into(), "port".into()],
+            ),
+        ),
+        ToolDef::new(
+            "nein_list",
+            "List current firewall rules, optionally filtered by table/chain",
+            ToolSchema::new(
+                "object",
+                HashMap::from([
+                    ("table".into(), serde_json::json!({"type": "string", "description": "Filter by table name"})),
+                    ("chain".into(), serde_json::json!({"type": "string", "description": "Filter by chain name"})),
+                ]),
+                vec![],
+            ),
+        ),
     ]
 }
 
@@ -352,11 +341,27 @@ mod tests {
     }
 
     #[test]
+    fn tool_schemas_are_valid() {
+        for tool in tool_descriptors() {
+            assert_eq!(tool.input_schema.schema_type, "object");
+            assert!(!tool.description.is_empty());
+        }
+    }
+
+    #[test]
     fn tool_descriptor_serializes() {
         let tools = tool_descriptors();
         let json = serde_json::to_string(&tools).unwrap();
         assert!(json.contains("nein_status"));
         assert!(json.contains("nein_allow"));
+    }
+
+    #[test]
+    fn tool_descriptor_serde_roundtrip() {
+        let tool = &tool_descriptors()[0];
+        let json = serde_json::to_string(tool).unwrap();
+        let back: ToolDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, tool.name);
     }
 
     #[test]
