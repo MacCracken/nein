@@ -215,9 +215,12 @@ pub enum MatchConfig {
 /// Parse a TOML string into a `Firewall`.
 #[must_use = "parsing returns a Firewall, which should be used"]
 pub fn from_toml(toml_str: &str) -> Result<Firewall, NeinError> {
+    tracing::debug!(bytes = toml_str.len(), "parsing TOML firewall config");
     let config: FirewallConfig =
         toml::from_str(toml_str).map_err(|e| NeinError::Parse(e.to_string()))?;
-    config_to_firewall(&config)
+    let fw = config_to_firewall(&config)?;
+    tracing::debug!(tables = fw.tables().len(), "parsed TOML config");
+    Ok(fw)
 }
 
 /// Serialize a `FirewallConfig` to TOML.
@@ -440,7 +443,9 @@ fn parse_verdict(rc: &RuleConfig) -> Result<Verdict, NeinError> {
                 .as_deref()
                 .ok_or_else(|| NeinError::Parse("reject_with requires verdict_name".into()))?,
         )?)),
-        s => Err(NeinError::Parse(format!("unknown verdict: {s}"))),
+        s => Err(NeinError::Parse(format!(
+            "unknown verdict: {s} (valid: accept, drop, reject, reject_with, return, counter, counter_named, log, log_advanced, jump, goto, set_mark, set_ct_mark)"
+        ))),
     }
 }
 

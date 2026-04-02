@@ -64,6 +64,12 @@ impl NetworkPolicy {
     /// Convert this policy to nftables rules.
     #[must_use]
     pub fn to_rules(&self) -> Vec<Rule> {
+        tracing::debug!(
+            policy = %self.name,
+            ingress = self.ingress.len(),
+            egress = self.egress.len(),
+            "converting policy to rules"
+        );
         let mut rules = vec![];
 
         // Ingress rules

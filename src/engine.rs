@@ -383,6 +383,11 @@ impl PolicyEngine {
     /// - Per-agent `{agent_id}_in` and `{agent_id}_out` chains
     #[must_use]
     pub fn to_firewall(&self) -> Firewall {
+        tracing::debug!(
+            agents = self.agents.len(),
+            table = %self.table_name,
+            "generating policy engine firewall"
+        );
         let mut fw = Firewall::new();
 
         if self.agents.is_empty() {

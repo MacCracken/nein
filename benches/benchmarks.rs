@@ -1,5 +1,4 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
 use nein::Firewall;
 use nein::bridge::{BridgeConfig, BridgeFirewall, IsolationGroup, PortMapping};
 use nein::chain::{Chain, ChainType, Hook, Policy};
@@ -14,6 +13,7 @@ use nein::rule::{
 };
 use nein::set::{NftSet, SetFlag, SetType};
 use nein::table::{CtTimeout, Define, Family, Flowtable, Table};
+use std::hint::black_box;
 
 // -- Core rule benchmarks --
 

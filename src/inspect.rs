@@ -14,6 +14,7 @@ pub struct FirewallStatus {
 
 /// Get current firewall status.
 pub async fn status() -> Result<FirewallStatus, NeinError> {
+    tracing::debug!("querying firewall status");
     let raw = crate::apply::list_ruleset().await?;
 
     let tables: Vec<String> = raw

@@ -215,6 +215,11 @@ impl BridgeFirewall {
             .iter()
             .any(|m| m.host_port == mapping.host_port && m.protocol == mapping.protocol)
         {
+            tracing::warn!(
+                host_port = mapping.host_port,
+                protocol = %mapping.protocol,
+                "duplicate port mapping rejected"
+            );
             return Err(NeinError::InvalidRule(format!(
                 "duplicate port mapping: {} port {}",
                 mapping.protocol, mapping.host_port
@@ -237,8 +242,10 @@ impl BridgeFirewall {
             .iter()
             .position(|m| m.host_port == host_port && m.protocol == protocol)
         {
+            tracing::debug!(host_port, %protocol, "removed port mapping");
             Some(self.port_mappings.remove(idx))
         } else {
+            tracing::debug!(host_port, %protocol, "port mapping not found for removal");
             None
         }
     }
@@ -287,6 +294,12 @@ impl BridgeFirewall {
     ///   postrouting masquerade for outbound.
     #[must_use]
     pub fn to_firewall(&self) -> Firewall {
+        tracing::debug!(
+            bridge = %self.config.bridge_name,
+            port_mappings = self.port_mappings.len(),
+            isolation_groups = self.isolation_groups.len(),
+            "generating bridge firewall"
+        );
         let mut fw = Firewall::new();
 
         fw.add_table(self.build_filter_table());

@@ -86,6 +86,7 @@ impl GeoIpBlocklist {
 
     /// Add a country to block.
     pub fn block_country(&mut self, country: CountryBlock) {
+        tracing::debug!(code = %country.code, v4_cidrs = country.cidrs_v4.len(), v6_cidrs = country.cidrs_v6.len(), "blocking country");
         self.countries.push(country);
     }
 
@@ -121,6 +122,11 @@ impl GeoIpBlocklist {
     /// drop traffic matching those sets.
     #[must_use]
     pub fn to_firewall(&self) -> Firewall {
+        tracing::debug!(
+            countries = self.countries.len(),
+            table = %self.table_name,
+            "generating geoip blocklist firewall"
+        );
         let mut fw = Firewall::new();
 
         if self.countries.is_empty() {

@@ -119,6 +119,13 @@ impl SidecarConfig {
     ///   skipping excluded ports.
     #[must_use]
     pub fn to_firewall(&self) -> Firewall {
+        tracing::debug!(
+            table = %self.table_name,
+            inbound_port = self.inbound_port,
+            outbound_port = self.outbound_port,
+            proxy_uid = self.proxy_uid,
+            "generating mesh sidecar firewall"
+        );
         let mut fw = Firewall::new();
         let mut table = Table::new(&self.table_name, Family::Ip);
 
