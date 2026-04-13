@@ -1,12 +1,15 @@
-# nein test suite — error + validate modules
+# nein test suite — error + validate + rule modules
 
 include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
+
+# ================================================================
+# Error tests
+# ================================================================
 
 fn test_error() {
     test_group("error");
-
-    # Error enum values are distinct non-zero constants
     assert(ERR_NFT_FAILED != 0, "ERR_NFT_FAILED nonzero");
     assert(ERR_INVALID_RULE != 0, "ERR_INVALID_RULE nonzero");
     assert(ERR_TABLE_NOT_FOUND != 0, "ERR_TABLE_NOT_FOUND nonzero");
@@ -15,7 +18,6 @@ fn test_error() {
     assert(ERR_PARSE != 0, "ERR_PARSE nonzero");
     assert(ERR_IO != 0, "ERR_IO nonzero");
 
-    # All distinct
     assert(ERR_NFT_FAILED != ERR_INVALID_RULE, "nft != invalid");
     assert(ERR_INVALID_RULE != ERR_TABLE_NOT_FOUND, "invalid != table");
     assert(ERR_TABLE_NOT_FOUND != ERR_CHAIN_NOT_FOUND, "table != chain");
@@ -23,127 +25,92 @@ fn test_error() {
     assert(ERR_PERMISSION_DENIED != ERR_PARSE, "perm != parse");
     assert(ERR_PARSE != ERR_IO, "parse != io");
 
-    # nein_err returns an Err result with the code
     var e = nein_err(ERR_NFT_FAILED);
     assert(is_err_result(e) == 1, "nein_err returns Err");
     assert_eq(err_code(e), ERR_NFT_FAILED, "err_code extracts code");
 
-    # nein_ok returns Ok
     var ok = nein_ok();
     assert(is_ok(ok) == 1, "nein_ok returns Ok");
-
     return 0;
 }
 
+# ================================================================
+# Validate tests
+# ================================================================
+
 fn test_validate_identifier() {
     test_group("validate_identifier");
-
-    # Valid identifiers
     assert(is_ok(validate_identifier("filter")) == 1, "filter ok");
     assert(is_ok(validate_identifier("my_table")) == 1, "my_table ok");
     assert(is_ok(validate_identifier("agnos-policy")) == 1, "agnos-policy ok");
     assert(is_ok(validate_identifier("0eth0")) == 1, "numeric start ok");
     assert(is_ok(validate_identifier("123")) == 1, "all numeric ok");
-
-    # Invalid identifiers
     assert(is_err_result(validate_identifier("")) == 1, "empty rejected");
     assert(is_err_result(validate_identifier("has space")) == 1, "space rejected");
-
-    # Injection attempts
     assert(is_err_result(validate_identifier("evil;drop")) == 1, "semicolon rejected");
     assert(is_err_result(validate_identifier("has{brace")) == 1, "brace rejected");
 
-    # Length limits: 64 max
     var buf64[520];
-    memset(&buf64, 97, 64);   # 64 'a's
-    store8(&buf64 + 64, 0);   # null terminate
+    memset(&buf64, 97, 64);
+    store8(&buf64 + 64, 0);
     assert(is_ok(validate_identifier(&buf64)) == 1, "64 chars ok");
-
-    memset(&buf64, 97, 65);   # 65 'a's
+    memset(&buf64, 97, 65);
     store8(&buf64 + 65, 0);
     assert(is_err_result(validate_identifier(&buf64)) == 1, "65 chars rejected");
-
     return 0;
 }
 
 fn test_validate_addr() {
     test_group("validate_addr");
-
-    # Valid IPv4
     assert(is_ok(validate_addr("10.0.0.1")) == 1, "10.0.0.1 ok");
     assert(is_ok(validate_addr("192.168.0.0/16")) == 1, "CIDR ok");
     assert(is_ok(validate_addr("172.17.0.2")) == 1, "172 ok");
-
-    # Valid IPv6
     assert(is_ok(validate_addr("::1")) == 1, "::1 ok");
     assert(is_ok(validate_addr("fe80::/10")) == 1, "fe80 CIDR ok");
     assert(is_ok(validate_addr("2001:db8::1")) == 1, "2001:db8 ok");
-
-    # Invalid
     assert(is_err_result(validate_addr("")) == 1, "empty rejected");
     assert(is_err_result(validate_addr("not_an_addr")) == 1, "alpha rejected");
-
-    # Injection
     assert(is_err_result(validate_addr("10.0.0.1;drop")) == 1, "semicolon rejected");
     assert(is_err_result(validate_addr("10.0.0.1|evil")) == 1, "pipe rejected");
-
     return 0;
 }
 
 fn test_validate_iface() {
     test_group("validate_iface");
-
-    # Valid
     assert(is_ok(validate_iface("eth0")) == 1, "eth0 ok");
     assert(is_ok(validate_iface("br-container")) == 1, "br-container ok");
     assert(is_ok(validate_iface("veth1.2")) == 1, "veth1.2 ok");
     assert(is_ok(validate_iface("lo")) == 1, "lo ok");
-
-    # Invalid
     assert(is_err_result(validate_iface("")) == 1, "empty rejected");
     assert(is_err_result(validate_iface("evil;drop")) == 1, "semicolon rejected");
 
-    # Length limits: 15 max
     var buf16[24];
     memset(&buf16, 97, 15);
     store8(&buf16 + 15, 0);
     assert(is_ok(validate_iface(&buf16)) == 1, "15 chars ok");
-
     memset(&buf16, 97, 16);
     store8(&buf16 + 16, 0);
     assert(is_err_result(validate_iface(&buf16)) == 1, "16 chars rejected");
-
     return 0;
 }
 
 fn test_validate_ct_state() {
     test_group("validate_ct_state");
-
-    # All valid states
     assert(is_ok(validate_ct_state("new")) == 1, "new ok");
     assert(is_ok(validate_ct_state("established")) == 1, "established ok");
     assert(is_ok(validate_ct_state("related")) == 1, "related ok");
     assert(is_ok(validate_ct_state("invalid")) == 1, "invalid ok");
     assert(is_ok(validate_ct_state("untracked")) == 1, "untracked ok");
-
-    # Invalid
     assert(is_err_result(validate_ct_state("bogus")) == 1, "bogus rejected");
     assert(is_err_result(validate_ct_state("established; drop")) == 1, "injection rejected");
-
     return 0;
 }
 
 fn test_validate_comment() {
     test_group("validate_comment");
-
-    # Valid
     assert(is_ok(validate_comment("SSH access")) == 1, "normal comment ok");
     assert(is_ok(validate_comment("container port 8080->80")) == 1, "arrow comment ok");
-
-    # Invalid — quotes
     assert(is_err_result(validate_comment("has \"quotes\"")) == 1, "quotes rejected");
-
-    # Invalid — dangerous chars
     assert(is_err_result(validate_comment("has;semicolon")) == 1, "semicolon rejected");
     assert(is_err_result(validate_comment("has{brace")) == 1, "brace rejected");
     assert(is_err_result(validate_comment("has}brace")) == 1, "close brace rejected");
@@ -151,110 +118,468 @@ fn test_validate_comment() {
     assert(is_err_result(validate_comment("has`tick")) == 1, "backtick rejected");
     assert(is_err_result(validate_comment("has$dollar")) == 1, "dollar rejected");
 
-    # Length: 128 max
     var buf130[136];
     memset(&buf130, 97, 128);
     store8(&buf130 + 128, 0);
     assert(is_ok(validate_comment(&buf130)) == 1, "128 chars ok");
-
     memset(&buf130, 97, 129);
     store8(&buf130 + 129, 0);
     assert(is_err_result(validate_comment(&buf130)) == 1, "129 chars rejected");
-
     return 0;
 }
 
 fn test_validate_log_prefix() {
     test_group("validate_log_prefix");
-
-    # Valid
     assert(is_ok(validate_log_prefix("NEIN_DROP: ")) == 1, "prefix ok");
     assert(is_ok(validate_log_prefix("fw-input ")) == 1, "fw-input ok");
-
-    # Invalid
     assert(is_err_result(validate_log_prefix("has\"quote")) == 1, "quote rejected");
     assert(is_err_result(validate_log_prefix("has;semi")) == 1, "semicolon rejected");
 
-    # Length: 64 max
     var buf66[72];
     memset(&buf66, 97, 64);
     store8(&buf66 + 64, 0);
     assert(is_ok(validate_log_prefix(&buf66)) == 1, "64 chars ok");
-
     memset(&buf66, 97, 65);
     store8(&buf66 + 65, 0);
     assert(is_err_result(validate_log_prefix(&buf66)) == 1, "65 chars rejected");
-
     return 0;
 }
 
 fn test_validate_nft_element() {
     test_group("validate_nft_element");
-
-    # Valid
     assert(is_ok(validate_nft_element("10.0.0.1")) == 1, "ip ok");
     assert(is_ok(validate_nft_element("80")) == 1, "port ok");
     assert(is_ok(validate_nft_element("192.168.0.0/16")) == 1, "cidr ok");
     assert(is_ok(validate_nft_element("::1")) == 1, "ipv6 ok");
-
-    # Invalid
     assert(is_err_result(validate_nft_element("")) == 1, "empty rejected");
     assert(is_err_result(validate_nft_element("evil;inject")) == 1, "semicolon rejected");
     assert(is_err_result(validate_nft_element("has\"quote")) == 1, "quote rejected");
-
     return 0;
 }
 
 fn test_validate_family() {
     test_group("validate_family");
-
-    # All valid families
     assert(is_ok(validate_family("inet")) == 1, "inet ok");
     assert(is_ok(validate_family("ip")) == 1, "ip ok");
     assert(is_ok(validate_family("ip6")) == 1, "ip6 ok");
     assert(is_ok(validate_family("arp")) == 1, "arp ok");
     assert(is_ok(validate_family("bridge")) == 1, "bridge ok");
     assert(is_ok(validate_family("netdev")) == 1, "netdev ok");
-
-    # Invalid
     assert(is_err_result(validate_family("")) == 1, "empty rejected");
     assert(is_err_result(validate_family("ipv4")) == 1, "ipv4 rejected");
     assert(is_err_result(validate_family("filter")) == 1, "filter rejected");
     assert(is_err_result(validate_family("inet; drop")) == 1, "injection rejected");
-
     return 0;
 }
 
 fn test_dangerous_chars_all() {
     test_group("dangerous_chars_exhaustive");
-
-    # Every dangerous char must be rejected by comment and log_prefix
     assert(is_err_result(validate_comment("t;v")) == 1, "comment ; rejected");
     assert(is_err_result(validate_comment("t{v")) == 1, "comment { rejected");
     assert(is_err_result(validate_comment("t}v")) == 1, "comment } rejected");
     assert(is_err_result(validate_comment("t|v")) == 1, "comment | rejected");
     assert(is_err_result(validate_comment("t`v")) == 1, "comment ` rejected");
     assert(is_err_result(validate_comment("t$v")) == 1, "comment $ rejected");
-
     assert(is_err_result(validate_log_prefix("t;v")) == 1, "prefix ; rejected");
     assert(is_err_result(validate_log_prefix("t{v")) == 1, "prefix { rejected");
     assert(is_err_result(validate_log_prefix("t}v")) == 1, "prefix } rejected");
     assert(is_err_result(validate_log_prefix("t|v")) == 1, "prefix | rejected");
     assert(is_err_result(validate_log_prefix("t`v")) == 1, "prefix ` rejected");
     assert(is_err_result(validate_log_prefix("t$v")) == 1, "prefix $ rejected");
-
-    # nft_element too
     assert(is_err_result(validate_nft_element("t;v")) == 1, "elem ; rejected");
     assert(is_err_result(validate_nft_element("t{v")) == 1, "elem { rejected");
     assert(is_err_result(validate_nft_element("t|v")) == 1, "elem | rejected");
+    return 0;
+}
+
+# ================================================================
+# Rule render tests
+# ================================================================
+
+fn test_rule_render_basic() {
+    test_group("rule_render_basic");
+
+    # allow_tcp(443)
+    var s = rule_render(allow_tcp(443));
+    assert(streq(str_data(s), "tcp dport 443 accept") == 1, "allow_tcp(443)");
+
+    # allow_udp(53)
+    s = rule_render(allow_udp(53));
+    assert(streq(str_data(s), "udp dport 53 accept") == 1, "allow_udp(53)");
+
+    # deny_source
+    s = rule_render(deny_source("10.0.0.0/8"));
+    assert(streq(str_data(s), "ip saddr 10.0.0.0/8 drop") == 1, "deny_source");
+
+    # allow_established
+    s = rule_render(allow_established());
+    assert(streq(str_data(s), "ct state { established, related } accept") == 1, "established");
+
+    # allow_service
+    s = rule_render(allow_service("192.168.1.0/24", PROTO_TCP, 8090));
+    assert(streq(str_data(s), "ip saddr 192.168.1.0/24 tcp dport 8090 accept") == 1, "allow_service");
+
+    # with comment
+    var r = allow_tcp(22);
+    rule_set_comment(r, "SSH access");
+    s = rule_render(r);
+    assert(streq(str_data(s), "tcp dport 22 accept comment \"SSH access\"") == 1, "with comment");
 
     return 0;
 }
 
+fn test_rule_render_verdicts() {
+    test_group("rule_render_verdicts");
+
+    # reject
+    var s = rule_render(rule_new(verdict_reject()));
+    assert(streq(str_data(s), "reject") == 1, "reject");
+
+    # return
+    s = rule_render(rule_new(verdict_return()));
+    assert(streq(str_data(s), "return") == 1, "return");
+
+    # counter
+    var r = rule_new(verdict_counter());
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_dport(80));
+    s = rule_render(r);
+    assert(streq(str_data(s), "tcp dport 80 counter") == 1, "counter");
+
+    # jump
+    r = rule_new(verdict_jump("container_rules"));
+    rule_add_match(r, match_oif("br0"));
+    s = rule_render(r);
+    assert(streq(str_data(s), "oif \"br0\" jump container_rules") == 1, "jump");
+
+    # goto
+    s = rule_render(rule_new(verdict_goto("other_chain")));
+    assert(streq(str_data(s), "goto other_chain") == 1, "goto");
+
+    # log with prefix
+    r = rule_new(verdict_log("NEIN_DROP: "));
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    s = rule_render(r);
+    assert(streq(str_data(s), "tcp log prefix \"NEIN_DROP: \"") == 1, "log prefix");
+
+    # log without prefix
+    s = rule_render(rule_new(verdict_log(0)));
+    assert(streq(str_data(s), "log") == 1, "log bare");
+
+    # set mark
+    r = rule_new(verdict_set_mark(42));
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_dport(80));
+    s = rule_render(r);
+    assert(streq(str_data(s), "tcp dport 80 meta mark set 42") == 1, "set mark");
+
+    # set ct mark
+    s = rule_render(rule_new(verdict_set_ct_mark(255)));
+    assert(streq(str_data(s), "ct mark set 255") == 1, "set ct mark");
+
+    # reject with tcp reset
+    r = rule_new(verdict_reject_with(REJECT_TCP_RESET));
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_dport(80));
+    s = rule_render(r);
+    assert(streq(str_data(s), "tcp dport 80 reject with tcp reset") == 1, "reject tcp reset");
+
+    # reject with icmp
+    s = rule_render(rule_new(verdict_reject_with(REJECT_ICMP_HOST_UNREACH)));
+    assert(streq(str_data(s), "reject with icmp type host-unreachable") == 1, "reject icmp host");
+
+    # reject with icmpx
+    s = rule_render(rule_new(verdict_reject_with(REJECT_ICMPX_ADMIN_PROHIB)));
+    assert(streq(str_data(s), "reject with icmpx type admin-prohibited") == 1, "reject icmpx");
+
+    # counter named
+    r = rule_new(verdict_counter_named("http_hits"));
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_dport(80));
+    s = rule_render(r);
+    assert(streq(str_data(s), "tcp dport 80 counter name \"http_hits\"") == 1, "counter named");
+
+    return 0;
+}
+
+fn test_rule_render_matches() {
+    test_group("rule_render_matches");
+
+    # sport
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_sport(1024));
+    var s = rule_render(r);
+    assert(streq(str_data(s), "tcp sport 1024 accept") == 1, "sport");
+
+    # dport range
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_dport_range(8000, 9000));
+    s = rule_render(r);
+    assert(streq(str_data(s), "tcp dport 8000-9000 accept") == 1, "dport range");
+
+    # dest addr
+    s = rule_render(rule_add_match(rule_new(verdict_drop()), match_dest_addr("10.0.0.1")));
+    assert(streq(str_data(s), "ip daddr 10.0.0.1 drop") == 1, "dest addr");
+
+    # ipv6 source
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_source_addr6("fe80::/10")));
+    assert(streq(str_data(s), "ip6 saddr fe80::/10 accept") == 1, "source addr6");
+
+    # ipv6 dest
+    s = rule_render(rule_add_match(rule_new(verdict_drop()), match_dest_addr6("::1")));
+    assert(streq(str_data(s), "ip6 daddr ::1 drop") == 1, "dest addr6");
+
+    # deny_source6
+    s = rule_render(deny_source6("2001:db8::/32"));
+    assert(streq(str_data(s), "ip6 saddr 2001:db8::/32 drop") == 1, "deny_source6");
+
+    # icmp protocol
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_protocol(PROTO_ICMP)));
+    assert(streq(str_data(s), "icmp accept") == 1, "icmp");
+
+    # icmpv6 protocol
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_protocol(PROTO_ICMPV6)));
+    assert(streq(str_data(s), "icmpv6 accept") == 1, "icmpv6");
+
+    # set lookup
+    s = rule_render(rule_add_match(rule_new(verdict_drop()), match_set_lookup("ip saddr", "blocklist")));
+    assert(streq(str_data(s), "ip saddr @blocklist drop") == 1, "set lookup");
+
+    # ct helper
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_ct_helper("ftp")));
+    assert(streq(str_data(s), "ct helper \"ftp\" accept") == 1, "ct helper");
+
+    # tcp flags
+    s = rule_render(rule_add_match(rule_new(verdict_drop()), match_tcp_flags("syn, fin")));
+    assert(streq(str_data(s), "tcp flags { syn, fin } drop") == 1, "tcp flags");
+
+    # icmp type
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_icmp_type("echo-request")));
+    assert(streq(str_data(s), "icmp type echo-request accept") == 1, "icmp type");
+
+    # icmpv6 type
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_icmpv6_type("echo-request")));
+    assert(streq(str_data(s), "icmpv6 type echo-request accept") == 1, "icmpv6 type");
+
+    # meta mark
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_meta_mark(1)));
+    assert(streq(str_data(s), "meta mark 1 accept") == 1, "meta mark");
+
+    # limit
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_limit(10, RATE_SECOND, 20));
+    s = rule_render(r);
+    assert(streq(str_data(s), "limit rate 10/second burst 20 packets accept") == 1, "limit");
+
+    # quota over
+    s = rule_render(rule_add_match(rule_new(verdict_drop()), match_quota(QUOTA_OVER, 25, QUNIT_MBYTES)));
+    assert(streq(str_data(s), "quota over 25 mbytes drop") == 1, "quota over");
+
+    # quota until
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_quota(QUOTA_UNTIL, 100, QUNIT_GBYTES)));
+    assert(streq(str_data(s), "quota until 100 gbytes accept") == 1, "quota until");
+
+    # flow offload
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_flow_offload("ft")));
+    assert(streq(str_data(s), "flow offload @ft accept") == 1, "flow offload");
+
+    # ct timeout set
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_ct_timeout_set("tcp-long")));
+    assert(streq(str_data(s), "ct timeout set \"tcp-long\" accept") == 1, "ct timeout set");
+
+    # icmp type + code
+    s = rule_render(rule_add_match(rule_new(verdict_drop()), match_icmp_type_code("echo-request", 0)));
+    assert(streq(str_data(s), "icmp type echo-request icmp code 0 drop") == 1, "icmp type+code");
+
+    # icmpv6 type + code
+    s = rule_render(rule_add_match(rule_new(verdict_drop()), match_icmpv6_type_code("echo-request", 0)));
+    assert(streq(str_data(s), "icmpv6 type echo-request icmpv6 code 0 drop") == 1, "icmpv6 type+code");
+
+    # vlan id
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_vlan_id(100)));
+    assert(streq(str_data(s), "vlan id 100 accept") == 1, "vlan id");
+
+    # dscp
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_dscp(46)));
+    assert(streq(str_data(s), "ip dscp 46 accept") == 1, "dscp");
+
+    # ipv6 ext hdr
+    s = rule_render(rule_add_match(rule_new(verdict_drop()), match_ipv6_ext_hdr(EXT_ROUTING)));
+    assert(streq(str_data(s), "exthdr rt exists drop") == 1, "ipv6 ext hdr");
+
+    # frag off
+    s = rule_render(rule_add_match(rule_new(verdict_drop()), match_frag_off(8192, NFT_CMP_NE, 0)));
+    assert(streq(str_data(s), "ip frag-off & 0x2000 != 0x0 drop") == 1, "frag off more-fragments");
+
+    # pkt type broadcast
+    s = rule_render(rule_add_match(rule_new(verdict_drop()), match_pkt_type(PKT_BROADCAST)));
+    assert(streq(str_data(s), "meta pkttype broadcast drop") == 1, "pkt type broadcast");
+
+    # pkt type multicast
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_pkt_type(PKT_MULTICAST)));
+    assert(streq(str_data(s), "meta pkttype multicast accept") == 1, "pkt type multicast");
+
+    # conn limit
+    r = rule_new(verdict_drop());
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_dport(22));
+    rule_add_match(r, match_conn_limit(10));
+    rule_set_comment(r, "SSH conn limit");
+    s = rule_render(r);
+    assert(streq(str_data(s), "tcp dport 22 ct count over 10 drop comment \"SSH conn limit\"") == 1, "conn limit");
+
+    # raw
+    s = rule_render(rule_add_match(rule_new(verdict_accept()), match_raw("dport { 80, 443, 8080 }")));
+    assert(streq(str_data(s), "dport { 80, 443, 8080 } accept") == 1, "raw match");
+
+    return 0;
+}
+
+fn test_rule_render_log_advanced() {
+    test_group("rule_render_log_advanced");
+
+    # full
+    var s = rule_render(rule_new(verdict_log_advanced("NEIN: ", NFT_LOG_WARN, 1, 128)));
+    assert(streq(str_data(s), "log prefix \"NEIN: \" level warn group 1 snaplen 128") == 1, "log advanced full");
+
+    # level only
+    s = rule_render(rule_new(verdict_log_advanced(0, NFT_LOG_DEBUG, 0, 0)));
+    assert(streq(str_data(s), "log level debug") == 1, "log advanced level");
+
+    # group only
+    s = rule_render(rule_new(verdict_log_advanced(0, 0, 5, 0)));
+    assert(streq(str_data(s), "log group 5") == 1, "log advanced group");
+
+    # bare
+    s = rule_render(rule_new(verdict_log_advanced(0, 0, 0, 0)));
+    assert(streq(str_data(s), "log") == 1, "log advanced bare");
+
+    return 0;
+}
+
+# ================================================================
+# Rule validate tests
+# ================================================================
+
+fn test_rule_validate() {
+    test_group("rule_validate");
+
+    # Good rule
+    assert(is_ok(rule_validate(allow_service("10.0.0.0/8", PROTO_TCP, 80))) == 1, "good rule ok");
+
+    # Bad addr
+    assert(is_err_result(rule_validate(deny_source("10.0.0.1; flush ruleset"))) == 1, "bad addr rejected");
+
+    # Bad iface
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_iif("eth0; drop"));
+    assert(is_err_result(rule_validate(r)) == 1, "bad iface rejected");
+
+    # Bad comment
+    r = allow_tcp(22);
+    rule_set_comment(r, "has \"quotes\"");
+    assert(is_err_result(rule_validate(r)) == 1, "bad comment rejected");
+
+    # Bad jump target
+    assert(is_err_result(rule_validate(rule_new(verdict_jump("evil;chain")))) == 1, "bad jump rejected");
+
+    # Bad goto target
+    assert(is_err_result(rule_validate(rule_new(verdict_goto("bad;chain")))) == 1, "bad goto rejected");
+
+    # Good goto
+    assert(is_ok(rule_validate(rule_new(verdict_goto("valid_chain")))) == 1, "good goto ok");
+
+    # Bad log prefix
+    assert(is_err_result(rule_validate(rule_new(verdict_log("bad;prefix")))) == 1, "bad log prefix rejected");
+
+    # Good log prefix
+    assert(is_ok(rule_validate(rule_new(verdict_log("GOOD: ")))) == 1, "good log ok");
+
+    # Port range valid
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_dport_range(80, 443));
+    assert(is_ok(rule_validate(r)) == 1, "port range ok");
+
+    # Port range equal
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_dport_range(80, 80));
+    assert(is_ok(rule_validate(r)) == 1, "port range equal ok");
+
+    # Port range inverted
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_dport_range(443, 80));
+    assert(is_err_result(rule_validate(r)) == 1, "port range inverted rejected");
+
+    # Raw match skipped
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_raw("anything goes here;{}"));
+    assert(is_ok(rule_validate(r)) == 1, "raw match skipped");
+
+    # DSCP valid/invalid
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_dscp(63));
+    assert(is_ok(rule_validate(r)) == 1, "dscp 63 ok");
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_dscp(64));
+    assert(is_err_result(rule_validate(r)) == 1, "dscp 64 rejected");
+
+    # VLAN ID valid/invalid
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_vlan_id(4094));
+    assert(is_ok(rule_validate(r)) == 1, "vlan 4094 ok");
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_vlan_id(4095));
+    assert(is_err_result(rule_validate(r)) == 1, "vlan 4095 rejected");
+
+    # Bad counter named
+    assert(is_err_result(rule_validate(rule_new(verdict_counter_named("bad;counter")))) == 1, "bad counter rejected");
+    assert(is_ok(rule_validate(rule_new(verdict_counter_named("my-counter")))) == 1, "good counter ok");
+
+    # Bad log advanced prefix
+    assert(is_err_result(rule_validate(rule_new(verdict_log_advanced("bad;prefix", 0, 0, 0)))) == 1, "bad adv prefix rejected");
+    assert(is_ok(rule_validate(rule_new(verdict_log_advanced("TEST: ", NFT_LOG_INFO, 0, 0)))) == 1, "good adv prefix ok");
+
+    # Bad set lookup
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_set_lookup("ip saddr", "bad;set"));
+    assert(is_err_result(rule_validate(r)) == 1, "bad set_lookup rejected");
+
+    # Bad ct helper
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_ct_helper("bad;helper"));
+    assert(is_err_result(rule_validate(r)) == 1, "bad ct_helper rejected");
+
+    # Bad flow offload
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_flow_offload("bad;ft"));
+    assert(is_err_result(rule_validate(r)) == 1, "bad flow_offload rejected");
+
+    # Bad ct timeout set
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_ct_timeout_set("evil;timeout"));
+    assert(is_err_result(rule_validate(r)) == 1, "bad ct_timeout rejected");
+
+    # Bad icmp type
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_icmp_type("bad;type"));
+    assert(is_err_result(rule_validate(r)) == 1, "bad icmp_type rejected");
+
+    return 0;
+}
+
+# ================================================================
+# Main
+# ================================================================
+
 fn main() {
     alloc_init();
 
+    # error
     test_error();
+
+    # validate
     test_validate_identifier();
     test_validate_addr();
     test_validate_iface();
@@ -264,6 +589,13 @@ fn main() {
     test_validate_nft_element();
     test_validate_family();
     test_dangerous_chars_all();
+
+    # rule
+    test_rule_render_basic();
+    test_rule_render_verdicts();
+    test_rule_render_matches();
+    test_rule_render_log_advanced();
+    test_rule_validate();
 
     return assert_summary();
 }

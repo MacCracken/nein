@@ -1,0 +1,736 @@
+# nein rule module — match expressions, verdicts, and rule rendering
+#
+# Core building block: Rule = matches + verdict + optional comment.
+# Renders to nftables syntax string via rule_render().
+
+# ================================================================
+# Enum constants — Match types
+# ================================================================
+
+enum MatchType {
+    MATCH_SOURCE_ADDR = 1;
+    MATCH_DEST_ADDR = 2;
+    MATCH_SOURCE_ADDR6 = 3;
+    MATCH_DEST_ADDR6 = 4;
+    MATCH_PROTOCOL = 5;
+    MATCH_DPORT = 6;
+    MATCH_SPORT = 7;
+    MATCH_DPORT_RANGE = 8;
+    MATCH_IIF = 9;
+    MATCH_OIF = 10;
+    MATCH_CT_STATE = 11;
+    MATCH_LIMIT = 12;
+    MATCH_SET_LOOKUP = 13;
+    MATCH_CT_HELPER = 14;
+    MATCH_TCP_FLAGS = 15;
+    MATCH_ICMP_TYPE = 16;
+    MATCH_ICMPV6_TYPE = 17;
+    MATCH_META_MARK = 18;
+    MATCH_QUOTA = 19;
+    MATCH_FLOW_OFFLOAD = 20;
+    MATCH_CT_TIMEOUT_SET = 21;
+    MATCH_ICMP_TYPE_CODE = 22;
+    MATCH_ICMPV6_TYPE_CODE = 23;
+    MATCH_VLAN_ID = 24;
+    MATCH_DSCP = 25;
+    MATCH_IPV6_EXT_HDR = 26;
+    MATCH_FRAG_OFF = 27;
+    MATCH_PKT_TYPE = 28;
+    MATCH_CONN_LIMIT = 29;
+    MATCH_RAW = 30;
+}
+
+# ================================================================
+# Enum constants — Verdict types
+# ================================================================
+
+enum VerdictType {
+    VERDICT_ACCEPT = 1;
+    VERDICT_DROP = 2;
+    VERDICT_REJECT = 3;
+    VERDICT_REJECT_WITH = 4;
+    VERDICT_JUMP = 5;
+    VERDICT_GOTO = 6;
+    VERDICT_RETURN = 7;
+    VERDICT_LOG = 8;
+    VERDICT_COUNTER = 9;
+    VERDICT_SET_MARK = 10;
+    VERDICT_SET_CT_MARK = 11;
+    VERDICT_LOG_ADVANCED = 12;
+    VERDICT_COUNTER_NAMED = 13;
+}
+
+# ================================================================
+# Sub-enum constants
+# ================================================================
+
+enum Protocol {
+    PROTO_TCP = 1;
+    PROTO_UDP = 2;
+    PROTO_ICMP = 3;
+    PROTO_ICMPV6 = 4;
+}
+
+enum RateUnit {
+    RATE_SECOND = 1;
+    RATE_MINUTE = 2;
+    RATE_HOUR = 3;
+    RATE_DAY = 4;
+}
+
+enum QuotaMode {
+    QUOTA_OVER = 1;
+    QUOTA_UNTIL = 2;
+}
+
+enum QuotaUnit {
+    QUNIT_BYTES = 1;
+    QUNIT_KBYTES = 2;
+    QUNIT_MBYTES = 3;
+    QUNIT_GBYTES = 4;
+}
+
+enum PktTypeEnum {
+    PKT_UNICAST = 1;
+    PKT_BROADCAST = 2;
+    PKT_MULTICAST = 3;
+}
+
+enum Ipv6ExtHdrEnum {
+    EXT_HOP_BY_HOP = 1;
+    EXT_ROUTING = 2;
+    EXT_FRAGMENT = 3;
+    EXT_DESTINATION = 4;
+    EXT_MOBILITY = 5;
+    EXT_AUTH = 6;
+}
+
+enum CmpOpEnum {
+    NFT_CMP_EQ = 1;
+    NFT_CMP_NE = 2;
+    NFT_CMP_LT = 3;
+    NFT_CMP_GT = 4;
+    NFT_CMP_LE = 5;
+    NFT_CMP_GE = 6;
+}
+
+enum RejectReasonEnum {
+    REJECT_ICMP_HOST_UNREACH = 1;
+    REJECT_ICMP_PORT_UNREACH = 2;
+    REJECT_INFT_CMP_NET_UNREACH = 3;
+    REJECT_ICMP_ADMIN_PROHIB = 4;
+    REJECT_ICMPX_ADMIN_PROHIB = 5;
+    REJECT_TCP_RESET = 6;
+}
+
+enum LogLevelEnum {
+    NFT_LOG_EMERG = 1;
+    NFT_LOG_ALERT = 2;
+    NFT_LOG_CRIT = 3;
+    NFT_LOG_ERR = 4;
+    NFT_LOG_WARN = 5;
+    NFT_LOG_NOTICE = 6;
+    NFT_LOG_INFO = 7;
+    NFT_LOG_DEBUG = 8;
+}
+
+# ================================================================
+# String renderers for enum constants
+# ================================================================
+
+fn _proto_str(p) {
+    if (p == PROTO_TCP) { return "tcp"; }
+    if (p == PROTO_UDP) { return "udp"; }
+    if (p == PROTO_ICMP) { return "icmp"; }
+    if (p == PROTO_ICMPV6) { return "icmpv6"; }
+    return "unknown";
+}
+
+fn _rate_unit_str(u) {
+    if (u == RATE_SECOND) { return "second"; }
+    if (u == RATE_MINUTE) { return "minute"; }
+    if (u == RATE_HOUR) { return "hour"; }
+    if (u == RATE_DAY) { return "day"; }
+    return "second";
+}
+
+fn _quota_mode_str(m) {
+    if (m == QUOTA_OVER) { return "over"; }
+    if (m == QUOTA_UNTIL) { return "until"; }
+    return "over";
+}
+
+fn _quota_unit_str(u) {
+    if (u == QUNIT_BYTES) { return "bytes"; }
+    if (u == QUNIT_KBYTES) { return "kbytes"; }
+    if (u == QUNIT_MBYTES) { return "mbytes"; }
+    if (u == QUNIT_GBYTES) { return "gbytes"; }
+    return "bytes";
+}
+
+fn _pkt_type_str(p) {
+    if (p == PKT_UNICAST) { return "unicast"; }
+    if (p == PKT_BROADCAST) { return "broadcast"; }
+    if (p == PKT_MULTICAST) { return "multicast"; }
+    return "unicast";
+}
+
+fn _ipv6_ext_hdr_str(h) {
+    if (h == EXT_HOP_BY_HOP) { return "hbh"; }
+    if (h == EXT_ROUTING) { return "rt"; }
+    if (h == EXT_FRAGMENT) { return "frag"; }
+    if (h == EXT_DESTINATION) { return "dst"; }
+    if (h == EXT_MOBILITY) { return "mh"; }
+    if (h == EXT_AUTH) { return "auth"; }
+    return "unknown";
+}
+
+fn _cmp_op_str(op) {
+    if (op == NFT_CMP_EQ) { return "=="; }
+    if (op == NFT_CMP_NE) { return "!="; }
+    if (op == NFT_CMP_LT) { return "<"; }
+    if (op == NFT_CMP_GT) { return ">"; }
+    if (op == NFT_CMP_LE) { return "<="; }
+    if (op == NFT_CMP_GE) { return ">="; }
+    return "==";
+}
+
+fn _reject_reason_str(r) {
+    if (r == REJECT_ICMP_HOST_UNREACH) { return "icmp type host-unreachable"; }
+    if (r == REJECT_ICMP_PORT_UNREACH) { return "icmp type port-unreachable"; }
+    if (r == REJECT_INFT_CMP_NET_UNREACH) { return "icmp type net-unreachable"; }
+    if (r == REJECT_ICMP_ADMIN_PROHIB) { return "icmp type admin-prohibited"; }
+    if (r == REJECT_ICMPX_ADMIN_PROHIB) { return "icmpx type admin-prohibited"; }
+    if (r == REJECT_TCP_RESET) { return "tcp reset"; }
+    return "icmp type port-unreachable";
+}
+
+fn _log_level_str(l) {
+    if (l == NFT_LOG_EMERG) { return "emerg"; }
+    if (l == NFT_LOG_ALERT) { return "alert"; }
+    if (l == NFT_LOG_CRIT) { return "crit"; }
+    if (l == NFT_LOG_ERR) { return "err"; }
+    if (l == NFT_LOG_WARN) { return "warn"; }
+    if (l == NFT_LOG_NOTICE) { return "notice"; }
+    if (l == NFT_LOG_INFO) { return "info"; }
+    if (l == NFT_LOG_DEBUG) { return "debug"; }
+    return "info";
+}
+
+# ================================================================
+# Match struct — tagged union: { type, val1, val2, val3 }
+# Layout: [type:8][val1:8][val2:8][val3:8] = 32 bytes
+#   val1/val2/val3 meaning depends on type (string ptr, int, etc.)
+# ================================================================
+
+fn match_new(mtype, v1, v2, v3) {
+    var m = alloc(32);
+    store64(m, mtype);
+    store64(m + 8, v1);
+    store64(m + 16, v2);
+    store64(m + 24, v3);
+    return m;
+}
+
+fn match_type(m) { return load64(m); }
+fn match_val1(m) { return load64(m + 8); }
+fn match_val2(m) { return load64(m + 16); }
+fn match_val3(m) { return load64(m + 24); }
+
+# Match constructors
+
+fn match_source_addr(addr) { return match_new(MATCH_SOURCE_ADDR, addr, 0, 0); }
+fn match_dest_addr(addr) { return match_new(MATCH_DEST_ADDR, addr, 0, 0); }
+fn match_source_addr6(addr) { return match_new(MATCH_SOURCE_ADDR6, addr, 0, 0); }
+fn match_dest_addr6(addr) { return match_new(MATCH_DEST_ADDR6, addr, 0, 0); }
+fn match_protocol(proto) { return match_new(MATCH_PROTOCOL, proto, 0, 0); }
+fn match_dport(port) { return match_new(MATCH_DPORT, port, 0, 0); }
+fn match_sport(port) { return match_new(MATCH_SPORT, port, 0, 0); }
+fn match_dport_range(lo, hi) { return match_new(MATCH_DPORT_RANGE, lo, hi, 0); }
+fn match_iif(iface) { return match_new(MATCH_IIF, iface, 0, 0); }
+fn match_oif(iface) { return match_new(MATCH_OIF, iface, 0, 0); }
+fn match_ct_state(states_str) { return match_new(MATCH_CT_STATE, states_str, 0, 0); }
+fn match_limit(rate, unit, burst) { return match_new(MATCH_LIMIT, rate, unit, burst); }
+fn match_set_lookup(field, set_name) { return match_new(MATCH_SET_LOOKUP, field, set_name, 0); }
+fn match_ct_helper(helper) { return match_new(MATCH_CT_HELPER, helper, 0, 0); }
+fn match_tcp_flags(flags_str) { return match_new(MATCH_TCP_FLAGS, flags_str, 0, 0); }
+fn match_icmp_type(tname) { return match_new(MATCH_ICMP_TYPE, tname, 0, 0); }
+fn match_icmpv6_type(tname) { return match_new(MATCH_ICMPV6_TYPE, tname, 0, 0); }
+fn match_meta_mark(val) { return match_new(MATCH_META_MARK, val, 0, 0); }
+fn match_quota(mode, amount, unit) { return match_new(MATCH_QUOTA, mode, amount, unit); }
+fn match_flow_offload(name) { return match_new(MATCH_FLOW_OFFLOAD, name, 0, 0); }
+fn match_ct_timeout_set(name) { return match_new(MATCH_CT_TIMEOUT_SET, name, 0, 0); }
+fn match_icmp_type_code(tname, code) { return match_new(MATCH_ICMP_TYPE_CODE, tname, code, 0); }
+fn match_icmpv6_type_code(tname, code) { return match_new(MATCH_ICMPV6_TYPE_CODE, tname, code, 0); }
+fn match_vlan_id(id) { return match_new(MATCH_VLAN_ID, id, 0, 0); }
+fn match_dscp(val) { return match_new(MATCH_DSCP, val, 0, 0); }
+fn match_ipv6_ext_hdr(hdr) { return match_new(MATCH_IPV6_EXT_HDR, hdr, 0, 0); }
+fn match_frag_off(mask, op, value) { return match_new(MATCH_FRAG_OFF, mask, op, value); }
+fn match_pkt_type(pt) { return match_new(MATCH_PKT_TYPE, pt, 0, 0); }
+fn match_conn_limit(count) { return match_new(MATCH_CONN_LIMIT, count, 0, 0); }
+fn match_raw(expr) { return match_new(MATCH_RAW, expr, 0, 0); }
+
+# ================================================================
+# Verdict struct — { type, val1, val2, val3, val4 }
+# Layout: [type:8][val1:8][val2:8][val3:8][val4:8] = 40 bytes
+# ================================================================
+
+fn verdict_new(vtype, v1, v2, v3, v4) {
+    var v = alloc(40);
+    store64(v, vtype);
+    store64(v + 8, v1);
+    store64(v + 16, v2);
+    store64(v + 24, v3);
+    store64(v + 32, v4);
+    return v;
+}
+
+fn verdict_type(v) { return load64(v); }
+fn verdict_val1(v) { return load64(v + 8); }
+fn verdict_val2(v) { return load64(v + 16); }
+fn verdict_val3(v) { return load64(v + 24); }
+fn verdict_val4(v) { return load64(v + 32); }
+
+# Verdict constructors
+fn verdict_accept() { return verdict_new(VERDICT_ACCEPT, 0, 0, 0, 0); }
+fn verdict_drop() { return verdict_new(VERDICT_DROP, 0, 0, 0, 0); }
+fn verdict_reject() { return verdict_new(VERDICT_REJECT, 0, 0, 0, 0); }
+fn verdict_reject_with(reason) { return verdict_new(VERDICT_REJECT_WITH, reason, 0, 0, 0); }
+fn verdict_jump(chain) { return verdict_new(VERDICT_JUMP, chain, 0, 0, 0); }
+fn verdict_goto(chain) { return verdict_new(VERDICT_GOTO, chain, 0, 0, 0); }
+fn verdict_return() { return verdict_new(VERDICT_RETURN, 0, 0, 0, 0); }
+fn verdict_log(prefix) { return verdict_new(VERDICT_LOG, prefix, 0, 0, 0); }
+fn verdict_counter() { return verdict_new(VERDICT_COUNTER, 0, 0, 0, 0); }
+fn verdict_set_mark(val) { return verdict_new(VERDICT_SET_MARK, val, 0, 0, 0); }
+fn verdict_set_ct_mark(val) { return verdict_new(VERDICT_SET_CT_MARK, val, 0, 0, 0); }
+fn verdict_log_advanced(prefix, level, group, snaplen) {
+    return verdict_new(VERDICT_LOG_ADVANCED, prefix, level, group, snaplen);
+}
+fn verdict_counter_named(name) { return verdict_new(VERDICT_COUNTER_NAMED, name, 0, 0, 0); }
+
+# ================================================================
+# Rule struct — { verdict, matches (vec), comment }
+# Layout: [verdict:8][matches:8][comment:8] = 24 bytes
+# ================================================================
+
+fn rule_new(verdict) {
+    var r = alloc(24);
+    store64(r, verdict);
+    store64(r + 8, vec_new());
+    store64(r + 16, 0);
+    return r;
+}
+
+fn rule_verdict(r) { return load64(r); }
+fn rule_matches(r) { return load64(r + 8); }
+fn rule_comment(r) { return load64(r + 16); }
+
+fn rule_add_match(r, m) {
+    vec_push(load64(r + 8), m);
+    return r;
+}
+
+fn rule_set_comment(r, c) {
+    store64(r + 16, c);
+    return r;
+}
+
+# ================================================================
+# Hex rendering helper (stdlib lacks _sb_add_hex)
+# ================================================================
+
+fn _sb_add_hex(sb, val) {
+    if (val == 0) {
+        str_builder_add_cstr(sb, "0");
+        return 0;
+    }
+    var buf[20];
+    var pos = 19;
+    store8(&buf + pos, 0);
+    var n = val;
+    while (n > 0) {
+        pos = pos - 1;
+        var digit = n & 15;
+        if (digit < 10) {
+            store8(&buf + pos, 48 + digit);
+        } else {
+            store8(&buf + pos, 97 + digit - 10);
+        }
+        n = n >> 4;
+    }
+    str_builder_add_cstr(sb, &buf + pos);
+    return 0;
+}
+
+# ================================================================
+# Render — match to nftables string
+# ================================================================
+
+fn _render_match(sb, m) {
+    var mt = match_type(m);
+    var v1 = match_val1(m);
+    var v2 = match_val2(m);
+    var v3 = match_val3(m);
+
+    if (mt == MATCH_SOURCE_ADDR) {
+        str_builder_add_cstr(sb, "ip saddr ");
+        str_builder_add_cstr(sb, v1);
+    } elif (mt == MATCH_DEST_ADDR) {
+        str_builder_add_cstr(sb, "ip daddr ");
+        str_builder_add_cstr(sb, v1);
+    } elif (mt == MATCH_SOURCE_ADDR6) {
+        str_builder_add_cstr(sb, "ip6 saddr ");
+        str_builder_add_cstr(sb, v1);
+    } elif (mt == MATCH_DEST_ADDR6) {
+        str_builder_add_cstr(sb, "ip6 daddr ");
+        str_builder_add_cstr(sb, v1);
+    } elif (mt == MATCH_PROTOCOL) {
+        str_builder_add_cstr(sb, _proto_str(v1));
+    } elif (mt == MATCH_DPORT) {
+        str_builder_add_cstr(sb, "dport ");
+        str_builder_add_int(sb, v1);
+    } elif (mt == MATCH_SPORT) {
+        str_builder_add_cstr(sb, "sport ");
+        str_builder_add_int(sb, v1);
+    } elif (mt == MATCH_DPORT_RANGE) {
+        str_builder_add_cstr(sb, "dport ");
+        str_builder_add_int(sb, v1);
+        str_builder_add_cstr(sb, "-");
+        str_builder_add_int(sb, v2);
+    } elif (mt == MATCH_IIF) {
+        str_builder_add_cstr(sb, "iif \"");
+        str_builder_add_cstr(sb, v1);
+        str_builder_add_cstr(sb, "\"");
+    } elif (mt == MATCH_OIF) {
+        str_builder_add_cstr(sb, "oif \"");
+        str_builder_add_cstr(sb, v1);
+        str_builder_add_cstr(sb, "\"");
+    } elif (mt == MATCH_CT_STATE) {
+        str_builder_add_cstr(sb, "ct state { ");
+        str_builder_add_cstr(sb, v1);
+        str_builder_add_cstr(sb, " }");
+    } elif (mt == MATCH_LIMIT) {
+        str_builder_add_cstr(sb, "limit rate ");
+        str_builder_add_int(sb, v1);
+        str_builder_add_cstr(sb, "/");
+        str_builder_add_cstr(sb, _rate_unit_str(v2));
+        str_builder_add_cstr(sb, " burst ");
+        str_builder_add_int(sb, v3);
+        str_builder_add_cstr(sb, " packets");
+    } elif (mt == MATCH_SET_LOOKUP) {
+        str_builder_add_cstr(sb, v1);
+        str_builder_add_cstr(sb, " @");
+        str_builder_add_cstr(sb, v2);
+    } elif (mt == MATCH_CT_HELPER) {
+        str_builder_add_cstr(sb, "ct helper \"");
+        str_builder_add_cstr(sb, v1);
+        str_builder_add_cstr(sb, "\"");
+    } elif (mt == MATCH_TCP_FLAGS) {
+        str_builder_add_cstr(sb, "tcp flags { ");
+        str_builder_add_cstr(sb, v1);
+        str_builder_add_cstr(sb, " }");
+    } elif (mt == MATCH_ICMP_TYPE) {
+        str_builder_add_cstr(sb, "icmp type ");
+        str_builder_add_cstr(sb, v1);
+    } elif (mt == MATCH_ICMPV6_TYPE) {
+        str_builder_add_cstr(sb, "icmpv6 type ");
+        str_builder_add_cstr(sb, v1);
+    } elif (mt == MATCH_META_MARK) {
+        str_builder_add_cstr(sb, "meta mark ");
+        str_builder_add_int(sb, v1);
+    } elif (mt == MATCH_QUOTA) {
+        str_builder_add_cstr(sb, "quota ");
+        str_builder_add_cstr(sb, _quota_mode_str(v1));
+        str_builder_add_cstr(sb, " ");
+        str_builder_add_int(sb, v2);
+        str_builder_add_cstr(sb, " ");
+        str_builder_add_cstr(sb, _quota_unit_str(v3));
+    } elif (mt == MATCH_FLOW_OFFLOAD) {
+        str_builder_add_cstr(sb, "flow offload @");
+        str_builder_add_cstr(sb, v1);
+    } elif (mt == MATCH_CT_TIMEOUT_SET) {
+        str_builder_add_cstr(sb, "ct timeout set \"");
+        str_builder_add_cstr(sb, v1);
+        str_builder_add_cstr(sb, "\"");
+    } elif (mt == MATCH_ICMP_TYPE_CODE) {
+        str_builder_add_cstr(sb, "icmp type ");
+        str_builder_add_cstr(sb, v1);
+        str_builder_add_cstr(sb, " icmp code ");
+        str_builder_add_int(sb, v2);
+    } elif (mt == MATCH_ICMPV6_TYPE_CODE) {
+        str_builder_add_cstr(sb, "icmpv6 type ");
+        str_builder_add_cstr(sb, v1);
+        str_builder_add_cstr(sb, " icmpv6 code ");
+        str_builder_add_int(sb, v2);
+    } elif (mt == MATCH_VLAN_ID) {
+        str_builder_add_cstr(sb, "vlan id ");
+        str_builder_add_int(sb, v1);
+    } elif (mt == MATCH_DSCP) {
+        str_builder_add_cstr(sb, "ip dscp ");
+        str_builder_add_int(sb, v1);
+    } elif (mt == MATCH_IPV6_EXT_HDR) {
+        str_builder_add_cstr(sb, "exthdr ");
+        str_builder_add_cstr(sb, _ipv6_ext_hdr_str(v1));
+        str_builder_add_cstr(sb, " exists");
+    } elif (mt == MATCH_FRAG_OFF) {
+        str_builder_add_cstr(sb, "ip frag-off & 0x");
+        _sb_add_hex(sb, v1);
+        str_builder_add_cstr(sb, " ");
+        str_builder_add_cstr(sb, _cmp_op_str(v2));
+        str_builder_add_cstr(sb, " 0x");
+        _sb_add_hex(sb, v3);
+    } elif (mt == MATCH_PKT_TYPE) {
+        str_builder_add_cstr(sb, "meta pkttype ");
+        str_builder_add_cstr(sb, _pkt_type_str(v1));
+    } elif (mt == MATCH_CONN_LIMIT) {
+        str_builder_add_cstr(sb, "ct count over ");
+        str_builder_add_int(sb, v1);
+    } elif (mt == MATCH_RAW) {
+        str_builder_add_cstr(sb, v1);
+    }
+    return 0;
+}
+
+fn _render_verdict(sb, v) {
+    var vt = verdict_type(v);
+    var v1 = verdict_val1(v);
+    var v2 = verdict_val2(v);
+    var v3 = verdict_val3(v);
+    var v4 = verdict_val4(v);
+
+    if (vt == VERDICT_ACCEPT) {
+        str_builder_add_cstr(sb, "accept");
+    } elif (vt == VERDICT_DROP) {
+        str_builder_add_cstr(sb, "drop");
+    } elif (vt == VERDICT_REJECT) {
+        str_builder_add_cstr(sb, "reject");
+    } elif (vt == VERDICT_REJECT_WITH) {
+        str_builder_add_cstr(sb, "reject with ");
+        str_builder_add_cstr(sb, _reject_reason_str(v1));
+    } elif (vt == VERDICT_JUMP) {
+        str_builder_add_cstr(sb, "jump ");
+        str_builder_add_cstr(sb, v1);
+    } elif (vt == VERDICT_GOTO) {
+        str_builder_add_cstr(sb, "goto ");
+        str_builder_add_cstr(sb, v1);
+    } elif (vt == VERDICT_RETURN) {
+        str_builder_add_cstr(sb, "return");
+    } elif (vt == VERDICT_LOG) {
+        str_builder_add_cstr(sb, "log");
+        if (v1 != 0) {
+            str_builder_add_cstr(sb, " prefix \"");
+            str_builder_add_cstr(sb, v1);
+            str_builder_add_cstr(sb, "\"");
+        }
+    } elif (vt == VERDICT_COUNTER) {
+        str_builder_add_cstr(sb, "counter");
+    } elif (vt == VERDICT_SET_MARK) {
+        str_builder_add_cstr(sb, "meta mark set ");
+        str_builder_add_int(sb, v1);
+    } elif (vt == VERDICT_SET_CT_MARK) {
+        str_builder_add_cstr(sb, "ct mark set ");
+        str_builder_add_int(sb, v1);
+    } elif (vt == VERDICT_LOG_ADVANCED) {
+        str_builder_add_cstr(sb, "log");
+        if (v1 != 0) {
+            str_builder_add_cstr(sb, " prefix \"");
+            str_builder_add_cstr(sb, v1);
+            str_builder_add_cstr(sb, "\"");
+        }
+        if (v2 != 0) {
+            str_builder_add_cstr(sb, " level ");
+            str_builder_add_cstr(sb, _log_level_str(v2));
+        }
+        if (v3 != 0) {
+            str_builder_add_cstr(sb, " group ");
+            str_builder_add_int(sb, v3);
+        }
+        if (v4 != 0) {
+            str_builder_add_cstr(sb, " snaplen ");
+            str_builder_add_int(sb, v4);
+        }
+    } elif (vt == VERDICT_COUNTER_NAMED) {
+        str_builder_add_cstr(sb, "counter name \"");
+        str_builder_add_cstr(sb, v1);
+        str_builder_add_cstr(sb, "\"");
+    }
+    return 0;
+}
+
+# Render a complete rule to nftables syntax string
+fn rule_render(r) {
+    var sb = str_builder_new();
+    var matches = rule_matches(r);
+    var len = vec_len(matches);
+    var i = 0;
+    while (i < len) {
+        if (i > 0) { str_builder_add_cstr(sb, " "); }
+        _render_match(sb, vec_get(matches, i));
+        i = i + 1;
+    }
+
+    if (len > 0) { str_builder_add_cstr(sb, " "); }
+    _render_verdict(sb, rule_verdict(r));
+
+    var comment = rule_comment(r);
+    if (comment != 0) {
+        str_builder_add_cstr(sb, " comment \"");
+        str_builder_add_cstr(sb, comment);
+        str_builder_add_cstr(sb, "\"");
+    }
+
+    return str_builder_build(sb);
+}
+
+# ================================================================
+# Validate — check all string fields for injection
+# ================================================================
+
+fn rule_validate(r) {
+    var matches = rule_matches(r);
+    var len = vec_len(matches);
+    var i = 0;
+    var vr = 0;
+    while (i < len) {
+        var m = vec_get(matches, i);
+        var mt = match_type(m);
+        var v1 = match_val1(m);
+        var v2 = match_val2(m);
+
+        if (mt == MATCH_SOURCE_ADDR || mt == MATCH_DEST_ADDR ||
+            mt == MATCH_SOURCE_ADDR6 || mt == MATCH_DEST_ADDR6) {
+            vr = validate_addr(v1);
+            if (is_err_result(vr) == 1) { return vr; }
+        } elif (mt == MATCH_IIF || mt == MATCH_OIF) {
+            vr = validate_iface(v1);
+            if (is_err_result(vr) == 1) { return vr; }
+        } elif (mt == MATCH_CT_HELPER || mt == MATCH_FLOW_OFFLOAD ||
+                mt == MATCH_CT_TIMEOUT_SET) {
+            vr = validate_identifier(v1);
+            if (is_err_result(vr) == 1) { return vr; }
+        } elif (mt == MATCH_SET_LOOKUP) {
+            vr = validate_nft_element(v1);
+            if (is_err_result(vr) == 1) { return vr; }
+            vr = validate_identifier(v2);
+            if (is_err_result(vr) == 1) { return vr; }
+        } elif (mt == MATCH_ICMP_TYPE || mt == MATCH_ICMPV6_TYPE) {
+            vr = validate_identifier(v1);
+            if (is_err_result(vr) == 1) { return vr; }
+        } elif (mt == MATCH_ICMP_TYPE_CODE || mt == MATCH_ICMPV6_TYPE_CODE) {
+            vr = validate_identifier(v1);
+            if (is_err_result(vr) == 1) { return vr; }
+        } elif (mt == MATCH_TCP_FLAGS) {
+            vr = validate_nft_element(v1);
+            if (is_err_result(vr) == 1) { return vr; }
+        } elif (mt == MATCH_DSCP) {
+            if (v1 > 63) { return nein_err(ERR_INVALID_RULE); }
+        } elif (mt == MATCH_VLAN_ID) {
+            if (v1 > 4094) { return nein_err(ERR_INVALID_RULE); }
+        } elif (mt == MATCH_DPORT_RANGE) {
+            if (v1 > v2) { return nein_err(ERR_INVALID_RULE); }
+        } elif (mt == MATCH_RAW) {
+            # Deliberately not validated — caller's responsibility
+        }
+
+        i = i + 1;
+    }
+
+    # Validate verdict strings
+    var v = rule_verdict(r);
+    var vt = verdict_type(v);
+    if (vt == VERDICT_JUMP || vt == VERDICT_GOTO) {
+        vr = validate_identifier(verdict_val1(v));
+        if (is_err_result(vr) == 1) { return vr; }
+    } elif (vt == VERDICT_LOG) {
+        if (verdict_val1(v) != 0) {
+            vr = validate_log_prefix(verdict_val1(v));
+            if (is_err_result(vr) == 1) { return vr; }
+        }
+    } elif (vt == VERDICT_LOG_ADVANCED) {
+        if (verdict_val1(v) != 0) {
+            vr = validate_log_prefix(verdict_val1(v));
+            if (is_err_result(vr) == 1) { return vr; }
+        }
+    } elif (vt == VERDICT_COUNTER_NAMED) {
+        vr = validate_identifier(verdict_val1(v));
+        if (is_err_result(vr) == 1) { return vr; }
+    }
+
+    # Validate comment
+    var comment = rule_comment(r);
+    if (comment != 0) {
+        vr = validate_comment(comment);
+        if (is_err_result(vr) == 1) { return vr; }
+    }
+
+    return nein_ok();
+}
+
+# ================================================================
+# Convenience functions
+# ================================================================
+
+fn allow_tcp(port) {
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_dport(port));
+    return r;
+}
+
+fn allow_udp(port) {
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_protocol(PROTO_UDP));
+    rule_add_match(r, match_dport(port));
+    return r;
+}
+
+fn allow_established() {
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_ct_state("established, related"));
+    return r;
+}
+
+fn deny_source(cidr) {
+    var r = rule_new(verdict_drop());
+    rule_add_match(r, match_source_addr(cidr));
+    return r;
+}
+
+fn deny_source6(cidr) {
+    var r = rule_new(verdict_drop());
+    rule_add_match(r, match_source_addr6(cidr));
+    return r;
+}
+
+fn allow_service(source_cidr, protocol, port) {
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_source_addr(source_cidr));
+    rule_add_match(r, match_protocol(protocol));
+    rule_add_match(r, match_dport(port));
+    return r;
+}
+
+fn rate_limit_tcp(port, rate, unit) {
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_dport(port));
+    rule_add_match(r, match_limit(rate, unit, rate));
+    return r;
+}
+
+fn rate_limit_udp(port, rate, unit) {
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_protocol(PROTO_UDP));
+    rule_add_match(r, match_dport(port));
+    rule_add_match(r, match_limit(rate, unit, rate));
+    return r;
+}
+
+fn rate_limit_quic(port, rate, unit) {
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_protocol(PROTO_UDP));
+    rule_add_match(r, match_dport(port));
+    rule_add_match(r, match_limit(rate, unit, rate * 2));
+    rule_set_comment(r, "quic rate limit");
+    return r;
+}

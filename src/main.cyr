@@ -6,6 +6,7 @@
 # --- Project modules ---
 include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
 
 fn main() {
     alloc_init();

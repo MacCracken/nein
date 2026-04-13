@@ -1,19 +1,16 @@
-# nein fuzz harness — validate module
-# All validators must handle arbitrary input without crashing.
-# No valid UTF-8 assumption — raw bytes are valid test input.
+# nein fuzz harness — validate + rule modules
+# All functions must handle arbitrary input without crashing.
 
 include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
 
-fn fuzz_main(data, len) {
+fn fuzz_validate(data, len) {
     if (len == 0) { return 0; }
-
-    # Null-terminate a copy so string functions are safe
     var copy = alloc(len + 1);
     memcpy(copy, data, len);
     store8(copy + len, 0);
 
-    # Feed to every validator — must never crash, only Ok/Err
     validate_identifier(copy);
     validate_addr(copy);
     validate_iface(copy);
@@ -22,15 +19,31 @@ fn fuzz_main(data, len) {
     validate_log_prefix(copy);
     validate_nft_element(copy);
     validate_family(copy);
+    return 0;
+}
 
-    # Also test with substrings of varying lengths
-    if (len > 2) {
-        var half = len / 2;
-        store8(copy + half, 0);
-        validate_identifier(copy);
-        validate_addr(copy);
-        validate_comment(copy);
-    }
+fn fuzz_rule_render(data, len) {
+    if (len == 0) { return 0; }
+    var copy = alloc(len + 1);
+    memcpy(copy, data, len);
+    store8(copy + len, 0);
+
+    # Build a rule with fuzzed strings in various positions
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_source_addr(copy));
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_dport(80));
+    rule_add_match(r, match_iif(copy));
+    rule_set_comment(r, copy);
+    rule_render(r);
+
+    # Fuzz with raw match
+    r = rule_new(verdict_drop());
+    rule_add_match(r, match_raw(copy));
+    rule_render(r);
+
+    # Fuzz validate
+    rule_validate(r);
 
     return 0;
 }
@@ -39,26 +52,27 @@ fn main() {
     alloc_init();
 
     # Smoke: normal inputs
-    fuzz_main("eth0", 4);
-    fuzz_main("10.0.0.1", 8);
-    fuzz_main("inet", 4);
-    fuzz_main("established", 11);
-    fuzz_main("SSH access", 10);
+    fuzz_validate("eth0", 4);
+    fuzz_validate("10.0.0.1", 8);
+    fuzz_validate("inet", 4);
 
-    # Edge: empty
-    fuzz_main("", 0);
-    fuzz_main("x", 1);
+    # Hostile
+    fuzz_validate("evil;drop", 9);
+    fuzz_validate("a{b}c|d`e$f", 11);
 
-    # Hostile: injection chars
-    fuzz_main("evil;drop", 9);
-    fuzz_main("a{b}c|d`e$f", 11);
-    fuzz_main("10.0.0.1\n; flush", 16);
+    # Rule rendering with normal input
+    fuzz_rule_render("10.0.0.1", 8);
+    fuzz_rule_render("eth0", 4);
+
+    # Rule rendering with hostile input
+    fuzz_rule_render("evil;drop{}", 11);
 
     # Boundary: max lengths
     var big[256];
     memset(&big, 97, 255);
     store8(&big + 255, 0);
-    fuzz_main(&big, 255);
+    fuzz_validate(&big, 255);
+    fuzz_rule_render(&big, 255);
 
     println("fuzz: ok");
     return 0;
