@@ -1,0 +1,130 @@
+# nein firewall module — top-level Firewall manager
+#
+# Firewall struct — { tables(vec), dry_run }
+# Layout: [tables:8][dry_run:8] = 16 bytes
+
+fn firewall_new() {
+    var fw = alloc(16);
+    store64(fw, vec_new());
+    store64(fw + 8, 0);
+    return fw;
+}
+
+fn firewall_tables(fw) { return load64(fw); }
+fn firewall_dry_run(fw) { return load64(fw + 8); }
+
+fn firewall_set_dry_run(fw, enabled) {
+    store64(fw + 8, enabled);
+    return fw;
+}
+
+fn firewall_add_table(fw, t) {
+    vec_push(load64(fw), t);
+    return fw;
+}
+
+# --- Render: concatenate all tables with trailing newlines ---
+fn firewall_render(fw) {
+    var sb = str_builder_new();
+    var tables = firewall_tables(fw);
+    var tlen = vec_len(tables);
+    var i = 0;
+    while (i < tlen) {
+        var rendered = table_render(vec_get(tables, i));
+        str_builder_add_cstr(sb, str_data(rendered));
+        str_builder_add_cstr(sb, "\n");
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
+# --- Validate all tables, chains, and contents ---
+fn firewall_validate(fw) {
+    var tables = firewall_tables(fw);
+    var tlen = vec_len(tables);
+    var i = 0;
+    var j = 0;
+    var vec2 = 0;
+    var vlen = 0;
+    var vr = 0;
+
+    while (i < tlen) {
+        var t = vec_get(tables, i);
+
+        vr = validate_identifier(table_name(t));
+        if (is_err_result(vr) == 1) { return vr; }
+
+        # Defines
+        vec2 = table_defines(t);
+        vlen = vec_len(vec2);
+        j = 0;
+        while (j < vlen) {
+            vr = define_validate(vec_get(vec2, j));
+            if (is_err_result(vr) == 1) { return vr; }
+            j = j + 1;
+        }
+
+        # Flowtables
+        vec2 = table_flowtables(t);
+        vlen = vec_len(vec2);
+        j = 0;
+        while (j < vlen) {
+            vr = flowtable_validate(vec_get(vec2, j));
+            if (is_err_result(vr) == 1) { return vr; }
+            j = j + 1;
+        }
+
+        # CT timeouts
+        vec2 = table_ct_timeouts(t);
+        vlen = vec_len(vec2);
+        j = 0;
+        while (j < vlen) {
+            vr = ct_timeout_validate(vec_get(vec2, j));
+            if (is_err_result(vr) == 1) { return vr; }
+            j = j + 1;
+        }
+
+        # Sets
+        vec2 = table_sets(t);
+        vlen = vec_len(vec2);
+        j = 0;
+        while (j < vlen) {
+            vr = nft_set_validate(vec_get(vec2, j));
+            if (is_err_result(vr) == 1) { return vr; }
+            j = j + 1;
+        }
+
+        # Maps
+        vec2 = table_maps(t);
+        vlen = vec_len(vec2);
+        j = 0;
+        while (j < vlen) {
+            vr = nft_map_validate(vec_get(vec2, j));
+            if (is_err_result(vr) == 1) { return vr; }
+            j = j + 1;
+        }
+
+        # Chains
+        vec2 = table_chains(t);
+        vlen = vec_len(vec2);
+        j = 0;
+        while (j < vlen) {
+            var chain = vec_get(vec2, j);
+            vr = validate_identifier(chain_name(chain));
+            if (is_err_result(vr) == 1) { return vr; }
+            var rules = chain_rules(chain);
+            var rlen = vec_len(rules);
+            var k = 0;
+            while (k < rlen) {
+                vr = chain_rule_validate(vec_get(rules, k));
+                if (is_err_result(vr) == 1) { return vr; }
+                k = k + 1;
+            }
+            j = j + 1;
+        }
+
+        i = i + 1;
+    }
+
+    return nein_ok();
+}

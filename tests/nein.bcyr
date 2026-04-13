@@ -4,8 +4,11 @@ include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
 include "src/lib/rule.cyr"
 include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
 include "src/lib/chain.cyr"
 include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
 
 # --- validate ---
 
@@ -92,6 +95,42 @@ fn bench_chain_render() {
     return 0;
 }
 
+fn bench_nat_dnat_render() {
+    var n = port_forward(8080, "172.17.0.2", 80);
+    nat_render(n);
+    return 0;
+}
+
+fn bench_nat_masquerade_render() {
+    var n = container_masquerade("172.17.0.0/16", "eth0");
+    nat_render(n);
+    return 0;
+}
+
+fn bench_nat_validate() {
+    var n = port_forward(8080, "172.17.0.2", 80);
+    nat_validate(n);
+    return 0;
+}
+
+fn bench_basic_host_firewall() {
+    var fw = basic_host_firewall();
+    firewall_render(fw);
+    return 0;
+}
+
+fn bench_container_bridge() {
+    var fw = container_bridge("br0", "172.17.0.0/16", "eth0");
+    firewall_render(fw);
+    return 0;
+}
+
+fn bench_firewall_validate() {
+    var fw = basic_host_firewall();
+    firewall_validate(fw);
+    return 0;
+}
+
 fn bench_set_render() {
     var s = nft_set_new("blocklist", SET_IPV4_ADDR);
     nft_set_add_element(s, "10.0.0.1");
@@ -128,6 +167,14 @@ fn main() {
     b = bench_new("table_render/full"); bench_run(b, &bench_table_render, 10000); vec_push(all, b);
     b = bench_new("chain_render/base"); bench_run(b, &bench_chain_render, 100000); vec_push(all, b);
     b = bench_new("set_render"); bench_run(b, &bench_set_render, 100000); vec_push(all, b);
+
+    b = bench_new("nat_dnat_render"); bench_run(b, &bench_nat_dnat_render, 100000); vec_push(all, b);
+    b = bench_new("nat_masquerade_render"); bench_run(b, &bench_nat_masquerade_render, 100000); vec_push(all, b);
+    b = bench_new("nat_validate"); bench_run(b, &bench_nat_validate, 100000); vec_push(all, b);
+
+    b = bench_new("basic_host_firewall"); bench_run(b, &bench_basic_host_firewall, 10000); vec_push(all, b);
+    b = bench_new("container_bridge"); bench_run(b, &bench_container_bridge, 10000); vec_push(all, b);
+    b = bench_new("firewall_validate"); bench_run(b, &bench_firewall_validate, 10000); vec_push(all, b);
 
     bench_report_all(all);
     return 0;

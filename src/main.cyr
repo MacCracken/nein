@@ -4,12 +4,16 @@
 # Stdlib auto-included via cyrius.toml
 
 # --- Project modules ---
+# Dependency order: core -> feature modules -> integrators
 include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
 include "src/lib/rule.cyr"
 include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
 include "src/lib/chain.cyr"
 include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
 
 fn main() {
     alloc_init();

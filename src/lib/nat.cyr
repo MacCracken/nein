@@ -1,0 +1,244 @@
+# nein nat module — NAT rules (DNAT, SNAT, masquerade, redirect)
+#
+# NatRule as tagged union struct — 5 variants share same layout:
+# { type, val1..val6 } — 56 bytes total.
+
+enum NatType {
+    NAT_DNAT = 1;
+    NAT_SNAT = 2;
+    NAT_MASQUERADE = 3;
+    NAT_REDIRECT = 4;
+    NAT_DNAT_RANGE = 5;
+}
+
+# NatRule layout (56 bytes):
+#   [type:8][v1:8][v2:8][v3:8][v4:8][v5:8][v6:8]
+#
+# DNAT:           type=NAT_DNAT, v1=protocol, v2=dest_port, v3=to_addr, v4=to_port, v5=comment, v6=0
+# SNAT:           type=NAT_SNAT, v1=source_cidr, v2=to_addr, v3=comment, v4=0, v5=0, v6=0
+# MASQUERADE:     type=NAT_MASQUERADE, v1=source_cidr, v2=oif (0 if none), v3=comment, v4=0, v5=0, v6=0
+# REDIRECT:       type=NAT_REDIRECT, v1=protocol, v2=dest_port, v3=to_port, v4=comment, v5=0, v6=0
+# DNAT_RANGE:     type=NAT_DNAT_RANGE, v1=protocol, v2=dest_port_start, v3=dest_port_end,
+#                 v4=to_addr, v5=to_port_start, v6=to_port_end (comment stored in v7 needs extra field)
+#
+# DNAT_RANGE needs 7 fields; we'll allocate 64 bytes for all for simplicity.
+
+fn nat_new(ntype, v1, v2, v3, v4, v5, v6) {
+    var n = alloc(64);
+    store64(n, ntype);
+    store64(n + 8, v1);
+    store64(n + 16, v2);
+    store64(n + 24, v3);
+    store64(n + 32, v4);
+    store64(n + 40, v5);
+    store64(n + 48, v6);
+    store64(n + 56, 0);
+    return n;
+}
+
+fn nat_type(n) { return load64(n); }
+fn nat_v1(n) { return load64(n + 8); }
+fn nat_v2(n) { return load64(n + 16); }
+fn nat_v3(n) { return load64(n + 24); }
+fn nat_v4(n) { return load64(n + 32); }
+fn nat_v5(n) { return load64(n + 40); }
+fn nat_v6(n) { return load64(n + 48); }
+fn nat_v7(n) { return load64(n + 56); }
+fn nat_set_v7(n, val) { store64(n + 56, val); return n; }
+
+# --- Constructors ---
+
+fn nat_dnat(protocol, dest_port, to_addr, to_port, comment) {
+    return nat_new(NAT_DNAT, protocol, dest_port, to_addr, to_port, comment, 0);
+}
+
+fn nat_snat(source_cidr, to_addr, comment) {
+    return nat_new(NAT_SNAT, source_cidr, to_addr, comment, 0, 0, 0);
+}
+
+fn nat_masquerade(source_cidr, oif, comment) {
+    return nat_new(NAT_MASQUERADE, source_cidr, oif, comment, 0, 0, 0);
+}
+
+fn nat_redirect(protocol, dest_port, to_port, comment) {
+    return nat_new(NAT_REDIRECT, protocol, dest_port, to_port, comment, 0, 0);
+}
+
+fn nat_dnat_range(protocol, dest_port_start, dest_port_end, to_addr, to_port_start, to_port_end, comment) {
+    var n = nat_new(NAT_DNAT_RANGE, protocol, dest_port_start, dest_port_end, to_addr, to_port_start, to_port_end);
+    nat_set_v7(n, comment);
+    return n;
+}
+
+# --- Helper: check if an address contains ':' (IPv6) ---
+fn _addr_has_colon(s) {
+    var len = strlen(s);
+    var i = 0;
+    while (i < len) {
+        if (load8(s + i) == 58) { return 1; }   # ':'
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Emit an address, wrapping in brackets if IPv6
+fn _sb_add_addr(sb, addr) {
+    if (_addr_has_colon(addr) == 1) {
+        str_builder_add_cstr(sb, "[");
+        str_builder_add_cstr(sb, addr);
+        str_builder_add_cstr(sb, "]");
+    } else {
+        str_builder_add_cstr(sb, addr);
+    }
+    return 0;
+}
+
+# --- Render ---
+
+fn nat_render(n) {
+    var sb = str_builder_new();
+    var nt = nat_type(n);
+
+    if (nt == NAT_DNAT) {
+        str_builder_add_cstr(sb, _proto_str(nat_v1(n)));
+        str_builder_add_cstr(sb, " dport ");
+        str_builder_add_int(sb, nat_v2(n));
+        str_builder_add_cstr(sb, " dnat to ");
+        _sb_add_addr(sb, nat_v3(n));
+        str_builder_add_cstr(sb, ":");
+        str_builder_add_int(sb, nat_v4(n));
+        if (nat_v5(n) != 0) {
+            str_builder_add_cstr(sb, " comment \"");
+            str_builder_add_cstr(sb, nat_v5(n));
+            str_builder_add_cstr(sb, "\"");
+        }
+    } elif (nt == NAT_SNAT) {
+        str_builder_add_cstr(sb, "ip saddr ");
+        str_builder_add_cstr(sb, nat_v1(n));
+        str_builder_add_cstr(sb, " snat to ");
+        str_builder_add_cstr(sb, nat_v2(n));
+        if (nat_v3(n) != 0) {
+            str_builder_add_cstr(sb, " comment \"");
+            str_builder_add_cstr(sb, nat_v3(n));
+            str_builder_add_cstr(sb, "\"");
+        }
+    } elif (nt == NAT_MASQUERADE) {
+        str_builder_add_cstr(sb, "ip saddr ");
+        str_builder_add_cstr(sb, nat_v1(n));
+        if (nat_v2(n) != 0) {
+            str_builder_add_cstr(sb, " oif \"");
+            str_builder_add_cstr(sb, nat_v2(n));
+            str_builder_add_cstr(sb, "\"");
+        }
+        str_builder_add_cstr(sb, " masquerade");
+        if (nat_v3(n) != 0) {
+            str_builder_add_cstr(sb, " comment \"");
+            str_builder_add_cstr(sb, nat_v3(n));
+            str_builder_add_cstr(sb, "\"");
+        }
+    } elif (nt == NAT_REDIRECT) {
+        str_builder_add_cstr(sb, _proto_str(nat_v1(n)));
+        str_builder_add_cstr(sb, " dport ");
+        str_builder_add_int(sb, nat_v2(n));
+        str_builder_add_cstr(sb, " redirect to :");
+        str_builder_add_int(sb, nat_v3(n));
+        if (nat_v4(n) != 0) {
+            str_builder_add_cstr(sb, " comment \"");
+            str_builder_add_cstr(sb, nat_v4(n));
+            str_builder_add_cstr(sb, "\"");
+        }
+    } elif (nt == NAT_DNAT_RANGE) {
+        str_builder_add_cstr(sb, _proto_str(nat_v1(n)));
+        str_builder_add_cstr(sb, " dport ");
+        str_builder_add_int(sb, nat_v2(n));
+        str_builder_add_cstr(sb, "-");
+        str_builder_add_int(sb, nat_v3(n));
+        str_builder_add_cstr(sb, " dnat to ");
+        _sb_add_addr(sb, nat_v4(n));
+        str_builder_add_cstr(sb, ":");
+        str_builder_add_int(sb, nat_v5(n));
+        str_builder_add_cstr(sb, "-");
+        str_builder_add_int(sb, nat_v6(n));
+        if (nat_v7(n) != 0) {
+            str_builder_add_cstr(sb, " comment \"");
+            str_builder_add_cstr(sb, nat_v7(n));
+            str_builder_add_cstr(sb, "\"");
+        }
+    }
+
+    return str_builder_build(sb);
+}
+
+# --- Validate ---
+
+fn nat_validate(n) {
+    var nt = nat_type(n);
+    var vr = 0;
+
+    if (nt == NAT_DNAT) {
+        vr = validate_addr(nat_v3(n));
+        if (is_err_result(vr) == 1) { return vr; }
+        if (nat_v5(n) != 0) {
+            vr = validate_comment(nat_v5(n));
+            if (is_err_result(vr) == 1) { return vr; }
+        }
+    } elif (nt == NAT_SNAT) {
+        vr = validate_addr(nat_v1(n));
+        if (is_err_result(vr) == 1) { return vr; }
+        vr = validate_addr(nat_v2(n));
+        if (is_err_result(vr) == 1) { return vr; }
+        if (nat_v3(n) != 0) {
+            vr = validate_comment(nat_v3(n));
+            if (is_err_result(vr) == 1) { return vr; }
+        }
+    } elif (nt == NAT_MASQUERADE) {
+        vr = validate_addr(nat_v1(n));
+        if (is_err_result(vr) == 1) { return vr; }
+        if (nat_v2(n) != 0) {
+            vr = validate_iface(nat_v2(n));
+            if (is_err_result(vr) == 1) { return vr; }
+        }
+        if (nat_v3(n) != 0) {
+            vr = validate_comment(nat_v3(n));
+            if (is_err_result(vr) == 1) { return vr; }
+        }
+    } elif (nt == NAT_REDIRECT) {
+        if (nat_v4(n) != 0) {
+            vr = validate_comment(nat_v4(n));
+            if (is_err_result(vr) == 1) { return vr; }
+        }
+    } elif (nt == NAT_DNAT_RANGE) {
+        vr = validate_addr(nat_v4(n));
+        if (is_err_result(vr) == 1) { return vr; }
+        var dps = nat_v2(n);
+        var dpe = nat_v3(n);
+        var tps = nat_v5(n);
+        var tpe = nat_v6(n);
+        if (dps > dpe) { return nein_err(ERR_INVALID_RULE); }
+        if (tps > tpe) { return nein_err(ERR_INVALID_RULE); }
+        if ((dpe - dps) != (tpe - tps)) { return nein_err(ERR_INVALID_RULE); }
+        if (nat_v7(n) != 0) {
+            vr = validate_comment(nat_v7(n));
+            if (is_err_result(vr) == 1) { return vr; }
+        }
+    }
+
+    return nein_ok();
+}
+
+# --- Convenience ---
+
+fn port_forward(host_port, container_addr, container_port) {
+    return nat_dnat(PROTO_TCP, host_port, container_addr, container_port, "container port fwd");
+}
+
+fn port_range_forward(host_start, host_end, container_addr, container_start) {
+    var range_size = host_end - host_start;
+    var container_end = container_start + range_size;
+    return nat_dnat_range(PROTO_TCP, host_start, host_end, container_addr,
+                         container_start, container_end, "container port range fwd");
+}
+
+fn container_masquerade(subnet, outbound_iface) {
+    return nat_masquerade(subnet, outbound_iface, "container outbound NAT");
+}

@@ -1,0 +1,92 @@
+# nein builder module — pre-built firewall configurations
+
+# --- Build a basic host firewall (allow established, lo, SSH, drop rest) ---
+fn basic_host_firewall() {
+    var fw = firewall_new();
+    var table = table_new("filter", FAMILY_INET);
+
+    var input = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(input, allow_established());
+
+    # rule: iif lo accept
+    var lo_rule = rule_new(verdict_accept());
+    rule_add_match(lo_rule, match_iif("lo"));
+    chain_add_rule(input, lo_rule);
+
+    # SSH with comment
+    var ssh_rule = allow_tcp(22);
+    rule_set_comment(ssh_rule, "SSH");
+    chain_add_rule(input, ssh_rule);
+
+    # output chain (permissive)
+    var output = chain_base("output", CHAIN_FILTER, HOOK_OUTPUT, 0, POLICY_ACCEPT);
+
+    table_add_chain(table, input);
+    table_add_chain(table, output);
+    firewall_add_table(fw, table);
+    return fw;
+}
+
+# --- Build container bridge networking rules ---
+fn container_bridge(bridge_name, subnet, outbound_iface) {
+    var fw = firewall_new();
+
+    # filter table: forward chain
+    var filter = table_new("filter", FAMILY_INET);
+    var forward = chain_base("forward", CHAIN_FILTER, HOOK_FORWARD, 0, POLICY_DROP);
+
+    chain_add_rule(forward, allow_established());
+
+    # container -> internet
+    var r1 = rule_new(verdict_accept());
+    rule_add_match(r1, match_iif(bridge_name));
+    rule_add_match(r1, match_oif(outbound_iface));
+    rule_set_comment(r1, "container to internet");
+    chain_add_rule(forward, r1);
+
+    # container -> container
+    var r2 = rule_new(verdict_accept());
+    rule_add_match(r2, match_iif(bridge_name));
+    rule_add_match(r2, match_oif(bridge_name));
+    rule_set_comment(r2, "container to container");
+    chain_add_rule(forward, r2);
+
+    table_add_chain(filter, forward);
+    firewall_add_table(fw, filter);
+
+    # nat table: postrouting masquerade
+    var nat_table = table_new("nat", FAMILY_IP);
+    var postrouting = chain_base("postrouting", CHAIN_NAT, HOOK_POSTROUTING, 100, POLICY_ACCEPT);
+    chain_add_nat_rule(postrouting, container_masquerade(subnet, outbound_iface));
+    table_add_chain(nat_table, postrouting);
+    firewall_add_table(fw, nat_table);
+
+    return fw;
+}
+
+# --- Build agent-to-agent service policy rules ---
+# ports_vec: vec of { protocol, port } pair structs (16 bytes each)
+fn _port_pair_new(protocol, port) {
+    var p = alloc(16);
+    store64(p, protocol);
+    store64(p + 8, port);
+    return p;
+}
+
+fn service_policy(agent_source, ports_vec) {
+    var fw = firewall_new();
+    var table = table_new("agnos_policy", FAMILY_INET);
+    var chain = chain_regular("agent_access");
+
+    var plen = vec_len(ports_vec);
+    var i = 0;
+    while (i < plen) {
+        var pair = vec_get(ports_vec, i);
+        chain_add_rule(chain, allow_service(agent_source, load64(pair), load64(pair + 8)));
+        i = i + 1;
+    }
+
+    table_add_chain(table, chain);
+    firewall_add_table(fw, table);
+    return fw;
+}

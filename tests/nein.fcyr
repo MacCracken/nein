@@ -5,8 +5,11 @@ include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
 include "src/lib/rule.cyr"
 include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
 include "src/lib/chain.cyr"
 include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
 
 fn fuzz_validate(data, len) {
     if (len == 0) { return 0; }
@@ -22,6 +25,35 @@ fn fuzz_validate(data, len) {
     validate_log_prefix(copy);
     validate_nft_element(copy);
     validate_family(copy);
+    return 0;
+}
+
+fn fuzz_nat(data, len) {
+    if (len == 0) { return 0; }
+    var copy = alloc(len + 1);
+    memcpy(copy, data, len);
+    store8(copy + len, 0);
+
+    # DNAT with fuzzed address
+    var n = nat_dnat(PROTO_TCP, 8080, copy, 80, 0);
+    nat_render(n);
+    nat_validate(n);
+
+    # SNAT with fuzzed addresses
+    n = nat_snat(copy, "1.2.3.4", 0);
+    nat_render(n);
+    nat_validate(n);
+
+    # Masquerade with fuzzed iface
+    n = nat_masquerade("10.0.0.0/8", copy, 0);
+    nat_render(n);
+    nat_validate(n);
+
+    # Redirect with fuzzed comment
+    n = nat_redirect(PROTO_TCP, 80, 8080, copy);
+    nat_render(n);
+    nat_validate(n);
+
     return 0;
 }
 
@@ -69,6 +101,11 @@ fn main() {
 
     # Rule rendering with hostile input
     fuzz_rule_render("evil;drop{}", 11);
+
+    # NAT fuzz
+    fuzz_nat("10.0.0.1", 8);
+    fuzz_nat("evil;addr", 9);
+    fuzz_nat("2001:db8::1", 11);
 
     # Boundary: max lengths
     var big[256];

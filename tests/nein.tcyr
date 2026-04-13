@@ -4,8 +4,11 @@ include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
 include "src/lib/rule.cyr"
 include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
 include "src/lib/chain.cyr"
 include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
 
 # ================================================================
 # Error tests
@@ -900,6 +903,261 @@ fn test_ct_timeout() {
 }
 
 # ================================================================
+# NAT tests
+# ================================================================
+
+fn test_nat_render() {
+    test_group("nat_render");
+
+    # DNAT IPv4
+    var n = port_forward(8080, "172.17.0.2", 80);
+    var rd = str_data(nat_render(n));
+    assert(streq(rd, "tcp dport 8080 dnat to 172.17.0.2:80 comment \"container port fwd\"") == 1, "port_forward");
+
+    # DNAT IPv6 brackets
+    n = nat_dnat(PROTO_TCP, 443, "2001:db8::1", 8443, 0);
+    rd = str_data(nat_render(n));
+    assert(streq(rd, "tcp dport 443 dnat to [2001:db8::1]:8443") == 1, "dnat ipv6 brackets");
+
+    # DNAT IPv4 no brackets
+    n = nat_dnat(PROTO_TCP, 80, "10.0.0.1", 8080, 0);
+    rd = str_data(nat_render(n));
+    assert(streq(rd, "tcp dport 80 dnat to 10.0.0.1:8080") == 1, "dnat ipv4 no brackets");
+
+    # DNAT with comment
+    n = nat_dnat(PROTO_TCP, 443, "10.0.0.1", 8443, "TLS forward");
+    var rendered = nat_render(n);
+    assert(str_contains_cstr(rendered, "dnat to 10.0.0.1:8443") == 1, "dnat target");
+    assert(str_contains_cstr(rendered, "comment \"TLS forward\"") == 1, "dnat comment");
+
+    # SNAT plain
+    n = nat_snat("10.0.0.0/8", "1.2.3.4", 0);
+    rd = str_data(nat_render(n));
+    assert(streq(rd, "ip saddr 10.0.0.0/8 snat to 1.2.3.4") == 1, "snat");
+
+    # SNAT with comment
+    n = nat_snat("10.0.0.0/8", "1.2.3.4", "outbound SNAT");
+    rendered = nat_render(n);
+    assert(str_contains_cstr(rendered, "snat to 1.2.3.4") == 1, "snat target");
+    assert(str_contains_cstr(rendered, "comment \"outbound SNAT\"") == 1, "snat comment");
+
+    # MASQUERADE no oif
+    n = nat_masquerade("10.0.0.0/8", 0, 0);
+    rd = str_data(nat_render(n));
+    assert(streq(rd, "ip saddr 10.0.0.0/8 masquerade") == 1, "masquerade no oif");
+
+    # MASQUERADE with oif + comment
+    n = container_masquerade("172.17.0.0/16", "eth0");
+    rd = str_data(nat_render(n));
+    assert(streq(rd, "ip saddr 172.17.0.0/16 oif \"eth0\" masquerade comment \"container outbound NAT\"") == 1, "container_masquerade");
+
+    # REDIRECT plain
+    n = nat_redirect(PROTO_TCP, 80, 8080, 0);
+    rd = str_data(nat_render(n));
+    assert(streq(rd, "tcp dport 80 redirect to :8080") == 1, "redirect");
+
+    # REDIRECT with comment
+    n = nat_redirect(PROTO_TCP, 80, 8080, "local redirect");
+    rendered = nat_render(n);
+    assert(str_contains_cstr(rendered, "redirect to :8080") == 1, "redirect target");
+    assert(str_contains_cstr(rendered, "comment \"local redirect\"") == 1, "redirect comment");
+
+    return 0;
+}
+
+fn test_nat_validate() {
+    test_group("nat_validate");
+
+    # Good DNAT
+    assert(is_ok(nat_validate(port_forward(8080, "172.17.0.2", 80))) == 1, "good DNAT ok");
+
+    # Bad SNAT addr
+    var n = nat_snat("10.0.0.0/8; drop", "1.2.3.4", 0);
+    assert(is_err_result(nat_validate(n)) == 1, "bad SNAT source rejected");
+
+    n = nat_snat("10.0.0.0/8", "bad;addr", 0);
+    assert(is_err_result(nat_validate(n)) == 1, "bad SNAT target rejected");
+
+    # Bad MASQUERADE iface
+    n = nat_masquerade("10.0.0.0/8", "eth0; drop", 0);
+    assert(is_err_result(nat_validate(n)) == 1, "bad masquerade iface rejected");
+
+    # Bad DNAT comment
+    n = nat_dnat(PROTO_TCP, 80, "10.0.0.1", 8080, "bad;comment");
+    assert(is_err_result(nat_validate(n)) == 1, "bad DNAT comment rejected");
+
+    # Bad REDIRECT comment
+    n = nat_redirect(PROTO_TCP, 80, 8080, "bad;comment");
+    assert(is_err_result(nat_validate(n)) == 1, "bad redirect comment rejected");
+
+    # Bad MASQUERADE comment
+    n = nat_masquerade("10.0.0.0/8", 0, "bad;comment");
+    assert(is_err_result(nat_validate(n)) == 1, "bad masquerade comment rejected");
+
+    # Good SNAT/redirect/masquerade with valid comments
+    assert(is_ok(nat_validate(nat_snat("10.0.0.0/8", "1.2.3.4", "valid"))) == 1, "good SNAT ok");
+    assert(is_ok(nat_validate(nat_redirect(PROTO_TCP, 80, 8080, "valid"))) == 1, "good redirect ok");
+
+    return 0;
+}
+
+fn test_nat_dnat_range() {
+    test_group("nat_dnat_range");
+
+    # Render IPv4
+    var n = port_range_forward(80, 89, "172.17.0.2", 8080);
+    var rendered = nat_render(n);
+    assert(str_contains_cstr(rendered, "tcp dport 80-89 dnat to 172.17.0.2:8080-8089") == 1, "range forward");
+
+    # Render IPv6
+    n = nat_dnat_range(PROTO_TCP, 80, 89, "2001:db8::1", 8080, 8089, 0);
+    var rd = str_data(nat_render(n));
+    assert(streq(rd, "tcp dport 80-89 dnat to [2001:db8::1]:8080-8089") == 1, "range ipv6 brackets");
+
+    # With comment
+    n = nat_dnat_range(PROTO_TCP, 80, 89, "10.0.0.1", 8080, 8089, "web range");
+    rendered = nat_render(n);
+    assert(str_contains_cstr(rendered, "comment \"web range\"") == 1, "range comment");
+
+    # Validate good
+    assert(is_ok(nat_validate(port_range_forward(80, 89, "172.17.0.2", 8080))) == 1, "good range ok");
+
+    # Validate bad addr
+    n = nat_dnat_range(PROTO_TCP, 80, 89, "evil;addr", 8080, 8089, 0);
+    assert(is_err_result(nat_validate(n)) == 1, "bad addr rejected");
+
+    # Inverted dest
+    n = nat_dnat_range(PROTO_TCP, 89, 80, "10.0.0.1", 8080, 8089, 0);
+    assert(is_err_result(nat_validate(n)) == 1, "inverted dest rejected");
+
+    # Size mismatch
+    n = nat_dnat_range(PROTO_TCP, 80, 89, "10.0.0.1", 8080, 8085, 0);
+    assert(is_err_result(nat_validate(n)) == 1, "size mismatch rejected");
+
+    # Bad comment
+    n = nat_dnat_range(PROTO_TCP, 80, 89, "10.0.0.1", 8080, 8089, "bad;comment");
+    assert(is_err_result(nat_validate(n)) == 1, "bad range comment rejected");
+
+    # Single port (start == end)
+    n = nat_dnat_range(PROTO_TCP, 80, 80, "10.0.0.1", 8080, 8080, 0);
+    assert(is_ok(nat_validate(n)) == 1, "single port range ok");
+
+    return 0;
+}
+
+# ================================================================
+# Firewall tests
+# ================================================================
+
+fn test_firewall() {
+    test_group("firewall");
+
+    # Empty firewall
+    var fw = firewall_new();
+    var rendered = firewall_render(fw);
+    assert(str_len(rendered) == 0, "empty render");
+
+    # Add table
+    firewall_add_table(fw, table_new("test", FAMILY_INET));
+    assert(vec_len(firewall_tables(fw)) == 1, "one table");
+
+    # Multiple tables
+    fw = firewall_new();
+    firewall_add_table(fw, table_new("t1", FAMILY_INET));
+    firewall_add_table(fw, table_new("t2", FAMILY_IP));
+    rendered = firewall_render(fw);
+    assert(str_contains_cstr(rendered, "table inet t1") == 1, "table t1");
+    assert(str_contains_cstr(rendered, "table ip t2") == 1, "table t2");
+    assert(vec_len(firewall_tables(fw)) == 2, "two tables");
+
+    # Dry run flag
+    fw = firewall_new();
+    firewall_set_dry_run(fw, 1);
+    assert(firewall_dry_run(fw) == 1, "dry run set");
+
+    return 0;
+}
+
+fn test_firewall_validate() {
+    test_group("firewall_validate");
+
+    # Empty is valid
+    assert(is_ok(firewall_validate(firewall_new())) == 1, "empty valid");
+
+    # Bad table name rejected
+    var fw = firewall_new();
+    firewall_add_table(fw, table_new("evil;drop", FAMILY_INET));
+    assert(is_err_result(firewall_validate(fw)) == 1, "bad table name rejected");
+
+    # Bad chain name rejected
+    fw = firewall_new();
+    var t = table_new("good", FAMILY_INET);
+    table_add_chain(t, chain_regular("bad;chain"));
+    firewall_add_table(fw, t);
+    assert(is_err_result(firewall_validate(fw)) == 1, "bad chain name rejected");
+
+    # Good firewall passes
+    fw = firewall_new();
+    t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(c, allow_tcp(22));
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+    assert(is_ok(firewall_validate(fw)) == 1, "good firewall ok");
+
+    # Bad rule in chain rejected
+    fw = firewall_new();
+    t = table_new("filter", FAMILY_INET);
+    c = chain_regular("input");
+    var bad = rule_new(verdict_accept());
+    rule_add_match(bad, match_source_addr("evil;addr"));
+    chain_add_rule(c, bad);
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+    assert(is_err_result(firewall_validate(fw)) == 1, "bad rule in chain rejected");
+
+    return 0;
+}
+
+# ================================================================
+# Builder tests
+# ================================================================
+
+fn test_builder() {
+    test_group("builder");
+
+    # basic_host_firewall
+    var fw = basic_host_firewall();
+    var rendered = firewall_render(fw);
+    assert(str_contains_cstr(rendered, "table inet filter") == 1, "host fw table");
+    assert(str_contains_cstr(rendered, "policy drop") == 1, "host fw policy");
+    assert(str_contains_cstr(rendered, "ct state { established, related } accept") == 1, "host fw established");
+    assert(str_contains_cstr(rendered, "dport 22 accept") == 1, "host fw SSH");
+
+    # container_bridge
+    fw = container_bridge("br0", "172.17.0.0/16", "eth0");
+    rendered = firewall_render(fw);
+    assert(str_contains_cstr(rendered, "table inet filter") == 1, "bridge filter");
+    assert(str_contains_cstr(rendered, "table ip nat") == 1, "bridge nat");
+    assert(str_contains_cstr(rendered, "container to internet") == 1, "bridge internet");
+    assert(str_contains_cstr(rendered, "masquerade") == 1, "bridge masquerade");
+
+    # service_policy
+    var ports = vec_new();
+    vec_push(ports, _port_pair_new(PROTO_TCP, 8090));
+    fw = service_policy("10.0.0.1", ports);
+    rendered = firewall_render(fw);
+    assert(str_contains_cstr(rendered, "ip saddr 10.0.0.1") == 1, "service policy source");
+    assert(str_contains_cstr(rendered, "dport 8090") == 1, "service policy port");
+
+    # All builder firewalls validate
+    assert(is_ok(firewall_validate(basic_host_firewall())) == 1, "host fw validates");
+    assert(is_ok(firewall_validate(container_bridge("br0", "172.17.0.0/16", "eth0"))) == 1, "bridge validates");
+
+    return 0;
+}
+
+# ================================================================
 # Main
 # ================================================================
 
@@ -942,6 +1200,18 @@ fn main() {
     test_define_validate();
     test_flowtable();
     test_ct_timeout();
+
+    # nat
+    test_nat_render();
+    test_nat_validate();
+    test_nat_dnat_range();
+
+    # firewall
+    test_firewall();
+    test_firewall_validate();
+
+    # builder
+    test_builder();
 
     return assert_summary();
 }

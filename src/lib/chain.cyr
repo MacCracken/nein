@@ -48,6 +48,38 @@ fn _policy_str(p) {
 }
 
 # ================================================================
+# ChainRule — tagged wrapper: { type, inner }
+# Layout: [type:8][inner:8] = 16 bytes
+# type: CR_RULE=1 (standard rule) or CR_NAT=2 (NAT rule)
+# ================================================================
+
+enum ChainRuleType {
+    CR_RULE = 1;
+    CR_NAT = 2;
+}
+
+fn chain_rule_new(ctype, inner) {
+    var cr = alloc(16);
+    store64(cr, ctype);
+    store64(cr + 8, inner);
+    return cr;
+}
+
+fn chain_rule_render(cr) {
+    var ct = load64(cr);
+    var inner = load64(cr + 8);
+    if (ct == CR_NAT) { return nat_render(inner); }
+    return rule_render(inner);
+}
+
+fn chain_rule_validate(cr) {
+    var ct = load64(cr);
+    var inner = load64(cr + 8);
+    if (ct == CR_NAT) { return nat_validate(inner); }
+    return rule_validate(inner);
+}
+
+# ================================================================
 # Chain — { name, chain_type, hook, priority, policy, rules(vec) }
 # Layout: [name:8][chain_type:8][hook:8][priority:8][policy:8][rules:8] = 48 bytes
 # chain_type/hook/policy = 0 means "not set" (regular chain)
@@ -83,7 +115,12 @@ fn chain_policy(c) { return load64(c + 32); }
 fn chain_rules(c) { return load64(c + 40); }
 
 fn chain_add_rule(c, rule) {
-    vec_push(load64(c + 40), rule);
+    vec_push(load64(c + 40), chain_rule_new(CR_RULE, rule));
+    return c;
+}
+
+fn chain_add_nat_rule(c, natrule) {
+    vec_push(load64(c + 40), chain_rule_new(CR_NAT, natrule));
     return c;
 }
 
@@ -112,7 +149,7 @@ fn chain_render(c) {
     var i = 0;
     while (i < rlen) {
         str_builder_add_cstr(sb, "    ");
-        var rendered = rule_render(vec_get(rules, i));
+        var rendered = chain_rule_render(vec_get(rules, i));
         str_builder_add_cstr(sb, str_data(rendered));
         str_builder_add_cstr(sb, "\n");
         i = i + 1;
