@@ -4,6 +4,9 @@
 include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
 include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
 
 fn fuzz_validate(data, len) {
     if (len == 0) { return 0; }

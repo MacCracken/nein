@@ -3,6 +3,9 @@
 include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
 include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
 
 # ================================================================
 # Error tests
@@ -570,6 +573,333 @@ fn test_rule_validate() {
 }
 
 # ================================================================
+# Set tests
+# ================================================================
+
+fn test_set_render() {
+    test_group("set_render");
+
+    # Basic set with elements
+    var s = nft_set_new("blocklist", SET_IPV4_ADDR);
+    nft_set_add_element(s, "10.0.0.1");
+    nft_set_add_element(s, "10.0.0.2");
+    nft_set_add_element(s, "192.168.1.0/24");
+    var rendered = nft_set_render(s);
+    assert(str_contains_cstr(rendered, "set blocklist") == 1, "set name");
+    assert(str_contains_cstr(rendered, "type ipv4_addr") == 1, "set type");
+    assert(str_contains_cstr(rendered, "10.0.0.1, 10.0.0.2, 192.168.1.0/24") == 1, "set elements");
+
+    # Set with flags
+    s = nft_set_new("ratelimit", SET_IPV4_ADDR);
+    nft_set_add_flag(s, SETFLAG_INTERVAL);
+    nft_set_add_flag(s, SETFLAG_TIMEOUT);
+    rendered = nft_set_render(s);
+    assert(str_contains_cstr(rendered, "flags interval, timeout") == 1, "set flags");
+
+    # Empty set
+    s = nft_set_new("empty", SET_INET_SERVICE);
+    rendered = nft_set_render(s);
+    assert(str_contains_cstr(rendered, "set empty") == 1, "empty name");
+    assert(str_contains_cstr(rendered, "type inet_service") == 1, "empty type");
+
+    # Ports
+    s = nft_set_new("webports", SET_INET_SERVICE);
+    nft_set_add_element(s, "80");
+    nft_set_add_element(s, "443");
+    nft_set_add_element(s, "8080");
+    rendered = nft_set_render(s);
+    assert(str_contains_cstr(rendered, "80, 443, 8080") == 1, "port elements");
+
+    # IPv6
+    s = nft_set_new("v6block", SET_IPV6_ADDR);
+    nft_set_add_element(s, "::1");
+    nft_set_add_element(s, "fe80::/10");
+    rendered = nft_set_render(s);
+    assert(str_contains_cstr(rendered, "type ipv6_addr") == 1, "ipv6 type");
+    assert(str_contains_cstr(rendered, "::1, fe80::/10") == 1, "ipv6 elements");
+
+    return 0;
+}
+
+fn test_set_validate() {
+    test_group("set_validate");
+
+    var s = nft_set_new("test", SET_IPV4_ADDR);
+    nft_set_add_element(s, "10.0.0.1");
+    assert(is_ok(nft_set_validate(s)) == 1, "good set ok");
+
+    s = nft_set_new("bad;name", SET_IPV4_ADDR);
+    assert(is_err_result(nft_set_validate(s)) == 1, "bad name rejected");
+
+    s = nft_set_new("test", SET_IPV4_ADDR);
+    nft_set_add_element(s, "evil;inject");
+    assert(is_err_result(nft_set_validate(s)) == 1, "bad element rejected");
+
+    return 0;
+}
+
+fn test_map_render() {
+    test_group("map_render");
+
+    # Basic map
+    var m = nft_map_new("country_verdict", SET_IPV4_ADDR);
+    nft_map_add_entry(m, "10.0.0.0/8", MAPV_ACCEPT, 0);
+    nft_map_add_entry(m, "192.168.0.0/16", MAPV_DROP, 0);
+    var rendered = nft_map_render(m);
+    assert(str_contains_cstr(rendered, "map country_verdict") == 1, "map name");
+    assert(str_contains_cstr(rendered, "type ipv4_addr : verdict") == 1, "map type");
+    assert(str_contains_cstr(rendered, "10.0.0.0/8 : accept") == 1, "map accept entry");
+    assert(str_contains_cstr(rendered, "192.168.0.0/16 : drop") == 1, "map drop entry");
+
+    # Jump map
+    m = nft_map_new("dispatch", SET_INET_SERVICE);
+    nft_map_add_entry(m, "80", MAPV_JUMP, "web_chain");
+    nft_map_add_entry(m, "22", MAPV_JUMP, "ssh_chain");
+    rendered = nft_map_render(m);
+    assert(str_contains_cstr(rendered, "80 : jump web_chain") == 1, "jump entry 80");
+    assert(str_contains_cstr(rendered, "22 : jump ssh_chain") == 1, "jump entry 22");
+
+    # Empty map
+    m = nft_map_new("empty", SET_IPV4_ADDR);
+    rendered = nft_map_render(m);
+    assert(str_contains_cstr(rendered, "map empty") == 1, "empty map");
+
+    return 0;
+}
+
+fn test_map_validate() {
+    test_group("map_validate");
+
+    var m = nft_map_new("test", SET_IPV4_ADDR);
+    nft_map_add_entry(m, "10.0.0.1", MAPV_ACCEPT, 0);
+    nft_map_add_entry(m, "10.0.0.2", MAPV_JUMP, "mychain");
+    assert(is_ok(nft_map_validate(m)) == 1, "good map ok");
+
+    m = nft_map_new("bad;name", SET_IPV4_ADDR);
+    assert(is_err_result(nft_map_validate(m)) == 1, "bad name rejected");
+
+    m = nft_map_new("test", SET_IPV4_ADDR);
+    nft_map_add_entry(m, "evil;key", MAPV_ACCEPT, 0);
+    assert(is_err_result(nft_map_validate(m)) == 1, "bad key rejected");
+
+    m = nft_map_new("test", SET_IPV4_ADDR);
+    nft_map_add_entry(m, "10.0.0.1", MAPV_JUMP, "bad;chain");
+    assert(is_err_result(nft_map_validate(m)) == 1, "bad jump target rejected");
+
+    return 0;
+}
+
+# ================================================================
+# Chain tests
+# ================================================================
+
+fn test_chain_render() {
+    test_group("chain_render");
+
+    # Base chain
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    var rendered = chain_render(c);
+    assert(str_contains_cstr(rendered, "chain input") == 1, "base chain name");
+    assert(str_contains_cstr(rendered, "type filter hook input priority 0; policy drop;") == 1, "base header");
+
+    # Regular chain
+    c = chain_regular("my_chain");
+    rendered = chain_render(c);
+    assert(str_contains_cstr(rendered, "chain my_chain") == 1, "regular name");
+
+    # Chain with rules
+    c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(c, allow_tcp(22));
+    chain_add_rule(c, allow_tcp(443));
+    rendered = chain_render(c);
+    assert(str_contains_cstr(rendered, "tcp dport 22 accept") == 1, "rule 1");
+    assert(str_contains_cstr(rendered, "tcp dport 443 accept") == 1, "rule 2");
+
+    # NAT chain type
+    c = chain_base("prerouting", CHAIN_NAT, HOOK_PREROUTING, 0 - 100, POLICY_ACCEPT);
+    rendered = chain_render(c);
+    assert(str_contains_cstr(rendered, "type nat hook prerouting priority -100; policy accept;") == 1, "nat chain");
+
+    return 0;
+}
+
+# ================================================================
+# Table tests
+# ================================================================
+
+fn test_table_render() {
+    test_group("table_render");
+
+    # Empty table
+    var t = table_new("filter", FAMILY_INET);
+    var rendered = table_render(t);
+    assert(str_contains_cstr(rendered, "table inet filter") == 1, "table header");
+
+    # Table with define
+    t = table_new("filter", FAMILY_INET);
+    table_add_define(t, define_new("LAN", "192.168.0.0/16"));
+    rendered = table_render(t);
+    assert(str_contains_cstr(rendered, "define $LAN = 192.168.0.0/16;") == 1, "define in table");
+
+    # Table with set
+    t = table_new("filter", FAMILY_INET);
+    var s = nft_set_new("blocklist", SET_IPV4_ADDR);
+    nft_set_add_element(s, "10.0.0.1");
+    nft_set_add_element(s, "10.0.0.2");
+    table_add_set(t, s);
+    rendered = table_render(t);
+    assert(str_contains_cstr(rendered, "set blocklist") == 1, "set in table");
+    assert(str_contains_cstr(rendered, "10.0.0.1, 10.0.0.2") == 1, "set elements in table");
+
+    # Table with map
+    t = table_new("filter", FAMILY_INET);
+    var m = nft_map_new("portmap", SET_INET_SERVICE);
+    nft_map_add_entry(m, "80", MAPV_JUMP, "web");
+    table_add_map(t, m);
+    rendered = table_render(t);
+    assert(str_contains_cstr(rendered, "map portmap") == 1, "map in table");
+    assert(str_contains_cstr(rendered, "80 : jump web") == 1, "map entry in table");
+
+    # Table with chain
+    t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(c, allow_established());
+    chain_add_rule(c, allow_tcp(22));
+    table_add_chain(t, c);
+    rendered = table_render(t);
+    assert(str_contains_cstr(rendered, "chain input") == 1, "chain in table");
+    assert(str_contains_cstr(rendered, "ct state { established, related } accept") == 1, "rule in chain");
+
+    return 0;
+}
+
+fn test_table_render_order() {
+    test_group("table_render_order");
+
+    var t = table_new("filter", FAMILY_INET);
+    table_add_define(t, define_new("WAN", "eth0"));
+
+    var devs = vec_new();
+    vec_push(devs, "eth0");
+    table_add_flowtable(t, flowtable_new("ft", 0, devs));
+    table_add_ct_timeout(t, ct_timeout_new("tcp-timeout", PROTO_TCP));
+    table_add_set(t, nft_set_new("myset", SET_IPV4_ADDR));
+    table_add_map(t, nft_map_new("mymap", SET_INET_SERVICE));
+    table_add_chain(t, chain_regular("mychain"));
+
+    var rendered = table_render(t);
+    var rd = str_data(rendered);
+
+    # Check ordering: define < flowtable < ct timeout < set < map < chain
+    var def_pos = str_index_of_cstr(rendered, "define $WAN");
+    var ft_pos = str_index_of_cstr(rendered, "flowtable ft");
+    var ct_pos = str_index_of_cstr(rendered, "ct timeout tcp-timeout");
+    var set_pos = str_index_of_cstr(rendered, "set myset");
+    var map_pos = str_index_of_cstr(rendered, "map mymap");
+    var chain_pos = str_index_of_cstr(rendered, "chain mychain");
+
+    assert(def_pos < ft_pos, "define before flowtable");
+    assert(ft_pos < ct_pos, "flowtable before ct_timeout");
+    assert(ct_pos < set_pos, "ct_timeout before set");
+    assert(set_pos < map_pos, "set before map");
+    assert(map_pos < chain_pos, "map before chain");
+
+    return 0;
+}
+
+fn test_define_validate() {
+    test_group("define_validate");
+    assert(is_ok(define_validate(define_new("MY_VAR", "10.0.0.1"))) == 1, "good define ok");
+    assert(is_err_result(define_validate(define_new("bad;name", "value"))) == 1, "bad name rejected");
+    assert(is_err_result(define_validate(define_new("ok", "evil;inject"))) == 1, "bad value rejected");
+    return 0;
+}
+
+fn test_flowtable() {
+    test_group("flowtable");
+
+    # Render
+    var devs = vec_new();
+    vec_push(devs, "eth0");
+    vec_push(devs, "eth1");
+    var ft = flowtable_new("ft", 0, devs);
+    var rendered = flowtable_render(ft);
+    assert(str_contains_cstr(rendered, "flowtable ft {") == 1, "ft name");
+    assert(str_contains_cstr(rendered, "hook ingress priority 0;") == 1, "ft hook");
+    assert(str_contains_cstr(rendered, "devices = { eth0, eth1 }") == 1, "ft devices");
+
+    # Validate good
+    devs = vec_new();
+    vec_push(devs, "eth0");
+    ft = flowtable_new("ft", 0, devs);
+    assert(is_ok(flowtable_validate(ft)) == 1, "good ft ok");
+
+    # Validate empty devices
+    ft = flowtable_new("ft", 0, vec_new());
+    assert(is_err_result(flowtable_validate(ft)) == 1, "empty devices rejected");
+
+    # Validate bad name
+    devs = vec_new();
+    vec_push(devs, "eth0");
+    ft = flowtable_new("bad;ft", 0, devs);
+    assert(is_err_result(flowtable_validate(ft)) == 1, "bad ft name rejected");
+
+    # Validate bad device
+    devs = vec_new();
+    vec_push(devs, "evil;dev");
+    ft = flowtable_new("ft", 0, devs);
+    assert(is_err_result(flowtable_validate(ft)) == 1, "bad device rejected");
+
+    return 0;
+}
+
+fn test_ct_timeout() {
+    test_group("ct_timeout");
+
+    # Render with l3proto and policy
+    var ct = ct_timeout_new("tcp-long", PROTO_TCP);
+    ct_timeout_set_l3proto(ct, FAMILY_IP);
+    ct_timeout_add_timeout(ct, "established", 7200);
+    ct_timeout_add_timeout(ct, "close_wait", 60);
+    var rendered = ct_timeout_render(ct);
+    assert(str_contains_cstr(rendered, "ct timeout tcp-long {") == 1, "ct name");
+    assert(str_contains_cstr(rendered, "protocol tcp;") == 1, "ct proto");
+    assert(str_contains_cstr(rendered, "l3proto ip;") == 1, "ct l3proto");
+    assert(str_contains_cstr(rendered, "established: 7200, close_wait: 60") == 1, "ct policy");
+
+    # Render without l3proto
+    ct = ct_timeout_new("udp-short", PROTO_UDP);
+    ct_timeout_add_timeout(ct, "unreplied", 30);
+    rendered = ct_timeout_render(ct);
+    assert(str_contains_cstr(rendered, "protocol udp;") == 1, "udp proto");
+
+    # Validate good
+    ct = ct_timeout_new("my-timeout", PROTO_TCP);
+    ct_timeout_add_timeout(ct, "established", 3600);
+    assert(is_ok(ct_timeout_validate(ct)) == 1, "good ct ok");
+
+    # Validate bad protocol
+    ct = ct_timeout_new("t", PROTO_ICMP);
+    assert(is_err_result(ct_timeout_validate(ct)) == 1, "bad proto rejected");
+
+    # Validate bad l3proto
+    ct = ct_timeout_new("t", PROTO_TCP);
+    ct_timeout_set_l3proto(ct, FAMILY_BRIDGE);
+    assert(is_err_result(ct_timeout_validate(ct)) == 1, "bad l3proto rejected");
+
+    # Validate bad name
+    ct = ct_timeout_new("bad;name", PROTO_TCP);
+    assert(is_err_result(ct_timeout_validate(ct)) == 1, "bad ct name rejected");
+
+    # Validate bad state
+    ct = ct_timeout_new("ok", PROTO_TCP);
+    ct_timeout_add_timeout(ct, "evil;state", 100);
+    assert(is_err_result(ct_timeout_validate(ct)) == 1, "bad state rejected");
+
+    return 0;
+}
+
+# ================================================================
 # Main
 # ================================================================
 
@@ -596,6 +926,22 @@ fn main() {
     test_rule_render_matches();
     test_rule_render_log_advanced();
     test_rule_validate();
+
+    # set
+    test_set_render();
+    test_set_validate();
+    test_map_render();
+    test_map_validate();
+
+    # chain
+    test_chain_render();
+
+    # table
+    test_table_render();
+    test_table_render_order();
+    test_define_validate();
+    test_flowtable();
+    test_ct_timeout();
 
     return assert_summary();
 }

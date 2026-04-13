@@ -1,0 +1,123 @@
+# nein chain module — chain types, hooks, policies, and chain rendering
+
+# ================================================================
+# Enums
+# ================================================================
+
+enum ChainTypeEnum {
+    CHAIN_FILTER = 1;
+    CHAIN_NAT = 2;
+    CHAIN_ROUTE = 3;
+}
+
+enum HookEnum {
+    HOOK_PREROUTING = 1;
+    HOOK_INPUT = 2;
+    HOOK_FORWARD = 3;
+    HOOK_OUTPUT = 4;
+    HOOK_POSTROUTING = 5;
+    HOOK_INGRESS = 6;
+}
+
+enum PolicyEnum {
+    POLICY_ACCEPT = 1;
+    POLICY_DROP = 2;
+}
+
+fn _chain_type_str(t) {
+    if (t == CHAIN_FILTER) { return "filter"; }
+    if (t == CHAIN_NAT) { return "nat"; }
+    if (t == CHAIN_ROUTE) { return "route"; }
+    return "filter";
+}
+
+fn _hook_str(h) {
+    if (h == HOOK_PREROUTING) { return "prerouting"; }
+    if (h == HOOK_INPUT) { return "input"; }
+    if (h == HOOK_FORWARD) { return "forward"; }
+    if (h == HOOK_OUTPUT) { return "output"; }
+    if (h == HOOK_POSTROUTING) { return "postrouting"; }
+    if (h == HOOK_INGRESS) { return "ingress"; }
+    return "input";
+}
+
+fn _policy_str(p) {
+    if (p == POLICY_ACCEPT) { return "accept"; }
+    if (p == POLICY_DROP) { return "drop"; }
+    return "accept";
+}
+
+# ================================================================
+# Chain — { name, chain_type, hook, priority, policy, rules(vec) }
+# Layout: [name:8][chain_type:8][hook:8][priority:8][policy:8][rules:8] = 48 bytes
+# chain_type/hook/policy = 0 means "not set" (regular chain)
+# ================================================================
+
+fn chain_base(name, ctype, hook, priority, policy) {
+    var c = alloc(48);
+    store64(c, name);
+    store64(c + 8, ctype);
+    store64(c + 16, hook);
+    store64(c + 24, priority);
+    store64(c + 32, policy);
+    store64(c + 40, vec_new());
+    return c;
+}
+
+fn chain_regular(name) {
+    var c = alloc(48);
+    store64(c, name);
+    store64(c + 8, 0);
+    store64(c + 16, 0);
+    store64(c + 24, 0);
+    store64(c + 32, 0);
+    store64(c + 40, vec_new());
+    return c;
+}
+
+fn chain_name(c) { return load64(c); }
+fn chain_type_val(c) { return load64(c + 8); }
+fn chain_hook(c) { return load64(c + 16); }
+fn chain_priority(c) { return load64(c + 24); }
+fn chain_policy(c) { return load64(c + 32); }
+fn chain_rules(c) { return load64(c + 40); }
+
+fn chain_add_rule(c, rule) {
+    vec_push(load64(c + 40), rule);
+    return c;
+}
+
+fn chain_render(c) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "  chain ");
+    str_builder_add_cstr(sb, chain_name(c));
+    str_builder_add_cstr(sb, " {\n");
+
+    # Base chain header
+    if (chain_type_val(c) != 0) {
+        str_builder_add_cstr(sb, "    type ");
+        str_builder_add_cstr(sb, _chain_type_str(chain_type_val(c)));
+        str_builder_add_cstr(sb, " hook ");
+        str_builder_add_cstr(sb, _hook_str(chain_hook(c)));
+        str_builder_add_cstr(sb, " priority ");
+        str_builder_add_int(sb, chain_priority(c));
+        str_builder_add_cstr(sb, "; policy ");
+        str_builder_add_cstr(sb, _policy_str(chain_policy(c)));
+        str_builder_add_cstr(sb, ";\n");
+    }
+
+    # Rules
+    var rules = chain_rules(c);
+    var rlen = vec_len(rules);
+    var i = 0;
+    while (i < rlen) {
+        str_builder_add_cstr(sb, "    ");
+        var rendered = rule_render(vec_get(rules, i));
+        str_builder_add_cstr(sb, str_data(rendered));
+        str_builder_add_cstr(sb, "\n");
+        i = i + 1;
+    }
+
+    str_builder_add_cstr(sb, "  }\n");
+    return str_builder_build(sb);
+}

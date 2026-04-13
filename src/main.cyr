@@ -7,6 +7,9 @@
 include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
 include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
 
 fn main() {
     alloc_init();

@@ -1,0 +1,320 @@
+# nein table module — tables, families, defines, flowtables, ct timeouts
+
+# ================================================================
+# Family enum
+# ================================================================
+
+enum FamilyEnum {
+    FAMILY_INET = 1;
+    FAMILY_IP = 2;
+    FAMILY_IP6 = 3;
+    FAMILY_ARP = 4;
+    FAMILY_BRIDGE = 5;
+    FAMILY_NETDEV = 6;
+}
+
+fn _family_str(f) {
+    if (f == FAMILY_INET) { return "inet"; }
+    if (f == FAMILY_IP) { return "ip"; }
+    if (f == FAMILY_IP6) { return "ip6"; }
+    if (f == FAMILY_ARP) { return "arp"; }
+    if (f == FAMILY_BRIDGE) { return "bridge"; }
+    if (f == FAMILY_NETDEV) { return "netdev"; }
+    return "inet";
+}
+
+# ================================================================
+# Define — { name, value }
+# Layout: [name:8][value:8] = 16 bytes
+# ================================================================
+
+fn define_new(name, value) {
+    var d = alloc(16);
+    store64(d, name);
+    store64(d + 8, value);
+    return d;
+}
+
+fn define_name(d) { return load64(d); }
+fn define_value(d) { return load64(d + 8); }
+
+fn define_validate(d) {
+    var vr = validate_identifier(define_name(d));
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_nft_element(define_value(d));
+    if (is_err_result(vr) == 1) { return vr; }
+    return nein_ok();
+}
+
+fn define_render(d) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "  define $");
+    str_builder_add_cstr(sb, define_name(d));
+    str_builder_add_cstr(sb, " = ");
+    str_builder_add_cstr(sb, define_value(d));
+    str_builder_add_cstr(sb, ";\n");
+    return str_builder_build(sb);
+}
+
+# ================================================================
+# Flowtable — { name, hook, priority, devices(vec) }
+# Layout: [name:8][hook:8][priority:8][devices:8] = 32 bytes
+# ================================================================
+
+fn flowtable_new(name, priority, devices) {
+    var ft = alloc(32);
+    store64(ft, name);
+    store64(ft + 8, HOOK_INGRESS);
+    store64(ft + 16, priority);
+    store64(ft + 24, devices);
+    return ft;
+}
+
+fn flowtable_name(ft) { return load64(ft); }
+fn flowtable_hook(ft) { return load64(ft + 8); }
+fn flowtable_priority(ft) { return load64(ft + 16); }
+fn flowtable_devices(ft) { return load64(ft + 24); }
+
+fn flowtable_validate(ft) {
+    var vr = validate_identifier(flowtable_name(ft));
+    if (is_err_result(vr) == 1) { return vr; }
+    if (flowtable_hook(ft) != HOOK_INGRESS) {
+        return nein_err(ERR_INVALID_RULE);
+    }
+    var devs = flowtable_devices(ft);
+    var dlen = vec_len(devs);
+    if (dlen == 0) { return nein_err(ERR_INVALID_RULE); }
+    var i = 0;
+    while (i < dlen) {
+        vr = validate_iface(vec_get(devs, i));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+fn flowtable_render(ft) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "  flowtable ");
+    str_builder_add_cstr(sb, flowtable_name(ft));
+    str_builder_add_cstr(sb, " {\n");
+    str_builder_add_cstr(sb, "    hook ");
+    str_builder_add_cstr(sb, _hook_str(flowtable_hook(ft)));
+    str_builder_add_cstr(sb, " priority ");
+    str_builder_add_int(sb, flowtable_priority(ft));
+    str_builder_add_cstr(sb, ";\n");
+
+    var devs = flowtable_devices(ft);
+    var dlen = vec_len(devs);
+    if (dlen > 0) {
+        str_builder_add_cstr(sb, "    devices = { ");
+        var i = 0;
+        while (i < dlen) {
+            if (i > 0) { str_builder_add_cstr(sb, ", "); }
+            str_builder_add_cstr(sb, vec_get(devs, i));
+            i = i + 1;
+        }
+        str_builder_add_cstr(sb, " };\n");
+    }
+
+    str_builder_add_cstr(sb, "  }\n");
+    return str_builder_build(sb);
+}
+
+# ================================================================
+# CtTimeout — { name, protocol, l3proto, policy(vec of state/secs pairs) }
+# Layout: [name:8][protocol:8][l3proto:8][policy:8] = 32 bytes
+# Policy entries: [state_name:8][seconds:8] = 16 bytes each
+# ================================================================
+
+fn ct_timeout_new(name, protocol) {
+    var ct = alloc(32);
+    store64(ct, name);
+    store64(ct + 8, protocol);
+    store64(ct + 16, 0);
+    store64(ct + 24, vec_new());
+    return ct;
+}
+
+fn ct_timeout_name(ct) { return load64(ct); }
+fn ct_timeout_protocol(ct) { return load64(ct + 8); }
+fn ct_timeout_l3proto(ct) { return load64(ct + 16); }
+fn ct_timeout_policy(ct) { return load64(ct + 24); }
+
+fn ct_timeout_set_l3proto(ct, family) {
+    store64(ct + 16, family);
+    return ct;
+}
+
+fn ct_timeout_add_timeout(ct, state, seconds) {
+    var e = alloc(16);
+    store64(e, state);
+    store64(e + 8, seconds);
+    vec_push(load64(ct + 24), e);
+    return ct;
+}
+
+fn ct_timeout_validate(ct) {
+    var vr = validate_identifier(ct_timeout_name(ct));
+    if (is_err_result(vr) == 1) { return vr; }
+    var proto = ct_timeout_protocol(ct);
+    if (proto != PROTO_TCP && proto != PROTO_UDP) {
+        return nein_err(ERR_INVALID_RULE);
+    }
+    var l3 = ct_timeout_l3proto(ct);
+    if (l3 != 0 && l3 != FAMILY_IP && l3 != FAMILY_IP6) {
+        return nein_err(ERR_INVALID_RULE);
+    }
+    var pol = ct_timeout_policy(ct);
+    var plen = vec_len(pol);
+    var i = 0;
+    while (i < plen) {
+        var e = vec_get(pol, i);
+        vr = validate_identifier(load64(e));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+fn ct_timeout_render(ct) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "  ct timeout ");
+    str_builder_add_cstr(sb, ct_timeout_name(ct));
+    str_builder_add_cstr(sb, " {\n");
+    str_builder_add_cstr(sb, "    protocol ");
+    str_builder_add_cstr(sb, _proto_str(ct_timeout_protocol(ct)));
+    str_builder_add_cstr(sb, ";\n");
+
+    var l3 = ct_timeout_l3proto(ct);
+    if (l3 != 0) {
+        str_builder_add_cstr(sb, "    l3proto ");
+        str_builder_add_cstr(sb, _family_str(l3));
+        str_builder_add_cstr(sb, ";\n");
+    }
+
+    var pol = ct_timeout_policy(ct);
+    var plen = vec_len(pol);
+    if (plen > 0) {
+        str_builder_add_cstr(sb, "    policy = { ");
+        var i = 0;
+        while (i < plen) {
+            if (i > 0) { str_builder_add_cstr(sb, ", "); }
+            var e = vec_get(pol, i);
+            str_builder_add_cstr(sb, load64(e));
+            str_builder_add_cstr(sb, ": ");
+            str_builder_add_int(sb, load64(e + 8));
+            i = i + 1;
+        }
+        str_builder_add_cstr(sb, " };\n");
+    }
+
+    str_builder_add_cstr(sb, "  }\n");
+    return str_builder_build(sb);
+}
+
+# ================================================================
+# Table — { name, family, defines, flowtables, ct_timeouts, sets, maps, chains }
+# Layout: [name:8][family:8][defines:8][flowtables:8][ct_timeouts:8]
+#         [sets:8][maps:8][chains:8] = 64 bytes
+# ================================================================
+
+fn table_new(name, family) {
+    var t = alloc(64);
+    store64(t, name);
+    store64(t + 8, family);
+    store64(t + 16, vec_new());
+    store64(t + 24, vec_new());
+    store64(t + 32, vec_new());
+    store64(t + 40, vec_new());
+    store64(t + 48, vec_new());
+    store64(t + 56, vec_new());
+    return t;
+}
+
+fn table_name(t) { return load64(t); }
+fn table_family(t) { return load64(t + 8); }
+fn table_defines(t) { return load64(t + 16); }
+fn table_flowtables(t) { return load64(t + 24); }
+fn table_ct_timeouts(t) { return load64(t + 32); }
+fn table_sets(t) { return load64(t + 40); }
+fn table_maps(t) { return load64(t + 48); }
+fn table_chains(t) { return load64(t + 56); }
+
+fn table_add_define(t, d) { vec_push(load64(t + 16), d); return t; }
+fn table_add_flowtable(t, ft) { vec_push(load64(t + 24), ft); return t; }
+fn table_add_ct_timeout(t, ct) { vec_push(load64(t + 32), ct); return t; }
+fn table_add_set(t, s) { vec_push(load64(t + 40), s); return t; }
+fn table_add_map(t, m) { vec_push(load64(t + 48), m); return t; }
+fn table_add_chain(t, c) { vec_push(load64(t + 56), c); return t; }
+
+fn table_render(t) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "table ");
+    str_builder_add_cstr(sb, _family_str(table_family(t)));
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, table_name(t));
+    str_builder_add_cstr(sb, " {\n");
+
+    # Render order: defines -> flowtables -> ct_timeouts -> sets -> maps -> chains
+    var v = 0;
+    var vlen = 0;
+    var i = 0;
+
+    v = table_defines(t);
+    vlen = vec_len(v);
+    i = 0;
+    while (i < vlen) {
+        var rendered = define_render(vec_get(v, i));
+        str_builder_add_cstr(sb, str_data(rendered));
+        i = i + 1;
+    }
+
+    v = table_flowtables(t);
+    vlen = vec_len(v);
+    i = 0;
+    while (i < vlen) {
+        var rendered = flowtable_render(vec_get(v, i));
+        str_builder_add_cstr(sb, str_data(rendered));
+        i = i + 1;
+    }
+
+    v = table_ct_timeouts(t);
+    vlen = vec_len(v);
+    i = 0;
+    while (i < vlen) {
+        var rendered = ct_timeout_render(vec_get(v, i));
+        str_builder_add_cstr(sb, str_data(rendered));
+        i = i + 1;
+    }
+
+    v = table_sets(t);
+    vlen = vec_len(v);
+    i = 0;
+    while (i < vlen) {
+        var rendered = nft_set_render(vec_get(v, i));
+        str_builder_add_cstr(sb, str_data(rendered));
+        i = i + 1;
+    }
+
+    v = table_maps(t);
+    vlen = vec_len(v);
+    i = 0;
+    while (i < vlen) {
+        var rendered = nft_map_render(vec_get(v, i));
+        str_builder_add_cstr(sb, str_data(rendered));
+        i = i + 1;
+    }
+
+    v = table_chains(t);
+    vlen = vec_len(v);
+    i = 0;
+    while (i < vlen) {
+        var rendered = chain_render(vec_get(v, i));
+        str_builder_add_cstr(sb, str_data(rendered));
+        i = i + 1;
+    }
+
+    str_builder_add_cstr(sb, "}\n");
+    return str_builder_build(sb);
+}

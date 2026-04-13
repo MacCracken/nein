@@ -1,0 +1,217 @@
+# nein set module — named sets and verdict maps
+
+# ================================================================
+# Enums
+# ================================================================
+
+enum SetTypeEnum {
+    SET_IPV4_ADDR = 1;
+    SET_IPV6_ADDR = 2;
+    SET_INET_SERVICE = 3;
+    SET_INET_PROTO = 4;
+    SET_IFNAME = 5;
+}
+
+enum SetFlagEnum {
+    SETFLAG_CONSTANT = 1;
+    SETFLAG_INTERVAL = 2;
+    SETFLAG_TIMEOUT = 3;
+}
+
+enum MapVerdictEnum {
+    MAPV_ACCEPT = 1;
+    MAPV_DROP = 2;
+    MAPV_JUMP = 3;
+}
+
+fn _set_type_str(t) {
+    if (t == SET_IPV4_ADDR) { return "ipv4_addr"; }
+    if (t == SET_IPV6_ADDR) { return "ipv6_addr"; }
+    if (t == SET_INET_SERVICE) { return "inet_service"; }
+    if (t == SET_INET_PROTO) { return "inet_proto"; }
+    if (t == SET_IFNAME) { return "ifname"; }
+    return "ipv4_addr";
+}
+
+fn _set_flag_str(f) {
+    if (f == SETFLAG_CONSTANT) { return "constant"; }
+    if (f == SETFLAG_INTERVAL) { return "interval"; }
+    if (f == SETFLAG_TIMEOUT) { return "timeout"; }
+    return "constant";
+}
+
+# ================================================================
+# NftSet — { name, set_type, flags(vec), elements(vec) }
+# Layout: [name:8][set_type:8][flags:8][elements:8] = 32 bytes
+# ================================================================
+
+fn nft_set_new(name, stype) {
+    var s = alloc(32);
+    store64(s, name);
+    store64(s + 8, stype);
+    store64(s + 16, vec_new());
+    store64(s + 24, vec_new());
+    return s;
+}
+
+fn nft_set_name(s) { return load64(s); }
+fn nft_set_type(s) { return load64(s + 8); }
+fn nft_set_flags(s) { return load64(s + 16); }
+fn nft_set_elements(s) { return load64(s + 24); }
+
+fn nft_set_add_flag(s, flag) {
+    vec_push(load64(s + 16), flag);
+    return s;
+}
+
+fn nft_set_add_element(s, elem) {
+    vec_push(load64(s + 24), elem);
+    return s;
+}
+
+fn nft_set_add_elements(s, elems) {
+    var elen = vec_len(elems);
+    var i = 0;
+    while (i < elen) {
+        vec_push(load64(s + 24), vec_get(elems, i));
+        i = i + 1;
+    }
+    return s;
+}
+
+fn nft_set_validate(s) {
+    var vr = validate_identifier(nft_set_name(s));
+    if (is_err_result(vr) == 1) { return vr; }
+    var elems = nft_set_elements(s);
+    var elen = vec_len(elems);
+    var i = 0;
+    while (i < elen) {
+        vr = validate_nft_element(vec_get(elems, i));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+fn nft_set_render(s) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "  set ");
+    str_builder_add_cstr(sb, nft_set_name(s));
+    str_builder_add_cstr(sb, " {\n");
+    str_builder_add_cstr(sb, "    type ");
+    str_builder_add_cstr(sb, _set_type_str(nft_set_type(s)));
+    str_builder_add_cstr(sb, ";\n");
+
+    var flags = nft_set_flags(s);
+    var flen = vec_len(flags);
+    if (flen > 0) {
+        str_builder_add_cstr(sb, "    flags ");
+        var i = 0;
+        while (i < flen) {
+            if (i > 0) { str_builder_add_cstr(sb, ", "); }
+            str_builder_add_cstr(sb, _set_flag_str(vec_get(flags, i)));
+            i = i + 1;
+        }
+        str_builder_add_cstr(sb, ";\n");
+    }
+
+    var elems = nft_set_elements(s);
+    var elen = vec_len(elems);
+    if (elen > 0) {
+        str_builder_add_cstr(sb, "    elements = { ");
+        var i = 0;
+        while (i < elen) {
+            if (i > 0) { str_builder_add_cstr(sb, ", "); }
+            str_builder_add_cstr(sb, vec_get(elems, i));
+            i = i + 1;
+        }
+        str_builder_add_cstr(sb, " };\n");
+    }
+
+    str_builder_add_cstr(sb, "  }\n");
+    return str_builder_build(sb);
+}
+
+# ================================================================
+# NftMap — { name, key_type, entries(vec of key/verdict pairs) }
+# Entry: [key:8][verdict_type:8][verdict_val:8] = 24 bytes
+# ================================================================
+
+fn _map_entry_new(key, vtype, vval) {
+    var e = alloc(24);
+    store64(e, key);
+    store64(e + 8, vtype);
+    store64(e + 16, vval);
+    return e;
+}
+
+fn nft_map_new(name, ktype) {
+    var m = alloc(24);
+    store64(m, name);
+    store64(m + 8, ktype);
+    store64(m + 16, vec_new());
+    return m;
+}
+
+fn nft_map_name(m) { return load64(m); }
+fn nft_map_key_type(m) { return load64(m + 8); }
+fn nft_map_entries(m) { return load64(m + 16); }
+
+fn nft_map_add_entry(m, key, vtype, vval) {
+    vec_push(load64(m + 16), _map_entry_new(key, vtype, vval));
+    return m;
+}
+
+fn nft_map_validate(m) {
+    var vr = validate_identifier(nft_map_name(m));
+    if (is_err_result(vr) == 1) { return vr; }
+    var entries = nft_map_entries(m);
+    var elen = vec_len(entries);
+    var i = 0;
+    while (i < elen) {
+        var e = vec_get(entries, i);
+        vr = validate_nft_element(load64(e));
+        if (is_err_result(vr) == 1) { return vr; }
+        if (load64(e + 8) == MAPV_JUMP) {
+            vr = validate_identifier(load64(e + 16));
+            if (is_err_result(vr) == 1) { return vr; }
+        }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+fn nft_map_render(m) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "  map ");
+    str_builder_add_cstr(sb, nft_map_name(m));
+    str_builder_add_cstr(sb, " {\n");
+    str_builder_add_cstr(sb, "    type ");
+    str_builder_add_cstr(sb, _set_type_str(nft_map_key_type(m)));
+    str_builder_add_cstr(sb, " : verdict;\n");
+
+    var entries = nft_map_entries(m);
+    var elen = vec_len(entries);
+    if (elen > 0) {
+        str_builder_add_cstr(sb, "    elements = { ");
+        var i = 0;
+        while (i < elen) {
+            if (i > 0) { str_builder_add_cstr(sb, ", "); }
+            var e = vec_get(entries, i);
+            str_builder_add_cstr(sb, load64(e));
+            str_builder_add_cstr(sb, " : ");
+            var vt = load64(e + 8);
+            if (vt == MAPV_ACCEPT) { str_builder_add_cstr(sb, "accept"); }
+            elif (vt == MAPV_DROP) { str_builder_add_cstr(sb, "drop"); }
+            elif (vt == MAPV_JUMP) {
+                str_builder_add_cstr(sb, "jump ");
+                str_builder_add_cstr(sb, load64(e + 16));
+            }
+            i = i + 1;
+        }
+        str_builder_add_cstr(sb, " };\n");
+    }
+
+    str_builder_add_cstr(sb, "  }\n");
+    return str_builder_build(sb);
+}
