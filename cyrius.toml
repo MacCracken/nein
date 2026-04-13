@@ -1,0 +1,29 @@
+[package]
+name = "nein"
+version = "0.1.0"
+description = "nein — programmatic nftables firewall (Cyrius port from 9338 lines of Rust)"
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "4.2.1"
+
+[build]
+entry = "src/main.cyr"
+output = "nein"
+
+[deps]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args",
+          "assert", "tagged", "hashmap", "json", "toml", "process", "bench",
+          "fnptr", "callback", "freelist", "fs", "net", "regex", "chrono",
+          "sakshi", "sakshi_full"]
+
+[deps.agnosys]
+git = "https://github.com/MacCracken/agnosys.git"
+path = "../agnosys"
+tag = "0.97.2"
+modules = ["lib/syscalls_linux.cyr"]
+
+[deps.agnostik]
+git = "https://github.com/MacCracken/agnostik.git"
+path = "../agnostik"
+tag = "0.97.1"
+modules = ["src/types.cyr", "src/error.cyr"]

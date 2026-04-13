@@ -1,3 +1,11 @@
+# Rust (preserved in rust-old/)
+rust-old/target/
+rust-old/Cargo.lock
+
+# Cyrius
+/build/
+
+# Legacy (carried over)
 /target
 /coverage
 /benchmarks
