@@ -1,0 +1,31 @@
+# nein error types
+#
+# NeinError as integer enum constants.
+# Uses stdlib tagged Result: Ok(value) / Err(code) from tagged.cyr.
+
+enum NeinError {
+    ERR_NFT_FAILED = 1;
+    ERR_INVALID_RULE = 2;
+    ERR_TABLE_NOT_FOUND = 3;
+    ERR_CHAIN_NOT_FOUND = 4;
+    ERR_PERMISSION_DENIED = 5;
+    ERR_PARSE = 6;
+    ERR_IO = 7;
+}
+
+# --- Result helpers ---
+
+# Return Ok(0)
+fn nein_ok() {
+    return Ok(0);
+}
+
+# Return Err(code)
+fn nein_err(code) {
+    return Err(code);
+}
+
+# Extract the error code from an Err result
+fn err_code(r) {
+    return payload(r);
+}

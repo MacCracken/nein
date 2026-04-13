@@ -1,10 +1,270 @@
-# nein test suite
+# nein test suite — error + validate modules
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+
+fn test_error() {
+    test_group("error");
+
+    # Error enum values are distinct non-zero constants
+    assert(ERR_NFT_FAILED != 0, "ERR_NFT_FAILED nonzero");
+    assert(ERR_INVALID_RULE != 0, "ERR_INVALID_RULE nonzero");
+    assert(ERR_TABLE_NOT_FOUND != 0, "ERR_TABLE_NOT_FOUND nonzero");
+    assert(ERR_CHAIN_NOT_FOUND != 0, "ERR_CHAIN_NOT_FOUND nonzero");
+    assert(ERR_PERMISSION_DENIED != 0, "ERR_PERMISSION_DENIED nonzero");
+    assert(ERR_PARSE != 0, "ERR_PARSE nonzero");
+    assert(ERR_IO != 0, "ERR_IO nonzero");
+
+    # All distinct
+    assert(ERR_NFT_FAILED != ERR_INVALID_RULE, "nft != invalid");
+    assert(ERR_INVALID_RULE != ERR_TABLE_NOT_FOUND, "invalid != table");
+    assert(ERR_TABLE_NOT_FOUND != ERR_CHAIN_NOT_FOUND, "table != chain");
+    assert(ERR_CHAIN_NOT_FOUND != ERR_PERMISSION_DENIED, "chain != perm");
+    assert(ERR_PERMISSION_DENIED != ERR_PARSE, "perm != parse");
+    assert(ERR_PARSE != ERR_IO, "parse != io");
+
+    # nein_err returns an Err result with the code
+    var e = nein_err(ERR_NFT_FAILED);
+    assert(is_err_result(e) == 1, "nein_err returns Err");
+    assert_eq(err_code(e), ERR_NFT_FAILED, "err_code extracts code");
+
+    # nein_ok returns Ok
+    var ok = nein_ok();
+    assert(is_ok(ok) == 1, "nein_ok returns Ok");
+
+    return 0;
+}
+
+fn test_validate_identifier() {
+    test_group("validate_identifier");
+
+    # Valid identifiers
+    assert(is_ok(validate_identifier("filter")) == 1, "filter ok");
+    assert(is_ok(validate_identifier("my_table")) == 1, "my_table ok");
+    assert(is_ok(validate_identifier("agnos-policy")) == 1, "agnos-policy ok");
+    assert(is_ok(validate_identifier("0eth0")) == 1, "numeric start ok");
+    assert(is_ok(validate_identifier("123")) == 1, "all numeric ok");
+
+    # Invalid identifiers
+    assert(is_err_result(validate_identifier("")) == 1, "empty rejected");
+    assert(is_err_result(validate_identifier("has space")) == 1, "space rejected");
+
+    # Injection attempts
+    assert(is_err_result(validate_identifier("evil;drop")) == 1, "semicolon rejected");
+    assert(is_err_result(validate_identifier("has{brace")) == 1, "brace rejected");
+
+    # Length limits: 64 max
+    var buf64[520];
+    memset(&buf64, 97, 64);   # 64 'a's
+    store8(&buf64 + 64, 0);   # null terminate
+    assert(is_ok(validate_identifier(&buf64)) == 1, "64 chars ok");
+
+    memset(&buf64, 97, 65);   # 65 'a's
+    store8(&buf64 + 65, 0);
+    assert(is_err_result(validate_identifier(&buf64)) == 1, "65 chars rejected");
+
+    return 0;
+}
+
+fn test_validate_addr() {
+    test_group("validate_addr");
+
+    # Valid IPv4
+    assert(is_ok(validate_addr("10.0.0.1")) == 1, "10.0.0.1 ok");
+    assert(is_ok(validate_addr("192.168.0.0/16")) == 1, "CIDR ok");
+    assert(is_ok(validate_addr("172.17.0.2")) == 1, "172 ok");
+
+    # Valid IPv6
+    assert(is_ok(validate_addr("::1")) == 1, "::1 ok");
+    assert(is_ok(validate_addr("fe80::/10")) == 1, "fe80 CIDR ok");
+    assert(is_ok(validate_addr("2001:db8::1")) == 1, "2001:db8 ok");
+
+    # Invalid
+    assert(is_err_result(validate_addr("")) == 1, "empty rejected");
+    assert(is_err_result(validate_addr("not_an_addr")) == 1, "alpha rejected");
+
+    # Injection
+    assert(is_err_result(validate_addr("10.0.0.1;drop")) == 1, "semicolon rejected");
+    assert(is_err_result(validate_addr("10.0.0.1|evil")) == 1, "pipe rejected");
+
+    return 0;
+}
+
+fn test_validate_iface() {
+    test_group("validate_iface");
+
+    # Valid
+    assert(is_ok(validate_iface("eth0")) == 1, "eth0 ok");
+    assert(is_ok(validate_iface("br-container")) == 1, "br-container ok");
+    assert(is_ok(validate_iface("veth1.2")) == 1, "veth1.2 ok");
+    assert(is_ok(validate_iface("lo")) == 1, "lo ok");
+
+    # Invalid
+    assert(is_err_result(validate_iface("")) == 1, "empty rejected");
+    assert(is_err_result(validate_iface("evil;drop")) == 1, "semicolon rejected");
+
+    # Length limits: 15 max
+    var buf16[24];
+    memset(&buf16, 97, 15);
+    store8(&buf16 + 15, 0);
+    assert(is_ok(validate_iface(&buf16)) == 1, "15 chars ok");
+
+    memset(&buf16, 97, 16);
+    store8(&buf16 + 16, 0);
+    assert(is_err_result(validate_iface(&buf16)) == 1, "16 chars rejected");
+
+    return 0;
+}
+
+fn test_validate_ct_state() {
+    test_group("validate_ct_state");
+
+    # All valid states
+    assert(is_ok(validate_ct_state("new")) == 1, "new ok");
+    assert(is_ok(validate_ct_state("established")) == 1, "established ok");
+    assert(is_ok(validate_ct_state("related")) == 1, "related ok");
+    assert(is_ok(validate_ct_state("invalid")) == 1, "invalid ok");
+    assert(is_ok(validate_ct_state("untracked")) == 1, "untracked ok");
+
+    # Invalid
+    assert(is_err_result(validate_ct_state("bogus")) == 1, "bogus rejected");
+    assert(is_err_result(validate_ct_state("established; drop")) == 1, "injection rejected");
+
+    return 0;
+}
+
+fn test_validate_comment() {
+    test_group("validate_comment");
+
+    # Valid
+    assert(is_ok(validate_comment("SSH access")) == 1, "normal comment ok");
+    assert(is_ok(validate_comment("container port 8080->80")) == 1, "arrow comment ok");
+
+    # Invalid — quotes
+    assert(is_err_result(validate_comment("has \"quotes\"")) == 1, "quotes rejected");
+
+    # Invalid — dangerous chars
+    assert(is_err_result(validate_comment("has;semicolon")) == 1, "semicolon rejected");
+    assert(is_err_result(validate_comment("has{brace")) == 1, "brace rejected");
+    assert(is_err_result(validate_comment("has}brace")) == 1, "close brace rejected");
+    assert(is_err_result(validate_comment("has|pipe")) == 1, "pipe rejected");
+    assert(is_err_result(validate_comment("has`tick")) == 1, "backtick rejected");
+    assert(is_err_result(validate_comment("has$dollar")) == 1, "dollar rejected");
+
+    # Length: 128 max
+    var buf130[136];
+    memset(&buf130, 97, 128);
+    store8(&buf130 + 128, 0);
+    assert(is_ok(validate_comment(&buf130)) == 1, "128 chars ok");
+
+    memset(&buf130, 97, 129);
+    store8(&buf130 + 129, 0);
+    assert(is_err_result(validate_comment(&buf130)) == 1, "129 chars rejected");
+
+    return 0;
+}
+
+fn test_validate_log_prefix() {
+    test_group("validate_log_prefix");
+
+    # Valid
+    assert(is_ok(validate_log_prefix("NEIN_DROP: ")) == 1, "prefix ok");
+    assert(is_ok(validate_log_prefix("fw-input ")) == 1, "fw-input ok");
+
+    # Invalid
+    assert(is_err_result(validate_log_prefix("has\"quote")) == 1, "quote rejected");
+    assert(is_err_result(validate_log_prefix("has;semi")) == 1, "semicolon rejected");
+
+    # Length: 64 max
+    var buf66[72];
+    memset(&buf66, 97, 64);
+    store8(&buf66 + 64, 0);
+    assert(is_ok(validate_log_prefix(&buf66)) == 1, "64 chars ok");
+
+    memset(&buf66, 97, 65);
+    store8(&buf66 + 65, 0);
+    assert(is_err_result(validate_log_prefix(&buf66)) == 1, "65 chars rejected");
+
+    return 0;
+}
+
+fn test_validate_nft_element() {
+    test_group("validate_nft_element");
+
+    # Valid
+    assert(is_ok(validate_nft_element("10.0.0.1")) == 1, "ip ok");
+    assert(is_ok(validate_nft_element("80")) == 1, "port ok");
+    assert(is_ok(validate_nft_element("192.168.0.0/16")) == 1, "cidr ok");
+    assert(is_ok(validate_nft_element("::1")) == 1, "ipv6 ok");
+
+    # Invalid
+    assert(is_err_result(validate_nft_element("")) == 1, "empty rejected");
+    assert(is_err_result(validate_nft_element("evil;inject")) == 1, "semicolon rejected");
+    assert(is_err_result(validate_nft_element("has\"quote")) == 1, "quote rejected");
+
+    return 0;
+}
+
+fn test_validate_family() {
+    test_group("validate_family");
+
+    # All valid families
+    assert(is_ok(validate_family("inet")) == 1, "inet ok");
+    assert(is_ok(validate_family("ip")) == 1, "ip ok");
+    assert(is_ok(validate_family("ip6")) == 1, "ip6 ok");
+    assert(is_ok(validate_family("arp")) == 1, "arp ok");
+    assert(is_ok(validate_family("bridge")) == 1, "bridge ok");
+    assert(is_ok(validate_family("netdev")) == 1, "netdev ok");
+
+    # Invalid
+    assert(is_err_result(validate_family("")) == 1, "empty rejected");
+    assert(is_err_result(validate_family("ipv4")) == 1, "ipv4 rejected");
+    assert(is_err_result(validate_family("filter")) == 1, "filter rejected");
+    assert(is_err_result(validate_family("inet; drop")) == 1, "injection rejected");
+
+    return 0;
+}
+
+fn test_dangerous_chars_all() {
+    test_group("dangerous_chars_exhaustive");
+
+    # Every dangerous char must be rejected by comment and log_prefix
+    assert(is_err_result(validate_comment("t;v")) == 1, "comment ; rejected");
+    assert(is_err_result(validate_comment("t{v")) == 1, "comment { rejected");
+    assert(is_err_result(validate_comment("t}v")) == 1, "comment } rejected");
+    assert(is_err_result(validate_comment("t|v")) == 1, "comment | rejected");
+    assert(is_err_result(validate_comment("t`v")) == 1, "comment ` rejected");
+    assert(is_err_result(validate_comment("t$v")) == 1, "comment $ rejected");
+
+    assert(is_err_result(validate_log_prefix("t;v")) == 1, "prefix ; rejected");
+    assert(is_err_result(validate_log_prefix("t{v")) == 1, "prefix { rejected");
+    assert(is_err_result(validate_log_prefix("t}v")) == 1, "prefix } rejected");
+    assert(is_err_result(validate_log_prefix("t|v")) == 1, "prefix | rejected");
+    assert(is_err_result(validate_log_prefix("t`v")) == 1, "prefix ` rejected");
+    assert(is_err_result(validate_log_prefix("t$v")) == 1, "prefix $ rejected");
+
+    # nft_element too
+    assert(is_err_result(validate_nft_element("t;v")) == 1, "elem ; rejected");
+    assert(is_err_result(validate_nft_element("t{v")) == 1, "elem { rejected");
+    assert(is_err_result(validate_nft_element("t|v")) == 1, "elem | rejected");
+
+    return 0;
+}
 
 fn main() {
     alloc_init();
-    test_group("smoke");
-    assert(1, "true is true");
-    assert_eq(1 + 1, 2, "math works");
+
+    test_error();
+    test_validate_identifier();
+    test_validate_addr();
+    test_validate_iface();
+    test_validate_ct_state();
+    test_validate_comment();
+    test_validate_log_prefix();
+    test_validate_nft_element();
+    test_validate_family();
+    test_dangerous_chars_all();
+
     return assert_summary();
 }
 

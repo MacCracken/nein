@@ -1,13 +1,65 @@
-# nein fuzz harness
+# nein fuzz harness — validate module
+# All validators must handle arbitrary input without crashing.
+# No valid UTF-8 assumption — raw bytes are valid test input.
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
 
 fn fuzz_main(data, len) {
     if (len == 0) { return 0; }
+
+    # Null-terminate a copy so string functions are safe
+    var copy = alloc(len + 1);
+    memcpy(copy, data, len);
+    store8(copy + len, 0);
+
+    # Feed to every validator — must never crash, only Ok/Err
+    validate_identifier(copy);
+    validate_addr(copy);
+    validate_iface(copy);
+    validate_ct_state(copy);
+    validate_comment(copy);
+    validate_log_prefix(copy);
+    validate_nft_element(copy);
+    validate_family(copy);
+
+    # Also test with substrings of varying lengths
+    if (len > 2) {
+        var half = len / 2;
+        store8(copy + half, 0);
+        validate_identifier(copy);
+        validate_addr(copy);
+        validate_comment(copy);
+    }
+
     return 0;
 }
 
 fn main() {
     alloc_init();
-    fuzz_main("test", 4);
+
+    # Smoke: normal inputs
+    fuzz_main("eth0", 4);
+    fuzz_main("10.0.0.1", 8);
+    fuzz_main("inet", 4);
+    fuzz_main("established", 11);
+    fuzz_main("SSH access", 10);
+
+    # Edge: empty
+    fuzz_main("", 0);
+    fuzz_main("x", 1);
+
+    # Hostile: injection chars
+    fuzz_main("evil;drop", 9);
+    fuzz_main("a{b}c|d`e$f", 11);
+    fuzz_main("10.0.0.1\n; flush", 16);
+
+    # Boundary: max lengths
+    var big[256];
+    memset(&big, 97, 255);
+    store8(&big + 255, 0);
+    fuzz_main(&big, 255);
+
     println("fuzz: ok");
     return 0;
 }

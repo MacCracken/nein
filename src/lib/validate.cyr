@@ -1,0 +1,210 @@
+# nein input validation
+#
+# All strings interpolated into nftables syntax pass through these
+# validators to prevent injection of arbitrary nft commands.
+#
+# Returns: packed Result — Ok(0) on valid, Err(ERR_INVALID_RULE) on reject.
+
+# Dangerous characters that could inject nftables commands or break syntax.
+# ; { } | \n \r \0 ` $
+#
+# Checked by scanning each byte of the input string.
+
+fn _is_dangerous_char(c) {
+    if (c == 59) { return 1; }    # ;
+    if (c == 123) { return 1; }   # {
+    if (c == 125) { return 1; }   # }
+    if (c == 124) { return 1; }   # |
+    if (c == 10) { return 1; }    # \n
+    if (c == 13) { return 1; }    # \r
+    if (c == 0) { return 1; }     # \0 (mid-string)
+    if (c == 96) { return 1; }    # `
+    if (c == 36) { return 1; }    # $
+    return 0;
+}
+
+fn _has_dangerous_char(s) {
+    var len = strlen(s);
+    var i = 0;
+    while (i < len) {
+        if (_is_dangerous_char(load8(s + i)) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _has_quote(s) {
+    var len = strlen(s);
+    var i = 0;
+    while (i < len) {
+        if (load8(s + i) == 34) { return 1; }   # "
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Check if a character is alphanumeric or _ or -
+fn _is_ident_char(c) {
+    # a-z
+    if (c >= 97 && c <= 122) { return 1; }
+    # A-Z
+    if (c >= 65 && c <= 90) { return 1; }
+    # 0-9
+    if (c >= 48 && c <= 57) { return 1; }
+    # _ -
+    if (c == 95) { return 1; }
+    if (c == 45) { return 1; }
+    return 0;
+}
+
+# Check if a character is valid for interface names (alnum, -, _, .)
+fn _is_iface_char(c) {
+    if (_is_ident_char(c) == 1) { return 1; }
+    if (c == 46) { return 1; }   # .
+    return 0;
+}
+
+# Check if a character is valid in IP/CIDR notation (hex digits, . : /)
+fn _is_addr_char(c) {
+    # 0-9
+    if (c >= 48 && c <= 57) { return 1; }
+    # a-f
+    if (c >= 97 && c <= 102) { return 1; }
+    # A-F
+    if (c >= 65 && c <= 70) { return 1; }
+    # . : /
+    if (c == 46) { return 1; }
+    if (c == 58) { return 1; }
+    if (c == 47) { return 1; }
+    return 0;
+}
+
+# --- Public validators ---
+
+# Validate an nftables identifier (table name, chain name).
+# Must be non-empty, alphanumeric plus _ and -, at most 64 chars.
+fn validate_identifier(s) {
+    var len = strlen(s);
+    if (len == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (len > 64) { return nein_err(ERR_INVALID_RULE); }
+
+    var i = 0;
+    while (i < len) {
+        if (_is_ident_char(load8(s + i)) == 0) {
+            return nein_err(ERR_INVALID_RULE);
+        }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+# Validate an IP address or CIDR string.
+# Allows only characters valid in IP/CIDR notation (hex digits, . : /).
+# Rejects dangerous injection characters and non-address strings.
+fn validate_addr(s) {
+    var len = strlen(s);
+    if (len == 0) { return nein_err(ERR_INVALID_RULE); }
+
+    # Fast reject: only allow valid addr chars
+    var i = 0;
+    while (i < len) {
+        if (_is_addr_char(load8(s + i)) == 0) {
+            return nein_err(ERR_INVALID_RULE);
+        }
+        i = i + 1;
+    }
+
+    # Must contain at least one digit to be a plausible address
+    var has_digit = 0;
+    i = 0;
+    while (i < len) {
+        var c = load8(s + i);
+        if (c >= 48 && c <= 57) { has_digit = 1; }
+        i = i + 1;
+    }
+    if (has_digit == 0) { return nein_err(ERR_INVALID_RULE); }
+
+    # Must contain . or : to be IPv4 or IPv6
+    var has_dot = 0;
+    var has_colon = 0;
+    i = 0;
+    while (i < len) {
+        var c = load8(s + i);
+        if (c == 46) { has_dot = 1; }
+        if (c == 58) { has_colon = 1; }
+        i = i + 1;
+    }
+    if (has_dot == 0 && has_colon == 0) { return nein_err(ERR_INVALID_RULE); }
+
+    return nein_ok();
+}
+
+# Validate an nftables address family.
+# Must be one of: inet, ip, ip6, arp, bridge, netdev.
+fn validate_family(s) {
+    if (streq(s, "inet") == 1) { return nein_ok(); }
+    if (streq(s, "ip") == 1) { return nein_ok(); }
+    if (streq(s, "ip6") == 1) { return nein_ok(); }
+    if (streq(s, "arp") == 1) { return nein_ok(); }
+    if (streq(s, "bridge") == 1) { return nein_ok(); }
+    if (streq(s, "netdev") == 1) { return nein_ok(); }
+    return nein_err(ERR_INVALID_RULE);
+}
+
+# Validate a network interface name.
+# Up to 15 chars, alphanumeric plus - _ .
+fn validate_iface(s) {
+    var len = strlen(s);
+    if (len == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (len > 15) { return nein_err(ERR_INVALID_RULE); }
+
+    var i = 0;
+    while (i < len) {
+        if (_is_iface_char(load8(s + i)) == 0) {
+            return nein_err(ERR_INVALID_RULE);
+        }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+# Validate a connection tracking state.
+# Must be: new, established, related, invalid, untracked.
+fn validate_ct_state(s) {
+    if (streq(s, "new") == 1) { return nein_ok(); }
+    if (streq(s, "established") == 1) { return nein_ok(); }
+    if (streq(s, "related") == 1) { return nein_ok(); }
+    if (streq(s, "invalid") == 1) { return nein_ok(); }
+    if (streq(s, "untracked") == 1) { return nein_ok(); }
+    return nein_err(ERR_INVALID_RULE);
+}
+
+# Validate a comment string.
+# Rejects double quotes and dangerous chars. Max 128 chars.
+fn validate_comment(s) {
+    var len = strlen(s);
+    if (len > 128) { return nein_err(ERR_INVALID_RULE); }
+    if (_has_quote(s) == 1) { return nein_err(ERR_INVALID_RULE); }
+    if (_has_dangerous_char(s) == 1) { return nein_err(ERR_INVALID_RULE); }
+    return nein_ok();
+}
+
+# Validate a log prefix string.
+# Same constraints as comments but max 64 chars (nftables limit).
+fn validate_log_prefix(s) {
+    var len = strlen(s);
+    if (len > 64) { return nein_err(ERR_INVALID_RULE); }
+    if (_has_quote(s) == 1) { return nein_err(ERR_INVALID_RULE); }
+    if (_has_dangerous_char(s) == 1) { return nein_err(ERR_INVALID_RULE); }
+    return nein_ok();
+}
+
+# Validate a set/map element string.
+# Non-empty, no dangerous chars, no quotes.
+fn validate_nft_element(s) {
+    var len = strlen(s);
+    if (len == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (_has_quote(s) == 1) { return nein_err(ERR_INVALID_RULE); }
+    if (_has_dangerous_char(s) == 1) { return nein_err(ERR_INVALID_RULE); }
+    return nein_ok();
+}

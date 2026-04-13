@@ -1,10 +1,182 @@
-# nein benchmarks
+# nein benchmarks — error + validate modules
 
-fn bench_noop() { return 0; }
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+
+# --- validate_identifier ---
+
+fn bench_validate_identifier_short() {
+    validate_identifier("eth0");
+    return 0;
+}
+
+fn bench_validate_identifier_long() {
+    validate_identifier("my_really_long_table_name_for_container_network");
+    return 0;
+}
+
+fn bench_validate_identifier_reject() {
+    validate_identifier("evil;drop");
+    return 0;
+}
+
+# --- validate_addr ---
+
+fn bench_validate_addr_ipv4() {
+    validate_addr("192.168.1.100");
+    return 0;
+}
+
+fn bench_validate_addr_cidr() {
+    validate_addr("10.0.0.0/8");
+    return 0;
+}
+
+fn bench_validate_addr_ipv6() {
+    validate_addr("fe80::1");
+    return 0;
+}
+
+fn bench_validate_addr_reject() {
+    validate_addr("not_valid");
+    return 0;
+}
+
+# --- validate_iface ---
+
+fn bench_validate_iface_short() {
+    validate_iface("lo");
+    return 0;
+}
+
+fn bench_validate_iface_typical() {
+    validate_iface("br-container");
+    return 0;
+}
+
+# --- validate_comment ---
+
+fn bench_validate_comment_short() {
+    validate_comment("SSH access");
+    return 0;
+}
+
+fn bench_validate_comment_long() {
+    validate_comment("container port mapping 8080 to internal 80 for web service");
+    return 0;
+}
+
+# --- validate_ct_state ---
+
+fn bench_validate_ct_state_hit() {
+    validate_ct_state("established");
+    return 0;
+}
+
+fn bench_validate_ct_state_miss() {
+    validate_ct_state("bogus");
+    return 0;
+}
+
+# --- validate_family ---
+
+fn bench_validate_family_hit() {
+    validate_family("inet");
+    return 0;
+}
+
+# --- validate_nft_element ---
+
+fn bench_validate_nft_element_ip() {
+    validate_nft_element("10.0.0.1");
+    return 0;
+}
+
+# --- nein_err / nein_ok ---
+
+fn bench_nein_err() {
+    nein_err(ERR_INVALID_RULE);
+    return 0;
+}
+
+fn bench_nein_ok() {
+    nein_ok();
+    return 0;
+}
 
 fn main() {
     alloc_init();
-    bench("noop", &bench_noop, 1000000);
+    var all = vec_new();
+
+    var b = bench_new("validate_identifier/short");
+    bench_run(b, &bench_validate_identifier_short, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_identifier/long");
+    bench_run(b, &bench_validate_identifier_long, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_identifier/reject");
+    bench_run(b, &bench_validate_identifier_reject, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_addr/ipv4");
+    bench_run(b, &bench_validate_addr_ipv4, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_addr/cidr");
+    bench_run(b, &bench_validate_addr_cidr, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_addr/ipv6");
+    bench_run(b, &bench_validate_addr_ipv6, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_addr/reject");
+    bench_run(b, &bench_validate_addr_reject, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_iface/short");
+    bench_run(b, &bench_validate_iface_short, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_iface/typical");
+    bench_run(b, &bench_validate_iface_typical, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_comment/short");
+    bench_run(b, &bench_validate_comment_short, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_comment/long");
+    bench_run(b, &bench_validate_comment_long, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_ct_state/hit");
+    bench_run(b, &bench_validate_ct_state_hit, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_ct_state/miss");
+    bench_run(b, &bench_validate_ct_state_miss, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_family/hit");
+    bench_run(b, &bench_validate_family_hit, 100000);
+    vec_push(all, b);
+
+    b = bench_new("validate_nft_element/ip");
+    bench_run(b, &bench_validate_nft_element_ip, 100000);
+    vec_push(all, b);
+
+    b = bench_new("nein_err");
+    bench_run(b, &bench_nein_err, 1000000);
+    vec_push(all, b);
+
+    b = bench_new("nein_ok");
+    bench_run(b, &bench_nein_ok, 1000000);
+    vec_push(all, b);
+
+    bench_report_all(all);
     return 0;
 }
 

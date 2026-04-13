@@ -1,7 +1,11 @@
-# nein — Cyrius port
+# nein — programmatic nftables firewall
 # Ported from 9338 lines of Rust
-
+#
 # Stdlib auto-included via cyrius.toml
+
+# --- Project modules ---
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
 
 fn main() {
     alloc_init();
