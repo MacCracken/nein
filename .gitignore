@@ -1,12 +1,21 @@
+# Build
+/build/
+/dist/
+
+# Cyrius
+lib/*.cyr
+!lib/k*.cyr
+
 # Rust (preserved in rust-old/)
 rust-old/target/
 rust-old/Cargo.lock
 
-# Cyrius
-/build/
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
 
-# Legacy (carried over)
-/target
-/coverage
-/benchmarks
-/.cargo/
+# OS
+.DS_Store
+Thumbs.db

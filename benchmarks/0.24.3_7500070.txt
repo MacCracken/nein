@@ -1,0 +1,267 @@
+   Compiling nein v0.24.3 (/home/macro/Repos/nein)
+    Finished `bench` profile [optimized] target(s) in 13.63s
+     Running benches/benchmarks.rs (target/release/deps/benchmarks-fef20c6b702311a4)
+Gnuplot not found, using plotters backend
+Benchmarking rule_render
+Benchmarking rule_render: Warming up for 3.0000 s
+Benchmarking rule_render: Collecting 100 samples in estimated 5.0009 s (19M iterations)
+Benchmarking rule_render: Analyzing
+rule_render             time:   [152.61 ns 156.61 ns 161.11 ns]
+                        change: [+39.267% +43.756% +48.600%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 10 outliers among 100 measurements (10.00%)
+  9 (9.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking rule_validate
+Benchmarking rule_validate: Warming up for 3.0000 s
+Benchmarking rule_validate: Collecting 100 samples in estimated 5.0001 s (61M iterations)
+Benchmarking rule_validate: Analyzing
+rule_validate           time:   [86.844 ns 91.367 ns 96.525 ns]
+                        change: [+18.197% +22.349% +27.659%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 10 outliers among 100 measurements (10.00%)
+  7 (7.00%) high mild
+  3 (3.00%) high severe
+
+Benchmarking rule_complex_render
+Benchmarking rule_complex_render: Warming up for 3.0000 s
+Benchmarking rule_complex_render: Collecting 100 samples in estimated 5.0006 s (17M iterations)
+Benchmarking rule_complex_render: Analyzing
+rule_complex_render     time:   [279.94 ns 281.16 ns 282.66 ns]
+                        change: [+2.2502% +2.8842% +3.5390%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high severe
+
+Benchmarking rule_complex_validate
+Benchmarking rule_complex_validate: Warming up for 3.0000 s
+Benchmarking rule_complex_validate: Collecting 100 samples in estimated 5.0003 s (45M iterations)
+Benchmarking rule_complex_validate: Analyzing
+rule_complex_validate   time:   [109.10 ns 110.41 ns 112.16 ns]
+                        change: [+6.4913% +7.1133% +8.0025%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking nat_render
+Benchmarking nat_render: Warming up for 3.0000 s
+Benchmarking nat_render: Collecting 100 samples in estimated 5.0008 s (21M iterations)
+Benchmarking nat_render: Analyzing
+nat_render              time:   [221.90 ns 223.49 ns 225.40 ns]
+                        change: [+5.3181% +7.0291% +8.7064%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 11 outliers among 100 measurements (11.00%)
+  7 (7.00%) high mild
+  4 (4.00%) high severe
+
+Benchmarking host_firewall_render
+Benchmarking host_firewall_render: Warming up for 3.0000 s
+Benchmarking host_firewall_render: Collecting 100 samples in estimated 5.0003 s (8.0M iterations)
+Benchmarking host_firewall_render: Analyzing
+host_firewall_render    time:   [618.65 ns 620.88 ns 623.25 ns]
+                        change: [+8.6782% +9.4367% +10.190%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+Benchmarking bridge_small_to_firewall
+Benchmarking bridge_small_to_firewall: Warming up for 3.0000 s
+Benchmarking bridge_small_to_firewall: Collecting 100 samples in estimated 5.0027 s (4.6M iterations)
+Benchmarking bridge_small_to_firewall: Analyzing
+bridge_small_to_firewall
+                        time:   [1.0783 µs 1.0822 µs 1.0862 µs]
+                        change: [+5.8133% +6.5616% +7.2071%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+Benchmarking bridge_small_render
+Benchmarking bridge_small_render: Warming up for 3.0000 s
+Benchmarking bridge_small_render: Collecting 100 samples in estimated 5.0002 s (2.3M iterations)
+Benchmarking bridge_small_render: Analyzing
+bridge_small_render     time:   [2.2202 µs 2.2423 µs 2.2675 µs]
+                        change: [+6.1140% +6.9610% +7.8386%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking bridge_large_to_firewall
+Benchmarking bridge_large_to_firewall: Warming up for 3.0000 s
+Benchmarking bridge_large_to_firewall: Collecting 100 samples in estimated 5.0006 s (278k iterations)
+Benchmarking bridge_large_to_firewall: Analyzing
+bridge_large_to_firewall
+                        time:   [17.571 µs 17.625 µs 17.683 µs]
+                        change: [+4.1811% +4.5615% +4.9451%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+Benchmarking bridge_large_render
+Benchmarking bridge_large_render: Warming up for 3.0000 s
+Benchmarking bridge_large_render: Collecting 100 samples in estimated 5.0289 s (192k iterations)
+Benchmarking bridge_large_render: Analyzing
+bridge_large_render     time:   [25.866 µs 25.959 µs 26.055 µs]
+                        change: [+3.5906% +4.0472% +4.5137%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+
+Benchmarking engine_10_agents_to_firewall
+Benchmarking engine_10_agents_to_firewall: Warming up for 3.0000 s
+Benchmarking engine_10_agents_to_firewall: Collecting 100 samples in estimated 5.0725 s (202k iterations)
+Benchmarking engine_10_agents_to_firewall: Analyzing
+engine_10_agents_to_firewall
+                        time:   [25.276 µs 25.380 µs 25.495 µs]
+                        change: [+5.4420% +5.8840% +6.3562%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking engine_10_agents_render
+Benchmarking engine_10_agents_render: Warming up for 3.0000 s
+Benchmarking engine_10_agents_render: Collecting 100 samples in estimated 5.0573 s (348k iterations)
+Benchmarking engine_10_agents_render: Analyzing
+engine_10_agents_render time:   [14.400 µs 14.455 µs 14.512 µs]
+                        change: [+5.6791% +6.2334% +6.8210%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+Benchmarking engine_10_agents_validate
+Benchmarking engine_10_agents_validate: Warming up for 3.0000 s
+Benchmarking engine_10_agents_validate: Collecting 100 samples in estimated 5.0008 s (16M iterations)
+Benchmarking engine_10_agents_validate: Analyzing
+engine_10_agents_validate
+                        time:   [302.65 ns 303.83 ns 305.09 ns]
+                        change: [+4.2462% +4.8188% +5.3751%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+Benchmarking policy_to_rules
+Benchmarking policy_to_rules: Warming up for 3.0000 s
+Benchmarking policy_to_rules: Collecting 100 samples in estimated 5.0003 s (51M iterations)
+Benchmarking policy_to_rules: Analyzing
+policy_to_rules         time:   [99.084 ns 99.540 ns 100.01 ns]
+                        change: [-5.1586% -4.6099% -4.0781%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+Benchmarking mesh_to_firewall
+Benchmarking mesh_to_firewall: Warming up for 3.0000 s
+Benchmarking mesh_to_firewall: Collecting 100 samples in estimated 5.0032 s (7.6M iterations)
+Benchmarking mesh_to_firewall: Analyzing
+mesh_to_firewall        time:   [683.92 ns 686.62 ns 689.33 ns]
+                        change: [+7.6090% +8.0661% +8.5206%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+Benchmarking mesh_render
+Benchmarking mesh_render: Warming up for 3.0000 s
+Benchmarking mesh_render: Collecting 100 samples in estimated 5.0018 s (4.1M iterations)
+Benchmarking mesh_render: Analyzing
+mesh_render             time:   [1.2604 µs 1.2642 µs 1.2683 µs]
+                        change: [+6.1058% +6.7667% +7.4319%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+Benchmarking geoip_10_countries_to_firewall
+Benchmarking geoip_10_countries_to_firewall: Warming up for 3.0000 s
+Benchmarking geoip_10_countries_to_firewall: Collecting 100 samples in estimated 5.0286 s (217k iterations)
+Benchmarking geoip_10_countries_to_firewall: Analyzing
+geoip_10_countries_to_firewall
+                        time:   [23.059 µs 23.143 µs 23.235 µs]
+                        change: [+3.8718% +4.2728% +4.6740%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+Benchmarking geoip_10_countries_render
+Benchmarking geoip_10_countries_render: Warming up for 3.0000 s
+Benchmarking geoip_10_countries_render: Collecting 100 samples in estimated 5.0348 s (611k iterations)
+Benchmarking geoip_10_countries_render: Analyzing
+geoip_10_countries_render
+                        time:   [8.0864 µs 8.1199 µs 8.1536 µs]
+                        change: [-1.5057% -0.9345% -0.3579%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking set_1000_elements_render
+Benchmarking set_1000_elements_render: Warming up for 3.0000 s
+Benchmarking set_1000_elements_render: Collecting 100 samples in estimated 5.0078 s (1.3M iterations)
+Benchmarking set_1000_elements_render: Analyzing
+set_1000_elements_render
+                        time:   [3.8825 µs 3.8920 µs 3.9019 µs]
+                        change: [-1.7277% -1.2672% -0.8121%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking toml_parse_small
+Benchmarking toml_parse_small: Warming up for 3.0000 s
+Benchmarking toml_parse_small: Collecting 100 samples in estimated 5.0433 s (232k iterations)
+Benchmarking toml_parse_small: Analyzing
+toml_parse_small        time:   [21.913 µs 21.970 µs 22.035 µs]
+                        change: [-0.9577% -0.5400% -0.1219%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) high mild
+
+Benchmarking firewall_validate_100_rules
+Benchmarking firewall_validate_100_rules: Warming up for 3.0000 s
+Benchmarking firewall_validate_100_rules: Collecting 100 samples in estimated 5.0023 s (9.9M iterations)
+Benchmarking firewall_validate_100_rules: Analyzing
+firewall_validate_100_rules
+                        time:   [502.01 ns 503.68 ns 505.47 ns]
+                        change: [-5.0615% -4.4899% -3.9005%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+Benchmarking table_20_defines_render
+Benchmarking table_20_defines_render: Warming up for 3.0000 s
+Benchmarking table_20_defines_render: Collecting 100 samples in estimated 5.0017 s (2.6M iterations)
+Benchmarking table_20_defines_render: Analyzing
+table_20_defines_render time:   [1.8953 µs 1.9026 µs 1.9127 µs]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking flowtable_render
+Benchmarking flowtable_render: Warming up for 3.0000 s
+Benchmarking flowtable_render: Collecting 100 samples in estimated 5.0000 s (52M iterations)
+Benchmarking flowtable_render: Analyzing
+flowtable_render        time:   [100.71 ns 100.92 ns 101.14 ns]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+Benchmarking ct_timeout_render
+Benchmarking ct_timeout_render: Warming up for 3.0000 s
+Benchmarking ct_timeout_render: Collecting 100 samples in estimated 5.0005 s (16M iterations)
+Benchmarking ct_timeout_render: Analyzing
+ct_timeout_render       time:   [304.89 ns 306.12 ns 307.40 ns]
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+
+Benchmarking quota_rule_render
+Benchmarking quota_rule_render: Warming up for 3.0000 s
+Benchmarking quota_rule_render: Collecting 100 samples in estimated 5.0001 s (48M iterations)
+Benchmarking quota_rule_render: Analyzing
+quota_rule_render       time:   [104.16 ns 104.63 ns 105.18 ns]
+
+Benchmarking nat_range_render
+Benchmarking nat_range_render: Warming up for 3.0000 s
+Benchmarking nat_range_render: Collecting 100 samples in estimated 5.0007 s (19M iterations)
+Benchmarking nat_range_render: Analyzing
+nat_range_render        time:   [256.65 ns 257.36 ns 258.09 ns]
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
