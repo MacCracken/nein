@@ -9,6 +9,10 @@ include "src/lib/chain.cyr"
 include "src/lib/table.cyr"
 include "src/lib/firewall.cyr"
 include "src/lib/builder.cyr"
+include "src/lib/policy.cyr"
+include "src/lib/geoip.cyr"
+include "src/lib/mesh.cyr"
+include "src/lib/bridge.cyr"
 
 # --- validate ---
 
@@ -131,6 +135,38 @@ fn bench_firewall_validate() {
     return 0;
 }
 
+fn bench_policy_to_rules() {
+    var np = agent_to_agent("p", "10.0.0.1", "10.0.0.2", PROTO_TCP, 8090);
+    policy_to_rules(np);
+    return 0;
+}
+
+fn bench_geoip_render() {
+    var bl = geoip_new();
+    var c = vec_new();
+    vec_push(c, "1.0.0.0/8");
+    vec_push(c, "2.0.0.0/8");
+    geoip_block_country(bl, country_block_v4("CN", c));
+    firewall_render(geoip_to_firewall(bl));
+    return 0;
+}
+
+fn bench_mesh_render() {
+    var m = mesh_envoy();
+    firewall_render(mesh_to_firewall(m));
+    return 0;
+}
+
+fn bench_bridge_render() {
+    var bf = bridge_firewall_new(bridge_config_new("br0", "172.17.0.0/16", "eth0"));
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
+    bf_add_port_mapping(bf, pm_tcp(8443, "172.17.0.3", 443));
+    var iso = vec_new(); vec_push(iso, "172.17.1.0/24");
+    bf_add_isolation_group(bf, isolation_group_new("web", iso));
+    firewall_render(bf_to_firewall(bf));
+    return 0;
+}
+
 fn bench_set_render() {
     var s = nft_set_new("blocklist", SET_IPV4_ADDR);
     nft_set_add_element(s, "10.0.0.1");
@@ -175,6 +211,11 @@ fn main() {
     b = bench_new("basic_host_firewall"); bench_run(b, &bench_basic_host_firewall, 10000); vec_push(all, b);
     b = bench_new("container_bridge"); bench_run(b, &bench_container_bridge, 10000); vec_push(all, b);
     b = bench_new("firewall_validate"); bench_run(b, &bench_firewall_validate, 10000); vec_push(all, b);
+
+    b = bench_new("policy_to_rules"); bench_run(b, &bench_policy_to_rules, 100000); vec_push(all, b);
+    b = bench_new("geoip_render"); bench_run(b, &bench_geoip_render, 10000); vec_push(all, b);
+    b = bench_new("mesh_render"); bench_run(b, &bench_mesh_render, 10000); vec_push(all, b);
+    b = bench_new("bridge_render"); bench_run(b, &bench_bridge_render, 10000); vec_push(all, b);
 
     bench_report_all(all);
     return 0;

@@ -14,6 +14,10 @@ include "src/lib/chain.cyr"
 include "src/lib/table.cyr"
 include "src/lib/firewall.cyr"
 include "src/lib/builder.cyr"
+include "src/lib/policy.cyr"
+include "src/lib/geoip.cyr"
+include "src/lib/mesh.cyr"
+include "src/lib/bridge.cyr"
 
 fn main() {
     alloc_init();

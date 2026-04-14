@@ -1,0 +1,209 @@
+# nein mesh module — service mesh sidecar proxy rules
+
+# ================================================================
+# SidecarConfig — { inbound_port, outbound_port, proxy_uid,
+#   excl_out_cidrs(vec), excl_out_ports(vec), excl_in_ports(vec), table_name }
+# Layout: 7 fields * 8 = 56 bytes
+# ================================================================
+
+fn mesh_envoy() {
+    var m = alloc(56);
+    store64(m, 15006);                           # inbound_port
+    store64(m + 8, 15001);                       # outbound_port
+    store64(m + 16, 1337);                       # proxy_uid
+    store64(m + 24, vec_new());                  # exclude_outbound_cidrs
+    store64(m + 32, vec_new());                  # exclude_outbound_ports
+    store64(m + 40, vec_new());                  # exclude_inbound_ports
+    store64(m + 48, "nein_mesh");                # table_name
+    vec_push(load64(m + 24), "127.0.0.0/8");
+    return m;
+}
+
+fn mesh_inbound_port(m) { return load64(m); }
+fn mesh_outbound_port(m) { return load64(m + 8); }
+fn mesh_proxy_uid(m) { return load64(m + 16); }
+fn mesh_excl_out_cidrs(m) { return load64(m + 24); }
+fn mesh_excl_out_ports(m) { return load64(m + 32); }
+fn mesh_excl_in_ports(m) { return load64(m + 40); }
+fn mesh_table_name(m) { return load64(m + 48); }
+
+fn mesh_set_inbound_port(m, p) { store64(m, p); return m; }
+fn mesh_set_outbound_port(m, p) { store64(m + 8, p); return m; }
+fn mesh_set_proxy_uid(m, uid) { store64(m + 16, uid); return m; }
+fn mesh_set_table_name(m, name) { store64(m + 48, name); return m; }
+
+fn mesh_exclude_outbound_cidr(m, cidr) { vec_push(load64(m + 24), cidr); return m; }
+fn mesh_exclude_outbound_port(m, port) { vec_push(load64(m + 32), port); return m; }
+fn mesh_exclude_inbound_port(m, port) { vec_push(load64(m + 40), port); return m; }
+
+fn mesh_clear_excl_out_cidrs(m) {
+    store64(m + 24, vec_new());
+    return m;
+}
+
+# ================================================================
+# Validate
+# ================================================================
+
+fn mesh_validate(m) {
+    var vr = validate_identifier(mesh_table_name(m));
+    if (is_err_result(vr) == 1) { return vr; }
+    var cidrs = mesh_excl_out_cidrs(m);
+    var clen = vec_len(cidrs);
+    var i = 0;
+    while (i < clen) {
+        vr = validate_addr(vec_get(cidrs, i));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+# ================================================================
+# Render helpers — build comment strings
+# ================================================================
+
+fn _mesh_cstr_concat(a, b) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+fn _mesh_cstr_concat3(a, b, c) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    str_builder_add_cstr(sb, c);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# Build "meta skuid N" raw match string
+fn _raw_meta_skuid(uid) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "meta skuid ");
+    str_builder_add_int(sb, uid);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# Build "tcp dport != PORT redirect to :PORT" raw match string
+fn _raw_redirect(port) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "tcp dport != ");
+    str_builder_add_int(sb, port);
+    str_builder_add_cstr(sb, " redirect to :");
+    str_builder_add_int(sb, port);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# Build "skip outbound port N" or "skip inbound port N"
+fn _skip_port_comment(direction, port) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "skip ");
+    str_builder_add_cstr(sb, direction);
+    str_builder_add_cstr(sb, " port ");
+    str_builder_add_int(sb, port);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# ================================================================
+# Build chains
+# ================================================================
+
+fn _mesh_outbound_chain(m) {
+    var c = chain_base("mesh_outbound", CHAIN_NAT, HOOK_OUTPUT, 0 - 100, POLICY_ACCEPT);
+
+    # Skip proxy's own traffic
+    var r = rule_new(verdict_return());
+    rule_add_match(r, match_raw(_raw_meta_skuid(mesh_proxy_uid(m))));
+    rule_set_comment(r, "skip proxy traffic");
+    chain_add_rule(c, r);
+
+    # Skip excluded CIDRs
+    var cidrs = mesh_excl_out_cidrs(m);
+    var clen = vec_len(cidrs);
+    var i = 0;
+    while (i < clen) {
+        var cidr = vec_get(cidrs, i);
+        r = rule_new(verdict_return());
+        rule_add_match(r, match_dest_addr(cidr));
+        rule_set_comment(r, _mesh_cstr_concat("skip outbound ", cidr));
+        chain_add_rule(c, r);
+        i = i + 1;
+    }
+
+    # Skip excluded ports
+    var ports = mesh_excl_out_ports(m);
+    var plen = vec_len(ports);
+    i = 0;
+    while (i < plen) {
+        var port = vec_get(ports, i);
+        r = rule_new(verdict_return());
+        rule_add_match(r, match_protocol(PROTO_TCP));
+        rule_add_match(r, match_dport(port));
+        rule_set_comment(r, _skip_port_comment("outbound", port));
+        chain_add_rule(c, r);
+        i = i + 1;
+    }
+
+    # Redirect outbound TCP to proxy
+    r = rule_new(verdict_accept());
+    rule_add_match(r, match_raw(_raw_redirect(mesh_outbound_port(m))));
+    rule_set_comment(r, "redirect outbound to proxy");
+    chain_add_rule(c, r);
+
+    return c;
+}
+
+fn _mesh_inbound_chain(m) {
+    var c = chain_base("mesh_inbound", CHAIN_NAT, HOOK_PREROUTING, 0 - 100, POLICY_ACCEPT);
+
+    var ports = mesh_excl_in_ports(m);
+    var plen = vec_len(ports);
+    var i = 0;
+    while (i < plen) {
+        var port = vec_get(ports, i);
+        var r = rule_new(verdict_return());
+        rule_add_match(r, match_protocol(PROTO_TCP));
+        rule_add_match(r, match_dport(port));
+        rule_set_comment(r, _skip_port_comment("inbound", port));
+        chain_add_rule(c, r);
+        i = i + 1;
+    }
+
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_raw(_raw_redirect(mesh_inbound_port(m))));
+    rule_set_comment(r, "redirect inbound to proxy");
+    chain_add_rule(c, r);
+
+    return c;
+}
+
+fn mesh_to_firewall(m) {
+    var fw = firewall_new();
+    var t = table_new(mesh_table_name(m), FAMILY_IP);
+    table_add_chain(t, _mesh_outbound_chain(m));
+    table_add_chain(t, _mesh_inbound_chain(m));
+    firewall_add_table(fw, t);
+    return fw;
+}

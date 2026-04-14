@@ -1,0 +1,243 @@
+# nein geoip module — country-based traffic blocking via nftables sets
+
+# ================================================================
+# CountryBlock — { code, cidrs_v4(vec), cidrs_v6(vec) }
+# Layout: [code:8][v4:8][v6:8] = 24 bytes
+# ================================================================
+
+# Uppercase a C string (in-place on a new copy)
+fn _upper_copy(s) {
+    var len = strlen(s);
+    var out = alloc(len + 1);
+    var i = 0;
+    while (i < len) {
+        var c = load8(s + i);
+        if (c >= 97 && c <= 122) { c = c - 32; }
+        store8(out + i, c);
+        i = i + 1;
+    }
+    store8(out + len, 0);
+    return out;
+}
+
+fn country_block_v4(code, cidrs) {
+    var cb = alloc(24);
+    store64(cb, _upper_copy(code));
+    store64(cb + 8, cidrs);
+    store64(cb + 16, vec_new());
+    return cb;
+}
+
+fn country_block_dual(code, cidrs_v4, cidrs_v6) {
+    var cb = alloc(24);
+    store64(cb, _upper_copy(code));
+    store64(cb + 8, cidrs_v4);
+    store64(cb + 16, cidrs_v6);
+    return cb;
+}
+
+fn country_code(cb) { return load64(cb); }
+fn country_cidrs_v4(cb) { return load64(cb + 8); }
+fn country_cidrs_v6(cb) { return load64(cb + 16); }
+
+# ================================================================
+# GeoIpBlocklist — { countries(vec), table_name, hook }
+# Layout: [countries:8][table_name:8][hook:8] = 24 bytes
+# ================================================================
+
+fn geoip_new() {
+    var bl = alloc(24);
+    store64(bl, vec_new());
+    store64(bl + 8, "nein_geoip");
+    store64(bl + 16, HOOK_INPUT);
+    return bl;
+}
+
+fn geoip_countries(bl) { return load64(bl); }
+fn geoip_table_name(bl) { return load64(bl + 8); }
+fn geoip_hook(bl) { return load64(bl + 16); }
+
+fn geoip_set_table_name(bl, name) { store64(bl + 8, name); return bl; }
+fn geoip_set_hook(bl, hook) { store64(bl + 16, hook); return bl; }
+
+fn geoip_block_country(bl, cb) {
+    vec_push(load64(bl), cb);
+    return bl;
+}
+
+# ================================================================
+# Validate
+# ================================================================
+
+# Check country code: exactly 2 ASCII uppercase letters
+fn _is_valid_country_code(code) {
+    if (strlen(code) != 2) { return 0; }
+    var c0 = load8(code);
+    var c1 = load8(code + 1);
+    if (c0 < 65 || c0 > 90) { return 0; }
+    if (c1 < 65 || c1 > 90) { return 0; }
+    return 1;
+}
+
+fn _validate_cidr_list(cidrs) {
+    var clen = vec_len(cidrs);
+    var i = 0;
+    var vr = 0;
+    while (i < clen) {
+        vr = validate_addr(vec_get(cidrs, i));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+fn geoip_validate(bl) {
+    var vr = validate_identifier(geoip_table_name(bl));
+    if (is_err_result(vr) == 1) { return vr; }
+
+    var countries = geoip_countries(bl);
+    var clen = vec_len(countries);
+    var i = 0;
+    while (i < clen) {
+        var cb = vec_get(countries, i);
+        if (_is_valid_country_code(country_code(cb)) == 0) {
+            return nein_err(ERR_INVALID_RULE);
+        }
+        vr = _validate_cidr_list(country_cidrs_v4(cb));
+        if (is_err_result(vr) == 1) { return vr; }
+        vr = _validate_cidr_list(country_cidrs_v6(cb));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+
+    return nein_ok();
+}
+
+# ================================================================
+# Build firewall
+# ================================================================
+
+# Lowercase copy
+fn _lower_copy(s) {
+    var len = strlen(s);
+    var out = alloc(len + 1);
+    var i = 0;
+    while (i < len) {
+        var c = load8(s + i);
+        if (c >= 65 && c <= 90) { c = c + 32; }
+        store8(out + i, c);
+        i = i + 1;
+    }
+    store8(out + len, 0);
+    return out;
+}
+
+# Concat "geo_" + lowercase(code)
+fn _geo_set_name(code) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "geo_");
+    str_builder_add_cstr(sb, _lower_copy(code));
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# Concat "table_name" + optional suffix
+fn _table_name_with_suffix(base, suffix) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, base);
+    str_builder_add_cstr(sb, suffix);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# Concat "geoblock CODE"
+fn _geoblock_comment(code) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "geoblock ");
+    str_builder_add_cstr(sb, code);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# Check if any country has non-empty cidrs in the given family
+fn _any_has_cidrs(countries, v6) {
+    var clen = vec_len(countries);
+    var i = 0;
+    while (i < clen) {
+        var cb = vec_get(countries, i);
+        var cidrs = country_cidrs_v4(cb);
+        if (v6 == 1) { cidrs = country_cidrs_v6(cb); }
+        if (vec_len(cidrs) > 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _build_table(bl, family, v6) {
+    var suffix = "";
+    if (v6 == 1) { suffix = "_v6"; }
+    var tname = _table_name_with_suffix(geoip_table_name(bl), suffix);
+    var table = table_new(tname, family);
+
+    var chain = chain_base("geoblock", CHAIN_FILTER, geoip_hook(bl), 0 - 10, POLICY_ACCEPT);
+
+    var countries = geoip_countries(bl);
+    var clen = vec_len(countries);
+    var i = 0;
+    while (i < clen) {
+        var cb = vec_get(countries, i);
+        var cidrs = country_cidrs_v4(cb);
+        var stype = SET_IPV4_ADDR;
+        var field = "ip saddr";
+        if (v6 == 1) {
+            cidrs = country_cidrs_v6(cb);
+            stype = SET_IPV6_ADDR;
+            field = "ip6 saddr";
+        }
+        var cidrs_len = vec_len(cidrs);
+        if (cidrs_len > 0) {
+            var set_name = _geo_set_name(country_code(cb));
+            var set = nft_set_new(set_name, stype);
+            nft_set_add_flag(set, SETFLAG_INTERVAL);
+            var j = 0;
+            while (j < cidrs_len) {
+                nft_set_add_element(set, vec_get(cidrs, j));
+                j = j + 1;
+            }
+            table_add_set(table, set);
+
+            var r = rule_new(verdict_drop());
+            rule_add_match(r, match_set_lookup(field, set_name));
+            rule_set_comment(r, _geoblock_comment(country_code(cb)));
+            chain_add_rule(chain, r);
+        }
+        i = i + 1;
+    }
+
+    table_add_chain(table, chain);
+    return table;
+}
+
+fn geoip_to_firewall(bl) {
+    var fw = firewall_new();
+    var countries = geoip_countries(bl);
+    if (vec_len(countries) == 0) { return fw; }
+
+    if (_any_has_cidrs(countries, 0) == 1) {
+        firewall_add_table(fw, _build_table(bl, FAMILY_IP, 0));
+    }
+    if (_any_has_cidrs(countries, 1) == 1) {
+        firewall_add_table(fw, _build_table(bl, FAMILY_IP6, 1));
+    }
+
+    return fw;
+}

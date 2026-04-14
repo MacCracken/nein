@@ -1,0 +1,376 @@
+# nein bridge module — container bridge firewall management
+
+# ================================================================
+# BridgeConfig — { bridge_name, subnet, outbound_iface, table_prefix }
+# Layout: 4 fields * 8 = 32 bytes
+# ================================================================
+
+fn bridge_config_new(bridge_name, subnet, outbound_iface) {
+    var cfg = alloc(32);
+    store64(cfg, bridge_name);
+    store64(cfg + 8, subnet);
+    store64(cfg + 16, outbound_iface);
+    store64(cfg + 24, "nein");
+    return cfg;
+}
+
+fn bridge_name(cfg) { return load64(cfg); }
+fn bridge_subnet(cfg) { return load64(cfg + 8); }
+fn bridge_outbound_iface(cfg) { return load64(cfg + 16); }
+fn bridge_table_prefix(cfg) { return load64(cfg + 24); }
+
+fn bridge_set_table_prefix(cfg, prefix) {
+    store64(cfg + 24, prefix);
+    return cfg;
+}
+
+fn bridge_config_validate(cfg) {
+    var vr = validate_iface(bridge_name(cfg));
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_addr(bridge_subnet(cfg));
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_iface(bridge_outbound_iface(cfg));
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(bridge_table_prefix(cfg));
+    if (is_err_result(vr) == 1) { return vr; }
+    return nein_ok();
+}
+
+# ================================================================
+# PortMapping — { host_port, container_addr, container_port, protocol }
+# Layout: 4 * 8 = 32 bytes
+# ================================================================
+
+fn port_mapping_new(host_port, container_addr, container_port, protocol) {
+    var pm = alloc(32);
+    store64(pm, host_port);
+    store64(pm + 8, container_addr);
+    store64(pm + 16, container_port);
+    store64(pm + 24, protocol);
+    return pm;
+}
+
+fn pm_tcp(host_port, container_addr, container_port) {
+    return port_mapping_new(host_port, container_addr, container_port, PROTO_TCP);
+}
+
+fn pm_udp(host_port, container_addr, container_port) {
+    return port_mapping_new(host_port, container_addr, container_port, PROTO_UDP);
+}
+
+fn pm_host_port(pm) { return load64(pm); }
+fn pm_container_addr(pm) { return load64(pm + 8); }
+fn pm_container_port(pm) { return load64(pm + 16); }
+fn pm_protocol(pm) { return load64(pm + 24); }
+
+fn pm_validate(pm) {
+    return validate_addr(pm_container_addr(pm));
+}
+
+# Build "portmap PROTO:HPORT -> ADDR:CPORT"
+fn _pm_comment(pm) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "portmap ");
+    str_builder_add_cstr(sb, _proto_str(pm_protocol(pm)));
+    str_builder_add_cstr(sb, ":");
+    str_builder_add_int(sb, pm_host_port(pm));
+    str_builder_add_cstr(sb, " -> ");
+    str_builder_add_cstr(sb, pm_container_addr(pm));
+    str_builder_add_cstr(sb, ":");
+    str_builder_add_int(sb, pm_container_port(pm));
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# Build "allow portmap -> ADDR:CPORT"
+fn _pm_forward_comment(pm) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "allow portmap -> ");
+    str_builder_add_cstr(sb, pm_container_addr(pm));
+    str_builder_add_cstr(sb, ":");
+    str_builder_add_int(sb, pm_container_port(pm));
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+fn _pm_to_nat_rule(pm) {
+    return nat_dnat(pm_protocol(pm), pm_host_port(pm), pm_container_addr(pm),
+                    pm_container_port(pm), _pm_comment(pm));
+}
+
+fn _pm_to_forward_rule(pm) {
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_dest_addr(pm_container_addr(pm)));
+    rule_add_match(r, match_protocol(pm_protocol(pm)));
+    rule_add_match(r, match_dport(pm_container_port(pm)));
+    rule_set_comment(r, _pm_forward_comment(pm));
+    return r;
+}
+
+# ================================================================
+# IsolationGroup — { name, cidrs(vec) }
+# Layout: [name:8][cidrs:8] = 16 bytes
+# ================================================================
+
+fn isolation_group_new(name, cidrs) {
+    var g = alloc(16);
+    store64(g, name);
+    store64(g + 8, cidrs);
+    return g;
+}
+
+fn iso_name(g) { return load64(g); }
+fn iso_cidrs(g) { return load64(g + 8); }
+
+fn iso_validate(g) {
+    var vr = validate_identifier(iso_name(g));
+    if (is_err_result(vr) == 1) { return vr; }
+    var cidrs = iso_cidrs(g);
+    var clen = vec_len(cidrs);
+    var i = 0;
+    while (i < clen) {
+        vr = validate_addr(vec_get(cidrs, i));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+# ================================================================
+# BridgeFirewall — { config, port_mappings(vec), isolation_groups(vec) }
+# Layout: [config:8][pms:8][groups:8] = 24 bytes
+# ================================================================
+
+fn bridge_firewall_new(cfg) {
+    var bf = alloc(24);
+    store64(bf, cfg);
+    store64(bf + 8, vec_new());
+    store64(bf + 16, vec_new());
+    return bf;
+}
+
+fn bf_config(bf) { return load64(bf); }
+fn bf_port_mappings(bf) { return load64(bf + 8); }
+fn bf_isolation_groups(bf) { return load64(bf + 16); }
+
+# Returns the index of the new mapping, or Err on duplicate
+fn bf_add_port_mapping(bf, pm) {
+    var pms = load64(bf + 8);
+    var plen = vec_len(pms);
+    var i = 0;
+    while (i < plen) {
+        var existing = vec_get(pms, i);
+        if (pm_host_port(existing) == pm_host_port(pm)) {
+            if (pm_protocol(existing) == pm_protocol(pm)) {
+                return nein_err(ERR_INVALID_RULE);
+            }
+        }
+        i = i + 1;
+    }
+    vec_push(pms, pm);
+    return Ok(plen);
+}
+
+# Remove by host port + protocol; returns Some(pm) or None()
+fn bf_remove_port_mapping(bf, host_port, protocol) {
+    var pms = load64(bf + 8);
+    var plen = vec_len(pms);
+    var i = 0;
+    while (i < plen) {
+        var existing = vec_get(pms, i);
+        if (pm_host_port(existing) == host_port) {
+            if (pm_protocol(existing) == protocol) {
+                # Rebuild vec without index i
+                var new_pms = vec_new();
+                var j = 0;
+                while (j < plen) {
+                    if (j != i) { vec_push(new_pms, vec_get(pms, j)); }
+                    j = j + 1;
+                }
+                store64(bf + 8, new_pms);
+                return Some(existing);
+            }
+        }
+        i = i + 1;
+    }
+    return None();
+}
+
+fn bf_add_isolation_group(bf, g) {
+    vec_push(load64(bf + 16), g);
+    return bf;
+}
+
+fn bf_validate(bf) {
+    var vr = bridge_config_validate(bf_config(bf));
+    if (is_err_result(vr) == 1) { return vr; }
+
+    var pms = bf_port_mappings(bf);
+    var plen = vec_len(pms);
+    var i = 0;
+    while (i < plen) {
+        vr = pm_validate(vec_get(pms, i));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+
+    var groups = bf_isolation_groups(bf);
+    var glen = vec_len(groups);
+    i = 0;
+    while (i < glen) {
+        vr = iso_validate(vec_get(groups, i));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+
+    return nein_ok();
+}
+
+# --- Build helpers ---
+
+# "PREFIX_SUFFIX" table name
+fn _bf_table_name(prefix, suffix) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add_cstr(sb, suffix);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# "iso_NAME" set name
+fn _iso_set_name(name) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "iso_");
+    str_builder_add_cstr(sb, name);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# "intra-group: NAME"
+fn _iso_comment(name) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "intra-group: ");
+    str_builder_add_cstr(sb, name);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+fn _bf_build_filter(bf) {
+    var cfg = bf_config(bf);
+    var t = table_new(_bf_table_name(bridge_table_prefix(cfg), "_filter"), FAMILY_INET);
+
+    var forward = chain_base("forward", CHAIN_FILTER, HOOK_FORWARD, 0, POLICY_DROP);
+
+    # Allow established/related
+    chain_add_rule(forward, allow_established());
+
+    # Port mapping forward allows
+    var pms = bf_port_mappings(bf);
+    var plen = vec_len(pms);
+    var i = 0;
+    while (i < plen) {
+        chain_add_rule(forward, _pm_to_forward_rule(vec_get(pms, i)));
+        i = i + 1;
+    }
+
+    var groups = bf_isolation_groups(bf);
+    var glen = vec_len(groups);
+
+    if (glen == 0) {
+        # No isolation: allow all bridge traffic
+        var r1 = rule_new(verdict_accept());
+        rule_add_match(r1, match_iif(bridge_name(cfg)));
+        rule_add_match(r1, match_oif(bridge_outbound_iface(cfg)));
+        rule_set_comment(r1, "bridge to outbound");
+        chain_add_rule(forward, r1);
+
+        var r2 = rule_new(verdict_accept());
+        rule_add_match(r2, match_iif(bridge_name(cfg)));
+        rule_add_match(r2, match_oif(bridge_name(cfg)));
+        rule_set_comment(r2, "intra-bridge");
+        chain_add_rule(forward, r2);
+    } else {
+        # With isolation: bridge -> outbound for all groups, then per-group set lookups
+        var rb = rule_new(verdict_accept());
+        rule_add_match(rb, match_iif(bridge_name(cfg)));
+        rule_add_match(rb, match_oif(bridge_outbound_iface(cfg)));
+        rule_set_comment(rb, "bridge to outbound");
+        chain_add_rule(forward, rb);
+
+        i = 0;
+        while (i < glen) {
+            var g = vec_get(groups, i);
+            var cidrs = iso_cidrs(g);
+            var clen = vec_len(cidrs);
+            if (clen > 0) {
+                var sname = _iso_set_name(iso_name(g));
+                var set = nft_set_new(sname, SET_IPV4_ADDR);
+                nft_set_add_flag(set, SETFLAG_INTERVAL);
+                var j = 0;
+                while (j < clen) {
+                    nft_set_add_element(set, vec_get(cidrs, j));
+                    j = j + 1;
+                }
+                table_add_set(t, set);
+
+                var r = rule_new(verdict_accept());
+                rule_add_match(r, match_set_lookup("ip saddr", sname));
+                rule_add_match(r, match_set_lookup("ip daddr", sname));
+                rule_set_comment(r, _iso_comment(iso_name(g)));
+                chain_add_rule(forward, r);
+            }
+            i = i + 1;
+        }
+    }
+
+    table_add_chain(t, forward);
+    return t;
+}
+
+fn _bf_build_nat(bf) {
+    var cfg = bf_config(bf);
+    var t = table_new(_bf_table_name(bridge_table_prefix(cfg), "_nat"), FAMILY_IP);
+
+    var pms = bf_port_mappings(bf);
+    var plen = vec_len(pms);
+
+    # Prerouting only if there are port mappings
+    if (plen > 0) {
+        var prerouting = chain_base("prerouting", CHAIN_NAT, HOOK_PREROUTING, 0 - 100, POLICY_ACCEPT);
+        var i = 0;
+        while (i < plen) {
+            chain_add_nat_rule(prerouting, _pm_to_nat_rule(vec_get(pms, i)));
+            i = i + 1;
+        }
+        table_add_chain(t, prerouting);
+    }
+
+    # Postrouting: masquerade
+    var postrouting = chain_base("postrouting", CHAIN_NAT, HOOK_POSTROUTING, 100, POLICY_ACCEPT);
+    chain_add_nat_rule(postrouting, container_masquerade(bridge_subnet(cfg), bridge_outbound_iface(cfg)));
+    table_add_chain(t, postrouting);
+
+    return t;
+}
+
+fn bf_to_firewall(bf) {
+    var fw = firewall_new();
+    firewall_add_table(fw, _bf_build_filter(bf));
+    firewall_add_table(fw, _bf_build_nat(bf));
+    return fw;
+}

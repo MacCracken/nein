@@ -1,0 +1,198 @@
+# nein policy module — network policies (K8s-style)
+
+enum PolicyActionEnum {
+    PACT_ALLOW = 1;
+    PACT_DENY = 2;
+}
+
+# ================================================================
+# PolicyPort — { protocol, port }
+# Layout: [protocol:8][port:8] = 16 bytes
+# ================================================================
+
+fn policy_port_new(protocol, port) {
+    var p = alloc(16);
+    store64(p, protocol);
+    store64(p + 8, port);
+    return p;
+}
+
+fn policy_port_protocol(p) { return load64(p); }
+fn policy_port_port(p) { return load64(p + 8); }
+
+# ================================================================
+# PolicyRule — { peer(str), ports(vec of PolicyPort) }
+# Layout: [peer:8][ports:8] = 16 bytes
+# ================================================================
+
+fn policy_rule_new(peer) {
+    var pr = alloc(16);
+    store64(pr, peer);
+    store64(pr + 8, vec_new());
+    return pr;
+}
+
+fn policy_rule_peer(pr) { return load64(pr); }
+fn policy_rule_ports(pr) { return load64(pr + 8); }
+
+fn policy_rule_add_port(pr, protocol, port) {
+    vec_push(load64(pr + 8), policy_port_new(protocol, port));
+    return pr;
+}
+
+# ================================================================
+# NetworkPolicy — { name, target, ingress(vec), egress(vec), default_action }
+# Layout: [name:8][target:8][ingress:8][egress:8][default_action:8] = 40 bytes
+# ================================================================
+
+fn network_policy_new(name, target, default_action) {
+    var np = alloc(40);
+    store64(np, name);
+    store64(np + 8, target);
+    store64(np + 16, vec_new());
+    store64(np + 24, vec_new());
+    store64(np + 32, default_action);
+    return np;
+}
+
+fn policy_name(np) { return load64(np); }
+fn policy_target(np) { return load64(np + 8); }
+fn policy_ingress(np) { return load64(np + 16); }
+fn policy_egress(np) { return load64(np + 24); }
+fn policy_default_action(np) { return load64(np + 32); }
+
+fn policy_add_ingress(np, pr) {
+    vec_push(load64(np + 16), pr);
+    return np;
+}
+
+fn policy_add_egress(np, pr) {
+    vec_push(load64(np + 24), pr);
+    return np;
+}
+
+# ================================================================
+# Validate
+# ================================================================
+
+fn _validate_policy_rules(rules) {
+    var rlen = vec_len(rules);
+    var i = 0;
+    var vr = 0;
+    while (i < rlen) {
+        var pr = vec_get(rules, i);
+        var peer = policy_rule_peer(pr);
+        # "any" peer is allowed without validation
+        if (streq(peer, "any") == 0) {
+            vr = validate_addr(peer);
+            if (is_err_result(vr) == 1) { return vr; }
+        }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+fn policy_validate(np) {
+    var vr = validate_identifier(policy_name(np));
+    if (is_err_result(vr) == 1) { return vr; }
+
+    vr = _validate_policy_rules(policy_ingress(np));
+    if (is_err_result(vr) == 1) { return vr; }
+
+    vr = _validate_policy_rules(policy_egress(np));
+    if (is_err_result(vr) == 1) { return vr; }
+
+    return nein_ok();
+}
+
+# ================================================================
+# Convert policy to rules
+# ================================================================
+
+# Build the comment string "policy:NAME direction from/to PEER"
+fn _policy_comment(name, direction, preposition, peer) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "policy:");
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, direction);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, preposition);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, peer);
+    var s = str_builder_build(sb);
+    # Need null-terminated cstr for rule_set_comment
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+fn policy_to_rules(np) {
+    var rules = vec_new();
+    var name = policy_name(np);
+
+    # Ingress: accept on dport with optional source addr
+    var ing = policy_ingress(np);
+    var ilen = vec_len(ing);
+    var i = 0;
+    while (i < ilen) {
+        var pr = vec_get(ing, i);
+        var peer = policy_rule_peer(pr);
+        var ports = policy_rule_ports(pr);
+        var plen = vec_len(ports);
+        var j = 0;
+        while (j < plen) {
+            var pp = vec_get(ports, j);
+            var r = rule_new(verdict_accept());
+            rule_add_match(r, match_protocol(policy_port_protocol(pp)));
+            rule_add_match(r, match_dport(policy_port_port(pp)));
+            if (streq(peer, "any") == 0) {
+                rule_add_match(r, match_source_addr(peer));
+            }
+            rule_set_comment(r, _policy_comment(name, "ingress", "from", peer));
+            vec_push(rules, r);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    # Egress: accept on dport with optional dest addr
+    var eg = policy_egress(np);
+    var elen = vec_len(eg);
+    i = 0;
+    while (i < elen) {
+        var pr = vec_get(eg, i);
+        var peer = policy_rule_peer(pr);
+        var ports = policy_rule_ports(pr);
+        var plen = vec_len(ports);
+        var j = 0;
+        while (j < plen) {
+            var pp = vec_get(ports, j);
+            var r = rule_new(verdict_accept());
+            rule_add_match(r, match_protocol(policy_port_protocol(pp)));
+            rule_add_match(r, match_dport(policy_port_port(pp)));
+            if (streq(peer, "any") == 0) {
+                rule_add_match(r, match_dest_addr(peer));
+            }
+            rule_set_comment(r, _policy_comment(name, "egress", "to", peer));
+            vec_push(rules, r);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    return rules;
+}
+
+# ================================================================
+# Convenience: agent-to-agent policy
+# ================================================================
+
+fn agent_to_agent(name, source, dest, protocol, port) {
+    var np = network_policy_new(name, dest, PACT_DENY);
+    var pr = policy_rule_new(source);
+    policy_rule_add_port(pr, protocol, port);
+    policy_add_ingress(np, pr);
+    return np;
+}

@@ -9,6 +9,10 @@ include "src/lib/chain.cyr"
 include "src/lib/table.cyr"
 include "src/lib/firewall.cyr"
 include "src/lib/builder.cyr"
+include "src/lib/policy.cyr"
+include "src/lib/geoip.cyr"
+include "src/lib/mesh.cyr"
+include "src/lib/bridge.cyr"
 
 # ================================================================
 # Error tests
@@ -1158,6 +1162,432 @@ fn test_builder() {
 }
 
 # ================================================================
+# Policy tests
+# ================================================================
+
+fn test_policy() {
+    test_group("policy");
+
+    # agent_to_agent policy
+    var np = agent_to_agent("hoosh-to-daimon", "10.0.0.1", "10.0.0.2", PROTO_TCP, 8090);
+    var rules = policy_to_rules(np);
+    assert(vec_len(rules) == 1, "one rule");
+    var rendered = rule_render(vec_get(rules, 0));
+    assert(str_contains_cstr(rendered, "ip saddr 10.0.0.1") == 1, "source addr");
+    assert(str_contains_cstr(rendered, "dport 8090") == 1, "dport");
+    assert(str_contains_cstr(rendered, "accept") == 1, "accept");
+
+    # Validate good
+    assert(is_ok(policy_validate(np)) == 1, "good policy ok");
+
+    # Bad name
+    np = agent_to_agent("evil;name", "10.0.0.1", "10.0.0.2", PROTO_TCP, 80);
+    assert(is_err_result(policy_validate(np)) == 1, "bad name rejected");
+
+    # Bad peer
+    np = agent_to_agent("allow-web", "10.0.0.1; drop", "10.0.0.2", PROTO_TCP, 80);
+    assert(is_err_result(policy_validate(np)) == 1, "bad peer rejected");
+
+    # Egress policy
+    np = network_policy_new("egress-test", "10.0.0.1", PACT_DENY);
+    var pr = policy_rule_new("10.0.0.2");
+    policy_rule_add_port(pr, PROTO_TCP, 443);
+    policy_add_egress(np, pr);
+    rules = policy_to_rules(np);
+    assert(vec_len(rules) == 1, "egress one rule");
+    rendered = rule_render(vec_get(rules, 0));
+    assert(str_contains_cstr(rendered, "ip daddr 10.0.0.2") == 1, "egress dest");
+    assert(str_contains_cstr(rendered, "dport 443") == 1, "egress dport");
+    assert(str_contains_cstr(rendered, "egress to 10.0.0.2") == 1, "egress comment");
+
+    # "any" source: no saddr match
+    np = network_policy_new("public-web", "webserver", PACT_DENY);
+    pr = policy_rule_new("any");
+    policy_rule_add_port(pr, PROTO_TCP, 80);
+    policy_rule_add_port(pr, PROTO_TCP, 443);
+    policy_add_ingress(np, pr);
+    rules = policy_to_rules(np);
+    assert(vec_len(rules) == 2, "two rules from 2 ports");
+    rendered = rule_render(vec_get(rules, 0));
+    assert(str_contains_cstr(rendered, "saddr") == 0, "any src has no saddr");
+
+    # "any" dest: no daddr match
+    np = network_policy_new("egress-any", "10.0.0.1", PACT_ALLOW);
+    pr = policy_rule_new("any");
+    policy_rule_add_port(pr, PROTO_TCP, 80);
+    policy_add_egress(np, pr);
+    rules = policy_to_rules(np);
+    assert(vec_len(rules) == 1, "any egress one rule");
+    rendered = rule_render(vec_get(rules, 0));
+    assert(str_contains_cstr(rendered, "daddr") == 0, "any dst has no daddr");
+
+    return 0;
+}
+
+# ================================================================
+# GeoIP tests
+# ================================================================
+
+fn test_geoip() {
+    test_group("geoip");
+
+    # Empty blocklist
+    var bl = geoip_new();
+    assert(str_len(firewall_render(geoip_to_firewall(bl))) == 0, "empty render");
+
+    # Single country v4
+    bl = geoip_new();
+    var cidrs = vec_new();
+    vec_push(cidrs, "1.0.0.0/8");
+    vec_push(cidrs, "2.0.0.0/8");
+    geoip_block_country(bl, country_block_v4("CN", cidrs));
+    var rendered = firewall_render(geoip_to_firewall(bl));
+    assert(str_contains_cstr(rendered, "table ip nein_geoip") == 1, "v4 table");
+    assert(str_contains_cstr(rendered, "set geo_cn") == 1, "v4 set");
+    assert(str_contains_cstr(rendered, "type ipv4_addr") == 1, "v4 type");
+    assert(str_contains_cstr(rendered, "flags interval") == 1, "interval flag");
+    assert(str_contains_cstr(rendered, "1.0.0.0/8, 2.0.0.0/8") == 1, "v4 cidrs");
+    assert(str_contains_cstr(rendered, "ip saddr @geo_cn drop") == 1, "v4 rule");
+    assert(str_contains_cstr(rendered, "geoblock CN") == 1, "v4 comment");
+
+    # Dual stack
+    bl = geoip_new();
+    var v4 = vec_new(); vec_push(v4, "5.0.0.0/8");
+    var v6 = vec_new(); vec_push(v6, "2a00::/12");
+    geoip_block_country(bl, country_block_dual("RU", v4, v6));
+    rendered = firewall_render(geoip_to_firewall(bl));
+    assert(str_contains_cstr(rendered, "table ip nein_geoip") == 1, "dual v4 table");
+    assert(str_contains_cstr(rendered, "table ip6 nein_geoip_v6") == 1, "dual v6 table");
+    assert(str_contains_cstr(rendered, "type ipv4_addr") == 1, "dual v4 type");
+    assert(str_contains_cstr(rendered, "type ipv6_addr") == 1, "dual v6 type");
+    assert(str_contains_cstr(rendered, "ip saddr @geo_ru") == 1, "dual v4 rule");
+    assert(str_contains_cstr(rendered, "ip6 saddr @geo_ru") == 1, "dual v6 rule");
+
+    # Custom table name
+    bl = geoip_new();
+    geoip_set_table_name(bl, "aegis_geo");
+    var c = vec_new(); vec_push(c, "1.0.0.0/8");
+    geoip_block_country(bl, country_block_v4("CN", c));
+    rendered = firewall_render(geoip_to_firewall(bl));
+    assert(str_contains_cstr(rendered, "table ip aegis_geo") == 1, "custom table name");
+
+    # Custom hook
+    bl = geoip_new();
+    geoip_set_hook(bl, HOOK_FORWARD);
+    c = vec_new(); vec_push(c, "1.0.0.0/8");
+    geoip_block_country(bl, country_block_v4("CN", c));
+    rendered = firewall_render(geoip_to_firewall(bl));
+    assert(str_contains_cstr(rendered, "hook forward") == 1, "custom hook");
+
+    # Validate good
+    bl = geoip_new();
+    c = vec_new(); vec_push(c, "3.0.0.0/8");
+    geoip_block_country(bl, country_block_v4("US", c));
+    assert(is_ok(geoip_validate(bl)) == 1, "good geoip ok");
+    # firewall validates too
+    assert(is_ok(firewall_validate(geoip_to_firewall(bl))) == 1, "geoip firewall valid");
+
+    # Bad country code
+    bl = geoip_new();
+    c = vec_new(); vec_push(c, "1.0.0.0/8");
+    geoip_block_country(bl, country_block_v4("invalid", c));
+    assert(is_err_result(geoip_validate(bl)) == 1, "bad country code rejected");
+
+    # Bad cidr
+    bl = geoip_new();
+    c = vec_new(); vec_push(c, "evil;cidr");
+    geoip_block_country(bl, country_block_v4("CN", c));
+    assert(is_err_result(geoip_validate(bl)) == 1, "bad cidr rejected");
+
+    # Bad v6 cidr
+    bl = geoip_new();
+    v4 = vec_new();
+    v6 = vec_new(); vec_push(v6, "evil;v6");
+    geoip_block_country(bl, country_block_dual("RU", v4, v6));
+    assert(is_err_result(geoip_validate(bl)) == 1, "bad v6 cidr rejected");
+
+    # Bad table name
+    bl = geoip_new();
+    geoip_set_table_name(bl, "bad;table");
+    assert(is_err_result(geoip_validate(bl)) == 1, "bad table name rejected");
+
+    # v6-only country: only v6 table rendered
+    bl = geoip_new();
+    v4 = vec_new();
+    v6 = vec_new(); vec_push(v6, "2001::/16");
+    geoip_block_country(bl, country_block_dual("JP", v4, v6));
+    rendered = firewall_render(geoip_to_firewall(bl));
+    assert(str_contains_cstr(rendered, "table ip nein_geoip {") == 0, "no v4 table");
+    assert(str_contains_cstr(rendered, "table ip6 nein_geoip_v6") == 1, "v6 table only");
+
+    return 0;
+}
+
+# ================================================================
+# Mesh tests
+# ================================================================
+
+fn test_mesh() {
+    test_group("mesh");
+
+    # Envoy defaults
+    var m = mesh_envoy();
+    assert_eq(mesh_inbound_port(m), 15006, "inbound port");
+    assert_eq(mesh_outbound_port(m), 15001, "outbound port");
+    assert_eq(mesh_proxy_uid(m), 1337, "proxy uid");
+    var cidrs = mesh_excl_out_cidrs(m);
+    assert(vec_len(cidrs) == 1, "one cidr");
+    assert(streq(vec_get(cidrs, 0), "127.0.0.0/8") == 1, "localhost");
+
+    # Render envoy defaults
+    m = mesh_envoy();
+    var rendered = firewall_render(mesh_to_firewall(m));
+    assert(str_contains_cstr(rendered, "table ip nein_mesh") == 1, "table");
+    assert(str_contains_cstr(rendered, "chain mesh_outbound") == 1, "outbound chain");
+    assert(str_contains_cstr(rendered, "chain mesh_inbound") == 1, "inbound chain");
+    assert(str_contains_cstr(rendered, "meta skuid 1337") == 1, "skuid");
+    assert(str_contains_cstr(rendered, "skip proxy traffic") == 1, "skip proxy comment");
+    assert(str_contains_cstr(rendered, "ip daddr 127.0.0.0/8") == 1, "localhost daddr");
+    assert(str_contains_cstr(rendered, "skip outbound 127.0.0.0/8") == 1, "localhost comment");
+    assert(str_contains_cstr(rendered, "redirect to :15001") == 1, "outbound redirect");
+    assert(str_contains_cstr(rendered, "redirect to :15006") == 1, "inbound redirect");
+
+    # Custom ports + UID
+    m = mesh_envoy();
+    mesh_set_inbound_port(m, 20000);
+    mesh_set_outbound_port(m, 20001);
+    mesh_set_proxy_uid(m, 5000);
+    rendered = firewall_render(mesh_to_firewall(m));
+    assert(str_contains_cstr(rendered, "meta skuid 5000") == 1, "custom uid");
+    assert(str_contains_cstr(rendered, "redirect to :20001") == 1, "custom outbound");
+    assert(str_contains_cstr(rendered, "redirect to :20000") == 1, "custom inbound");
+
+    # Exclude outbound ports
+    m = mesh_envoy();
+    mesh_exclude_outbound_port(m, 9090);
+    mesh_exclude_outbound_port(m, 8081);
+    rendered = firewall_render(mesh_to_firewall(m));
+    assert(str_contains_cstr(rendered, "skip outbound port 9090") == 1, "excl out 9090");
+    assert(str_contains_cstr(rendered, "skip outbound port 8081") == 1, "excl out 8081");
+    assert(str_contains_cstr(rendered, "dport 9090") == 1, "excl out dport");
+
+    # Exclude inbound ports
+    m = mesh_envoy();
+    mesh_exclude_inbound_port(m, 15090);
+    mesh_exclude_inbound_port(m, 15021);
+    rendered = firewall_render(mesh_to_firewall(m));
+    assert(str_contains_cstr(rendered, "skip inbound port 15090") == 1, "excl in 15090");
+    assert(str_contains_cstr(rendered, "skip inbound port 15021") == 1, "excl in 15021");
+
+    # Exclude outbound CIDRs
+    m = mesh_envoy();
+    mesh_exclude_outbound_cidr(m, "10.0.0.0/8");
+    mesh_exclude_outbound_cidr(m, "169.254.0.0/16");
+    rendered = firewall_render(mesh_to_firewall(m));
+    assert(str_contains_cstr(rendered, "skip outbound 10.0.0.0/8") == 1, "excl cidr 10");
+    assert(str_contains_cstr(rendered, "skip outbound 169.254.0.0/16") == 1, "excl cidr link-local");
+
+    # Custom table name
+    m = mesh_envoy();
+    mesh_set_table_name(m, "daimon_mesh");
+    rendered = firewall_render(mesh_to_firewall(m));
+    assert(str_contains_cstr(rendered, "table ip daimon_mesh") == 1, "custom table");
+
+    # Validate good
+    assert(is_ok(mesh_validate(mesh_envoy())) == 1, "good mesh ok");
+
+    # Bad table name
+    m = mesh_envoy();
+    mesh_set_table_name(m, "bad;name");
+    assert(is_err_result(mesh_validate(m)) == 1, "bad table rejected");
+
+    # Bad cidr
+    m = mesh_envoy();
+    mesh_exclude_outbound_cidr(m, "evil;cidr");
+    assert(is_err_result(mesh_validate(m)) == 1, "bad cidr rejected");
+
+    # Firewall validates
+    m = mesh_envoy();
+    mesh_exclude_outbound_port(m, 9090);
+    mesh_exclude_inbound_port(m, 15090);
+    assert(is_ok(firewall_validate(mesh_to_firewall(m))) == 1, "firewall validates");
+
+    # No exclusions
+    m = mesh_envoy();
+    mesh_clear_excl_out_cidrs(m);
+    rendered = firewall_render(mesh_to_firewall(m));
+    assert(str_contains_cstr(rendered, "meta skuid 1337") == 1, "still has uid skip");
+    assert(str_contains_cstr(rendered, "redirect to :15001") == 1, "still redirects out");
+    assert(str_contains_cstr(rendered, "redirect to :15006") == 1, "still redirects in");
+    assert(str_contains_cstr(rendered, "skip outbound 127") == 0, "no localhost skip");
+
+    return 0;
+}
+
+# ================================================================
+# Bridge tests
+# ================================================================
+
+fn _test_bridge_config() {
+    return bridge_config_new("br0", "172.17.0.0/16", "eth0");
+}
+
+fn test_bridge() {
+    test_group("bridge");
+
+    # Config validate
+    assert(is_ok(bridge_config_validate(_test_bridge_config())) == 1, "good config ok");
+
+    # Bad iface
+    var cfg = bridge_config_new("evil;iface", "172.17.0.0/16", "eth0");
+    assert(is_err_result(bridge_config_validate(cfg)) == 1, "bad iface rejected");
+
+    # Custom prefix
+    cfg = _test_bridge_config();
+    bridge_set_table_prefix(cfg, "stiva");
+    assert(streq(bridge_table_prefix(cfg), "stiva") == 1, "custom prefix");
+
+    # PortMapping TCP
+    var pm = pm_tcp(8080, "172.17.0.2", 80);
+    assert_eq(pm_protocol(pm), PROTO_TCP, "pm tcp proto");
+    assert(is_ok(pm_validate(pm)) == 1, "pm good validate");
+
+    # PortMapping bad addr
+    pm = pm_tcp(8080, "evil;addr", 80);
+    assert(is_err_result(pm_validate(pm)) == 1, "pm bad addr rejected");
+
+    # Add/remove port mappings
+    var bf = bridge_firewall_new(_test_bridge_config());
+    assert(vec_len(bf_port_mappings(bf)) == 0, "empty mappings");
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
+    bf_add_port_mapping(bf, pm_tcp(8443, "172.17.0.2", 443));
+    bf_add_port_mapping(bf, pm_udp(5353, "172.17.0.3", 53));
+    assert(vec_len(bf_port_mappings(bf)) == 3, "three mappings");
+
+    var removed = bf_remove_port_mapping(bf, 8080, PROTO_TCP);
+    assert(is_some(removed) == 1, "remove returns Some");
+    assert(vec_len(bf_port_mappings(bf)) == 2, "after removal");
+
+    # Remove non-existent
+    assert(is_none(bf_remove_port_mapping(bf, 9999, PROTO_TCP)) == 1, "remove missing None");
+
+    # Duplicate rejected
+    bf = bridge_firewall_new(_test_bridge_config());
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
+    var res = bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.3", 90));
+    assert(is_err_result(res) == 1, "duplicate rejected");
+    # Different protocol same port: ok
+    res = bf_add_port_mapping(bf, pm_udp(8080, "172.17.0.2", 80));
+    assert(is_ok(res) == 1, "different proto same port ok");
+
+    # Render no mappings no isolation
+    bf = bridge_firewall_new(_test_bridge_config());
+    var rendered = firewall_render(bf_to_firewall(bf));
+    assert(str_contains_cstr(rendered, "table inet nein_filter") == 1, "filter table");
+    assert(str_contains_cstr(rendered, "table ip nein_nat") == 1, "nat table");
+    assert(str_contains_cstr(rendered, "bridge to outbound") == 1, "bridge outbound");
+    assert(str_contains_cstr(rendered, "intra-bridge") == 1, "intra-bridge");
+    assert(str_contains_cstr(rendered, "masquerade") == 1, "masquerade");
+    assert(str_contains_cstr(rendered, "prerouting") == 0, "no prerouting");
+
+    # Render with port mappings
+    bf = bridge_firewall_new(_test_bridge_config());
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
+    bf_add_port_mapping(bf, pm_udp(5353, "172.17.0.3", 53));
+    rendered = firewall_render(bf_to_firewall(bf));
+    assert(str_contains_cstr(rendered, "dnat to 172.17.0.2:80") == 1, "dnat 80");
+    assert(str_contains_cstr(rendered, "dnat to 172.17.0.3:53") == 1, "dnat 53");
+    assert(str_contains_cstr(rendered, "ip daddr 172.17.0.2") == 1, "daddr 172.17.0.2");
+    assert(str_contains_cstr(rendered, "ip daddr 172.17.0.3") == 1, "daddr 172.17.0.3");
+
+    # Render with isolation
+    bf = bridge_firewall_new(_test_bridge_config());
+    var front = vec_new(); vec_push(front, "172.17.1.0/24");
+    bf_add_isolation_group(bf, isolation_group_new("frontend", front));
+    var back = vec_new(); vec_push(back, "172.17.2.0/24");
+    bf_add_isolation_group(bf, isolation_group_new("backend", back));
+    rendered = firewall_render(bf_to_firewall(bf));
+    assert(str_contains_cstr(rendered, "set iso_frontend") == 1, "iso set frontend");
+    assert(str_contains_cstr(rendered, "set iso_backend") == 1, "iso set backend");
+    assert(str_contains_cstr(rendered, "intra-group: frontend") == 1, "intra-group frontend");
+    assert(str_contains_cstr(rendered, "intra-group: backend") == 1, "intra-group backend");
+    assert(str_contains_cstr(rendered, "bridge to outbound") == 1, "bridge outbound w/ iso");
+    assert(str_contains_cstr(rendered, "intra-bridge") == 0, "no intra-bridge with iso");
+
+    # Validate full
+    bf = bridge_firewall_new(_test_bridge_config());
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
+    var web = vec_new(); vec_push(web, "172.17.1.0/24");
+    bf_add_isolation_group(bf, isolation_group_new("web", web));
+    assert(is_ok(bf_validate(bf)) == 1, "full bridge validates");
+
+    # Bad group name
+    bf = bridge_firewall_new(_test_bridge_config());
+    var bad = vec_new(); vec_push(bad, "172.17.1.0/24");
+    bf_add_isolation_group(bf, isolation_group_new("bad;name", bad));
+    assert(is_err_result(bf_validate(bf)) == 1, "bad group name rejected");
+
+    # Bad group cidr
+    bf = bridge_firewall_new(_test_bridge_config());
+    var badc = vec_new(); vec_push(badc, "not-a-cidr");
+    bf_add_isolation_group(bf, isolation_group_new("web", badc));
+    assert(is_err_result(bf_validate(bf)) == 1, "bad cidr rejected");
+
+    # Firewall validates
+    bf = bridge_firewall_new(_test_bridge_config());
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
+    assert(is_ok(firewall_validate(bf_to_firewall(bf))) == 1, "generated firewall valid");
+
+    # Custom prefix renders correctly
+    cfg = _test_bridge_config();
+    bridge_set_table_prefix(cfg, "stiva");
+    bf = bridge_firewall_new(cfg);
+    rendered = firewall_render(bf_to_firewall(bf));
+    assert(str_contains_cstr(rendered, "table inet stiva_filter") == 1, "custom filter table");
+    assert(str_contains_cstr(rendered, "table ip stiva_nat") == 1, "custom nat table");
+
+    # After removal renders correctly
+    bf = bridge_firewall_new(_test_bridge_config());
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
+    bf_add_port_mapping(bf, pm_tcp(8443, "172.17.0.2", 443));
+    bf_remove_port_mapping(bf, 8080, PROTO_TCP);
+    rendered = firewall_render(bf_to_firewall(bf));
+    assert(str_contains_cstr(rendered, "dnat to 172.17.0.2:80") == 0, "removed dnat gone");
+    assert(str_contains_cstr(rendered, "dnat to 172.17.0.2:443") == 1, "kept dnat present");
+
+    # Empty isolation group
+    bf = bridge_firewall_new(_test_bridge_config());
+    bf_add_isolation_group(bf, isolation_group_new("empty", vec_new()));
+    rendered = firewall_render(bf_to_firewall(bf));
+    assert(str_contains_cstr(rendered, "bridge to outbound") == 1, "outbound with empty");
+    assert(str_contains_cstr(rendered, "intra-group") == 0, "no intra-group for empty");
+
+    # Multi-cidr isolation: one set with both
+    bf = bridge_firewall_new(_test_bridge_config());
+    var multi = vec_new();
+    vec_push(multi, "172.17.1.0/24");
+    vec_push(multi, "172.17.2.0/24");
+    bf_add_isolation_group(bf, isolation_group_new("web", multi));
+    rendered = firewall_render(bf_to_firewall(bf));
+    assert(str_contains_cstr(rendered, "set iso_web") == 1, "multi-cidr set");
+    assert(str_contains_cstr(rendered, "172.17.1.0/24, 172.17.2.0/24") == 1, "both cidrs in set");
+    assert(str_contains_cstr(rendered, "ip saddr @iso_web") == 1, "saddr lookup");
+    assert(str_contains_cstr(rendered, "ip daddr @iso_web") == 1, "daddr lookup");
+
+    # Isolation + port mappings combined
+    bf = bridge_firewall_new(_test_bridge_config());
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.1.5", 80));
+    var iso_web = vec_new(); vec_push(iso_web, "172.17.1.0/24");
+    bf_add_isolation_group(bf, isolation_group_new("web", iso_web));
+    rendered = firewall_render(bf_to_firewall(bf));
+    assert(str_contains_cstr(rendered, "allow portmap -> 172.17.1.5:80") == 1, "portmap forward");
+    assert(str_contains_cstr(rendered, "intra-group: web") == 1, "iso web with pm");
+    assert(str_contains_cstr(rendered, "dnat to 172.17.1.5:80") == 1, "pm dnat");
+
+    return 0;
+}
+
+# ================================================================
 # Main
 # ================================================================
 
@@ -1212,6 +1642,18 @@ fn main() {
 
     # builder
     test_builder();
+
+    # policy
+    test_policy();
+
+    # geoip
+    test_geoip();
+
+    # mesh
+    test_mesh();
+
+    # bridge
+    test_bridge();
 
     return assert_summary();
 }
