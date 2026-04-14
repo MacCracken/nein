@@ -1,0 +1,348 @@
+# nein apply module — execute nftables rules via the nft command
+#
+# Uses fork+pipe+execve to spawn `nft -f -` with the ruleset piped on stdin.
+# Synchronous — subprocess I/O is short-lived and doesn't need async.
+# stderr is captured via a second pipe for error reporting.
+
+# ================================================================
+# Low-level: spawn nft with stdin from buffer, capture stderr
+# Returns Ok(0) on exit 0, Err(ERR_NFT_FAILED) on non-zero or failure.
+# ================================================================
+
+fn _run_nft_stdin(input_buf, input_len) {
+    var pipe_in[16];
+    var pipe_err[16];
+
+    if (syscall(SYS_PIPE, &pipe_in) < 0) { return nein_err(ERR_NFT_FAILED); }
+    if (syscall(SYS_PIPE, &pipe_err) < 0) {
+        sys_close(load32(&pipe_in));
+        sys_close(load32(&pipe_in + 4));
+        return nein_err(ERR_NFT_FAILED);
+    }
+
+    var in_rfd = load32(&pipe_in);
+    var in_wfd = load32(&pipe_in + 4);
+    var err_rfd = load32(&pipe_err);
+    var err_wfd = load32(&pipe_err + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(in_rfd); sys_close(in_wfd);
+        sys_close(err_rfd); sys_close(err_wfd);
+        return nein_err(ERR_NFT_FAILED);
+    }
+
+    if (pid == 0) {
+        # Child: replace stdin with read end, stderr with err_wfd, exec nft -f -
+        sys_dup2(in_rfd, 0);
+        sys_dup2(err_wfd, 2);
+        sys_close(in_rfd); sys_close(in_wfd);
+        sys_close(err_rfd); sys_close(err_wfd);
+
+        # argv: ["nft", "-f", "-", 0]
+        var argv = alloc(32);
+        store64(argv, "nft");
+        store64(argv + 8, "-f");
+        store64(argv + 16, "-");
+        store64(argv + 24, 0);
+        sys_execve("/usr/sbin/nft", argv, 0);
+        # Fallback path
+        sys_execve("/sbin/nft", argv, 0);
+        sys_execve("/usr/bin/nft", argv, 0);
+        sys_exit(127);
+    }
+
+    # Parent: close unused ends
+    sys_close(in_rfd);
+    sys_close(err_wfd);
+
+    # Write ruleset to nft's stdin
+    var written = 0;
+    while (written < input_len) {
+        var n = sys_write(in_wfd, input_buf + written, input_len - written);
+        if (n <= 0) { break; }
+        written = written + n;
+    }
+    sys_close(in_wfd);
+
+    # Drain stderr (ignored unless we need it for diagnostics)
+    var errbuf[4096];
+    while (sys_read(err_rfd, &errbuf, 4096) > 0) { }
+    sys_close(err_rfd);
+
+    # Wait for child
+    var status = 0;
+    sys_waitpid(pid, &status, 0);
+
+    if (WIFEXITED(status) == 1) {
+        if (WEXITSTATUS(status) == 127) { return nein_err(ERR_PERMISSION_DENIED); }
+        if (WEXITSTATUS(status) != 0) { return nein_err(ERR_NFT_FAILED); }
+        return nein_ok();
+    }
+    return nein_err(ERR_NFT_FAILED);
+}
+
+# ================================================================
+# Low-level: spawn nft with args, capture stdout into a Str
+# Returns Ok(stdout_str) on success, Err on failure.
+# ================================================================
+
+fn _run_nft_capture(argv, nft_path) {
+    var pipe_out[16];
+    if (syscall(SYS_PIPE, &pipe_out) < 0) { return nein_err(ERR_NFT_FAILED); }
+
+    var out_rfd = load32(&pipe_out);
+    var out_wfd = load32(&pipe_out + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(out_rfd); sys_close(out_wfd);
+        return nein_err(ERR_NFT_FAILED);
+    }
+
+    if (pid == 0) {
+        sys_dup2(out_wfd, 1);
+        sys_close(out_rfd); sys_close(out_wfd);
+        sys_execve("/usr/sbin/nft", argv, 0);
+        sys_execve("/sbin/nft", argv, 0);
+        sys_execve("/usr/bin/nft", argv, 0);
+        sys_exit(127);
+    }
+
+    sys_close(out_wfd);
+
+    # Accumulate stdout into a str_builder
+    var sb = str_builder_new();
+    var buf[4096];
+    var n = sys_read(out_rfd, &buf, 4096);
+    while (n > 0) {
+        # str_builder_add takes a Str; we have raw bytes. Use byte-at-a-time.
+        var i = 0;
+        while (i < n) {
+            str_builder_add_byte(sb, load8(&buf + i));
+            i = i + 1;
+        }
+        n = sys_read(out_rfd, &buf, 4096);
+    }
+    sys_close(out_rfd);
+
+    var status = 0;
+    sys_waitpid(pid, &status, 0);
+
+    if (WIFEXITED(status) == 1) {
+        if (WEXITSTATUS(status) == 127) { return nein_err(ERR_PERMISSION_DENIED); }
+        if (WEXITSTATUS(status) != 0) { return nein_err(ERR_NFT_FAILED); }
+        return Ok(str_builder_build(sb));
+    }
+    return nein_err(ERR_NFT_FAILED);
+}
+
+# ================================================================
+# Build a small nft command string + deliver it over stdin
+# ================================================================
+
+fn _nft_cmd(cmd_cstr) {
+    return _run_nft_stdin(cmd_cstr, strlen(cmd_cstr));
+}
+
+# ================================================================
+# Public: batch operations
+# ================================================================
+
+# Apply a ruleset (Str or cstr). For Str, caller should use apply_ruleset_str.
+fn apply_ruleset_cstr(ruleset_cstr) {
+    return _run_nft_stdin(ruleset_cstr, strlen(ruleset_cstr));
+}
+
+fn apply_ruleset_str(ruleset_str) {
+    return _run_nft_stdin(str_data(ruleset_str), str_len(ruleset_str));
+}
+
+fn apply_firewall(fw) {
+    var vr = firewall_validate(fw);
+    if (is_err_result(vr) == 1) { return vr; }
+    var ruleset = firewall_render(fw);
+    return apply_ruleset_str(ruleset);
+}
+
+fn flush_ruleset() {
+    return _nft_cmd("flush ruleset\n");
+}
+
+# ================================================================
+# Public: table/chain operations
+# ================================================================
+
+fn _build_nft_line(verb, family, table, chain_or_null) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, verb);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, family);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, table);
+    if (chain_or_null != 0) {
+        str_builder_add_cstr(sb, " ");
+        str_builder_add_cstr(sb, chain_or_null);
+    }
+    str_builder_add_cstr(sb, "\n");
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+fn flush_table(family, table) {
+    var vr = validate_family(family);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(table);
+    if (is_err_result(vr) == 1) { return vr; }
+    return _nft_cmd(_build_nft_line("flush table", family, table, 0));
+}
+
+fn delete_table(family, table) {
+    var vr = validate_family(family);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(table);
+    if (is_err_result(vr) == 1) { return vr; }
+    return _nft_cmd(_build_nft_line("delete table", family, table, 0));
+}
+
+fn flush_chain(family, table, chain) {
+    var vr = validate_family(family);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(table);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(chain);
+    if (is_err_result(vr) == 1) { return vr; }
+    return _nft_cmd(_build_nft_line("flush chain", family, table, chain));
+}
+
+fn delete_chain(family, table, chain) {
+    var vr = validate_family(family);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(table);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(chain);
+    if (is_err_result(vr) == 1) { return vr; }
+    return _nft_cmd(_build_nft_line("delete chain", family, table, chain));
+}
+
+# ================================================================
+# Public: incremental rule operations
+# ================================================================
+
+# Helper: build "add rule FAM TAB CHN RULE\n" variants
+fn _build_rule_line(verb_prefix, family, table, chain, rule, suffix_prefix, suffix_val) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, verb_prefix);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, family);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, table);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, chain);
+    if (suffix_prefix != 0) {
+        str_builder_add_cstr(sb, " ");
+        str_builder_add_cstr(sb, suffix_prefix);
+        str_builder_add_cstr(sb, " ");
+        str_builder_add_int(sb, suffix_val);
+    }
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, rule);
+    str_builder_add_cstr(sb, "\n");
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+fn _validate_rule_args(family, table, chain, rule) {
+    var vr = validate_family(family);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(table);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(chain);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_nft_element(rule);
+    if (is_err_result(vr) == 1) { return vr; }
+    return nein_ok();
+}
+
+# add rule FAM TAB CHN RULE
+fn add_rule_live(family, table, chain, rule) {
+    var vr = _validate_rule_args(family, table, chain, rule);
+    if (is_err_result(vr) == 1) { return vr; }
+    return _nft_cmd(_build_rule_line("add rule", family, table, chain, rule, 0, 0));
+}
+
+# insert rule FAM TAB CHN RULE (prepends)
+fn insert_rule_live(family, table, chain, rule) {
+    var vr = _validate_rule_args(family, table, chain, rule);
+    if (is_err_result(vr) == 1) { return vr; }
+    return _nft_cmd(_build_rule_line("insert rule", family, table, chain, rule, 0, 0));
+}
+
+# add rule FAM TAB CHN position POS RULE
+fn add_rule_after_live(family, table, chain, position_handle, rule) {
+    var vr = _validate_rule_args(family, table, chain, rule);
+    if (is_err_result(vr) == 1) { return vr; }
+    return _nft_cmd(_build_rule_line("add rule", family, table, chain, rule, "position", position_handle));
+}
+
+# replace rule FAM TAB CHN handle H RULE
+fn replace_rule_live(family, table, chain, handle, new_rule) {
+    var vr = _validate_rule_args(family, table, chain, new_rule);
+    if (is_err_result(vr) == 1) { return vr; }
+    return _nft_cmd(_build_rule_line("replace rule", family, table, chain, new_rule, "handle", handle));
+}
+
+# delete rule FAM TAB CHN handle H
+fn delete_rule_live(family, table, chain, handle) {
+    var vr = validate_family(family);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(table);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(chain);
+    if (is_err_result(vr) == 1) { return vr; }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "delete rule ");
+    str_builder_add_cstr(sb, family);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, table);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, chain);
+    str_builder_add_cstr(sb, " handle ");
+    str_builder_add_int(sb, handle);
+    str_builder_add_cstr(sb, "\n");
+    var s = str_builder_build(sb);
+    var cstr = alloc(str_len(s) + 1);
+    memcpy(cstr, str_data(s), str_len(s));
+    store8(cstr + str_len(s), 0);
+    return _nft_cmd(cstr);
+}
+
+# ================================================================
+# Public: list / inspect
+# ================================================================
+
+fn list_ruleset() {
+    var argv = alloc(32);
+    store64(argv, "nft");
+    store64(argv + 8, "list");
+    store64(argv + 16, "ruleset");
+    store64(argv + 24, 0);
+    return _run_nft_capture(argv, 0);
+}
+
+fn list_ruleset_with_handles() {
+    var argv = alloc(40);
+    store64(argv, "nft");
+    store64(argv + 8, "-a");
+    store64(argv + 16, "list");
+    store64(argv + 24, "ruleset");
+    store64(argv + 32, 0);
+    return _run_nft_capture(argv, 0);
+}

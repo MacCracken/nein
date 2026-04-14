@@ -1,0 +1,205 @@
+# nein netns module — network namespace firewall builder
+#
+# Builds a Firewall tailored for agent network namespaces (input/output
+# chains, established tracking, loopback, optional DNS). The actual
+# apply-to-namespace side is provided by agnosys's netns.cyr:
+# `netns_apply_nftables_ruleset(handle, ruleset)` — consumers vendor
+# agnosys's netns module directly and pass `firewall_render(fw)` into it.
+#
+# This module stays lean (builder only) so the core nein library doesn't
+# transitively drag in agnosys's full netns implementation.
+
+# ================================================================
+# NamespaceFirewall — builder state
+# Layout:
+#   [agent_name:8][inbound:8][outbound:8][outbound_hosts:8]
+#   [allow_established:8][allow_loopback:8][allow_dns:8]
+#   [inbound_policy:8][outbound_policy:8]
+# = 9 * 8 = 72 bytes
+# ================================================================
+
+fn namespace_firewall_new(agent_name) {
+    var nsf = alloc(72);
+    store64(nsf, agent_name);
+    store64(nsf + 8, vec_new());      # allowed_inbound
+    store64(nsf + 16, vec_new());     # allowed_outbound
+    store64(nsf + 24, vec_new());     # allowed_outbound_hosts
+    store64(nsf + 32, 1);             # allow_established (default on)
+    store64(nsf + 40, 1);             # allow_loopback (default on)
+    store64(nsf + 48, 1);             # allow_dns (default on)
+    store64(nsf + 56, POLICY_DROP);   # inbound_policy (default drop)
+    store64(nsf + 64, POLICY_ACCEPT); # outbound_policy (default accept)
+    return nsf;
+}
+
+fn nsf_agent_name(nsf) { return load64(nsf); }
+fn nsf_inbound(nsf) { return load64(nsf + 8); }
+fn nsf_outbound(nsf) { return load64(nsf + 16); }
+fn nsf_outbound_hosts(nsf) { return load64(nsf + 24); }
+fn nsf_allow_established(nsf) { return load64(nsf + 32); }
+fn nsf_allow_loopback(nsf) { return load64(nsf + 40); }
+fn nsf_allow_dns(nsf) { return load64(nsf + 48); }
+fn nsf_inbound_policy(nsf) { return load64(nsf + 56); }
+fn nsf_outbound_policy(nsf) { return load64(nsf + 64); }
+
+fn nsf_allow_inbound(nsf, ps) { vec_push(load64(nsf + 8), ps); return nsf; }
+fn nsf_allow_outbound(nsf, ps) { vec_push(load64(nsf + 16), ps); return nsf; }
+fn nsf_allow_outbound_host(nsf, cidr) { vec_push(load64(nsf + 24), cidr); return nsf; }
+fn nsf_set_inbound_policy(nsf, p) { store64(nsf + 56, p); return nsf; }
+fn nsf_set_outbound_policy(nsf, p) { store64(nsf + 64, p); return nsf; }
+fn nsf_no_established(nsf) { store64(nsf + 32, 0); return nsf; }
+fn nsf_no_loopback(nsf) { store64(nsf + 40, 0); return nsf; }
+fn nsf_no_dns(nsf) { store64(nsf + 48, 0); return nsf; }
+
+# ================================================================
+# Comment builders
+# ================================================================
+
+fn _nsf_cstr_from_sb(sb) {
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# "AGENT loopback"
+fn _nsf_loopback_comment(agent_name) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_name);
+    str_builder_add_cstr(sb, " loopback");
+    return _nsf_cstr_from_sb(sb);
+}
+
+# "AGENT loopback out"
+fn _nsf_loopback_out_comment(agent_name) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_name);
+    str_builder_add_cstr(sb, " loopback out");
+    return _nsf_cstr_from_sb(sb);
+}
+
+# "AGENT dns"
+fn _nsf_dns_comment(agent_name) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_name);
+    str_builder_add_cstr(sb, " dns");
+    return _nsf_cstr_from_sb(sb);
+}
+
+# "AGENT DIR PROTO:PORT"
+fn _nsf_port_comment(agent_name, direction, protocol, port) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_name);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, direction);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, _proto_str(protocol));
+    str_builder_add_cstr(sb, ":");
+    str_builder_add_int(sb, port);
+    return _nsf_cstr_from_sb(sb);
+}
+
+# "AGENT outbound PROTO:PORT -> HOST"
+fn _nsf_outbound_host_comment(agent_name, protocol, port, host) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_name);
+    str_builder_add_cstr(sb, " outbound ");
+    str_builder_add_cstr(sb, _proto_str(protocol));
+    str_builder_add_cstr(sb, ":");
+    str_builder_add_int(sb, port);
+    str_builder_add_cstr(sb, " -> ");
+    str_builder_add_cstr(sb, host);
+    return _nsf_cstr_from_sb(sb);
+}
+
+# ================================================================
+# Build the Firewall
+# ================================================================
+
+fn nsf_build(nsf) {
+    var fw = firewall_new();
+    var t = table_new("agnos_agent", FAMILY_INET);
+    var agent_name = nsf_agent_name(nsf);
+
+    # Input chain
+    var input = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, nsf_inbound_policy(nsf));
+
+    if (nsf_allow_established(nsf) == 1) {
+        chain_add_rule(input, allow_established());
+    }
+    if (nsf_allow_loopback(nsf) == 1) {
+        var r = rule_new(verdict_accept());
+        rule_add_match(r, match_iif("lo"));
+        rule_set_comment(r, _nsf_loopback_comment(agent_name));
+        chain_add_rule(input, r);
+    }
+
+    var in_specs = nsf_inbound(nsf);
+    var ilen = vec_len(in_specs);
+    var i = 0;
+    while (i < ilen) {
+        var ps = vec_get(in_specs, i);
+        var r = rule_new(verdict_accept());
+        rule_add_match(r, match_protocol(ps_protocol(ps)));
+        rule_add_match(r, match_dport(ps_port(ps)));
+        rule_set_comment(r, _nsf_port_comment(agent_name, "inbound", ps_protocol(ps), ps_port(ps)));
+        chain_add_rule(input, r);
+        i = i + 1;
+    }
+
+    # Output chain
+    var output = chain_base("output", CHAIN_FILTER, HOOK_OUTPUT, 0, nsf_outbound_policy(nsf));
+
+    if (nsf_allow_established(nsf) == 1) {
+        chain_add_rule(output, allow_established());
+    }
+    if (nsf_allow_loopback(nsf) == 1) {
+        var r = rule_new(verdict_accept());
+        rule_add_match(r, match_oif("lo"));
+        rule_set_comment(r, _nsf_loopback_out_comment(agent_name));
+        chain_add_rule(output, r);
+    }
+    if (nsf_allow_dns(nsf) == 1) {
+        var r = rule_new(verdict_accept());
+        rule_add_match(r, match_protocol(PROTO_UDP));
+        rule_add_match(r, match_dport(53));
+        rule_set_comment(r, _nsf_dns_comment(agent_name));
+        chain_add_rule(output, r);
+    }
+
+    var out_specs = nsf_outbound(nsf);
+    var olen = vec_len(out_specs);
+    var hosts = nsf_outbound_hosts(nsf);
+    var hlen = vec_len(hosts);
+    i = 0;
+    while (i < olen) {
+        var ps = vec_get(out_specs, i);
+        if (hlen > 0) {
+            # One rule per (port, host) pair
+            var j = 0;
+            while (j < hlen) {
+                var host = vec_get(hosts, j);
+                var r = rule_new(verdict_accept());
+                rule_add_match(r, match_protocol(ps_protocol(ps)));
+                rule_add_match(r, match_dport(ps_port(ps)));
+                rule_add_match(r, match_dest_addr(host));
+                rule_set_comment(r, _nsf_outbound_host_comment(agent_name, ps_protocol(ps), ps_port(ps), host));
+                chain_add_rule(output, r);
+                j = j + 1;
+            }
+        } else {
+            var r = rule_new(verdict_accept());
+            rule_add_match(r, match_protocol(ps_protocol(ps)));
+            rule_add_match(r, match_dport(ps_port(ps)));
+            rule_set_comment(r, _nsf_port_comment(agent_name, "outbound", ps_protocol(ps), ps_port(ps)));
+            chain_add_rule(output, r);
+        }
+        i = i + 1;
+    }
+
+    table_add_chain(t, input);
+    table_add_chain(t, output);
+    firewall_add_table(fw, t);
+    return fw;
+}

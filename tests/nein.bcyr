@@ -13,6 +13,9 @@ include "src/lib/policy.cyr"
 include "src/lib/geoip.cyr"
 include "src/lib/mesh.cyr"
 include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
 
 # --- validate ---
 
@@ -157,6 +160,48 @@ fn bench_mesh_render() {
     return 0;
 }
 
+fn bench_engine_10_agents_render() {
+    var e = policy_engine_new();
+    var i = 0;
+    while (i < 10) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "agent_");
+        str_builder_add_int(sb, i);
+        var s = str_builder_build(sb);
+        var id = alloc(str_len(s) + 1);
+        memcpy(id, str_data(s), str_len(s));
+        store8(id + str_len(s), 0);
+
+        var addr_sb = str_builder_new();
+        str_builder_add_cstr(addr_sb, "10.100.");
+        str_builder_add_int(addr_sb, i);
+        str_builder_add_cstr(addr_sb, ".1");
+        var as = str_builder_build(addr_sb);
+        var addr = alloc(str_len(as) + 1);
+        memcpy(addr, str_data(as), str_len(as));
+        store8(addr + str_len(as), 0);
+
+        var p = agent_policy_new(id, addr);
+        ap_allow_inbound(p, ps_tcp(80));
+        ap_allow_inbound(p, ps_tcp(443));
+        ap_allow_outbound(p, ps_udp(53));
+        pe_add_agent(e, p);
+        i = i + 1;
+    }
+    firewall_render(pe_to_firewall(e));
+    return 0;
+}
+
+fn bench_netns_render() {
+    var nsf = namespace_firewall_new("bench-agent");
+    nsf_allow_inbound(nsf, ps_tcp(8080));
+    nsf_allow_outbound(nsf, ps_tcp(443));
+    nsf_allow_outbound(nsf, ps_udp(53));
+    nsf_allow_outbound_host(nsf, "10.0.0.0/8");
+    firewall_render(nsf_build(nsf));
+    return 0;
+}
+
 fn bench_bridge_render() {
     var bf = bridge_firewall_new(bridge_config_new("br0", "172.17.0.0/16", "eth0"));
     bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
@@ -216,6 +261,8 @@ fn main() {
     b = bench_new("geoip_render"); bench_run(b, &bench_geoip_render, 10000); vec_push(all, b);
     b = bench_new("mesh_render"); bench_run(b, &bench_mesh_render, 10000); vec_push(all, b);
     b = bench_new("bridge_render"); bench_run(b, &bench_bridge_render, 10000); vec_push(all, b);
+    b = bench_new("engine_10_agents_render"); bench_run(b, &bench_engine_10_agents_render, 1000); vec_push(all, b);
+    b = bench_new("netns_render"); bench_run(b, &bench_netns_render, 10000); vec_push(all, b);
 
     bench_report_all(all);
     return 0;

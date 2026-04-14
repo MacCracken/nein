@@ -2,6 +2,76 @@
 
 All notable changes to nein are documented here.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/).
+
+## [1.0.0] — 2026-04-13
+
+Complete rewrite from Rust to Cyrius. Rust source preserved in `rust-old/` for reference.
+
+### Added
+
+**18 modules ported with full API parity:**
+
+- **error** — `NeinError` enum (7 variants), packed Result helpers (`nein_ok`, `nein_err`, `err_code`)
+- **validate** — 8 injection-safe validators (identifier, addr, iface, ct_state, comment, log_prefix, nft_element, family)
+- **rule** — 30 Match variants, 13 Verdict variants, Rule struct with render + validate. `RejectReason`, `Protocol`, `RateUnit`, `QuotaMode`, `QuotaUnit`, `PktType`, `Ipv6ExtHdr`, `CmpOp`, `LogLevel` sub-enums
+- **set** — Named sets (ipv4_addr, ipv6_addr, inet_service, inet_proto, ifname) with interval/timeout/constant flags; verdict maps with Accept/Drop/Jump
+- **nat** — DNAT, SNAT, Masquerade, Redirect, DnatRange with IPv6 bracket wrapping; `port_forward`, `port_range_forward`, `container_masquerade` helpers
+- **chain** — ChainType, Hook, Policy; base and regular chains; ChainRule wrapper dispatches rule vs NAT rendering
+- **table** — Family, Define, Flowtable, CtTimeout; render order: defines → flowtables → ct_timeouts → sets → maps → chains
+- **firewall** — Top-level manager with add_table, render, full-tree validate
+- **builder** — `basic_host_firewall`, `container_bridge`, `service_policy` pre-built configurations
+- **policy** — NetworkPolicy with ingress/egress rules, "any" peer handling, `agent_to_agent` convenience
+- **geoip** — Country-based blocking with interval sets, dual-stack IPv4/IPv6, ISO 3166-1 alpha-2 validation
+- **mesh** — Envoy sidecar rules with UID/CIDR/port exclusions, configurable inbound/outbound ports, transparent TCP redirect
+- **bridge** — BridgeFirewall with port mappings, O(1) set-based isolation groups, duplicate port detection
+- **engine** — Multi-agent PolicyEngine with dispatch chains, per-agent in/out chains, O(1) host restriction sets; `Transport` enum (TCP/UDP/QUIC); `PortSpec` helpers
+- **config** — String→enum dispatchers for TOML/JSON/CLI configuration sources (16 enum types)
+- **netns** — `NamespaceFirewall` builder for per-agent network namespace rulesets (established/loopback/DNS defaults + inbound/outbound port allow-lists and host restrictions); pairs with agnosys's `netns_apply_nftables_ruleset` for in-namespace apply
+- **apply** — execute rulesets via `nft -f -` using fork+pipe+execve (synchronous); batch ops (`apply_ruleset_str`, `apply_firewall`, `flush_ruleset`); table/chain ops (`flush_table`, `delete_table`, `flush_chain`, `delete_chain`); incremental rule ops (`add_rule_live`, `insert_rule_live`, `add_rule_after_live`, `replace_rule_live`, `delete_rule_live`); `list_ruleset`, `list_ruleset_with_handles`
+- **inspect** — `status()` returns `FirewallStatus { tables, total_rules, raw_ruleset }` parsed from live `nft list ruleset` output
+
+### Testing
+
+- 580 test assertions across 42 test groups (was 409 in Rust era)
+- 31 benchmarks covering validators, rule rendering, full firewall generation, multi-agent engine, and namespace firewall
+- Apply path smoke-tested end-to-end: non-root `list_ruleset` returns `Err` cleanly (no crash, no hang)
+- Fuzz harness covering validators, rule rendering, NAT, and config dispatchers
+
+### Performance (Cyrius)
+
+| Benchmark | Time |
+|-----------|------|
+| `validate_*` (injection checks) | 450ns–1us |
+| `rule_render/simple` | 1us |
+| `rule_render/complex` (6 matches + comment) | 3us |
+| `nat_dnat_render` | 1us |
+| `basic_host_firewall` (full render) | 13us |
+| `container_bridge` | 21us |
+| `mesh_render` | 24us |
+| `bridge_render` (port mappings + iso) | 48us |
+| `geoip_render` | 11us |
+| `engine_10_agents_render` | 400us |
+| `netns_render` | 34us |
+
+### Changed
+
+- **Language**: Rust → Cyrius (sovereign systems language, compiled by cc3)
+- **Code size**: ~7,913 LOC Rust → ~3,553 LOC Cyrius (55% reduction across ported modules)
+- **Dependencies**: serde/thiserror/tracing/tokio → cyrius stdlib + agnosys/agnostik deps
+- **Error handling**: `Result<T, NeinError>` → stdlib tagged Result (`Ok`/`Err`/`is_err_result`/`payload`)
+- **Feature gates**: Cargo `#[cfg(feature = ...)]` → cyrius preprocessor `#ifdef`
+- **TOML support**: Scoped to string→enum dispatchers (full struct parsing awaits sutra port)
+
+### Deferred (blocked on upstream)
+
+- `mcp` — blocked on [bote](https://github.com/MacCracken/bote) Cyrius port
+- Full TOML struct parsing — blocked on sutra port start (only consumer)
+
+### Security
+
+All validators preserved from Rust: dangerous-character rejection (`; { } | \n \r \0 \` $`), quote filtering for comments/log prefixes/set elements, length limits (identifiers 64, interfaces 15, comments 128, log prefixes 64). `Match::Raw` remains the explicit, documented escape hatch.
+
 ## [0.90.0] — 2026-04-02
 
 ### Added

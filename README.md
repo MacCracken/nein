@@ -4,126 +4,145 @@
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 
-Nein provides a type-safe Rust API for generating and applying nftables rules. It replaces raw `nft` command invocations and hand-written rulesets with composable, testable rule builders.
+Nein generates nftables rulesets from composable, injection-safe primitives. Build tables, chains, and rules programmatically; validate before applying; render to `nft` syntax.
 
 ## Architecture
 
 ```
-nein (this crate)
-  └── nft binary (system dependency)
+nein (this library)
+  └── nft binary (system dependency, for `apply` consumers)
 
 Consumers:
-  stiva ──→ nein (container bridge/NAT, port mapping, isolation)
+  stiva  ──→ nein (container bridge/NAT, port mapping, isolation)
   daimon ──→ nein (service mesh network policy, agent access control)
-  aegis ──→ nein (host firewall)
-  sutra ──→ nein (fleet-wide firewall playbooks)
+  aegis  ──→ nein (host firewall)
+  sutra  ──→ nein (fleet-wide firewall playbooks)
 ```
 
-## Features
+## Modules (18)
 
-- **Type-safe rule builder** — `Rule`, `Match`, `Verdict` types compile to nftables syntax
-- **NAT** — DNAT (port forwarding), SNAT, masquerade, redirect for container networking
-- **Network policies** — service-level ingress/egress rules (like k8s NetworkPolicy)
-- **Pre-built builders** — `basic_host_firewall()`, `container_bridge()`, `service_policy()`
-- **Dry-run mode** — render rules without applying
-- **Inspect** — query current firewall state
-- **Tables, chains, families** — full nftables model (inet, ip, ip6, arp, bridge, netdev)
+| Module     | Purpose |
+|------------|---------|
+| `error`    | `NeinError` enum + packed Result helpers |
+| `validate` | Injection-safe validators for identifiers, addresses, interfaces, comments, set elements |
+| `rule`     | 30 Match variants, 13 Verdict variants, Rule struct, render/validate |
+| `set`      | Named sets (ipv4_addr, ipv6_addr, inet_service, inet_proto, ifname) and verdict maps |
+| `nat`      | DNAT, SNAT, masquerade, redirect, DnatRange with IPv6 bracketing |
+| `chain`    | ChainType, Hook, Policy, Chain with regular and NAT rules |
+| `table`    | Family, Define, Flowtable, CtTimeout, Table |
+| `firewall` | Top-level manager — add_table, validate, render |
+| `builder`  | Pre-built configurations: basic_host_firewall, container_bridge, service_policy |
+| `policy`   | Kubernetes-style NetworkPolicy with ingress/egress rules |
+| `geoip`    | Country-based blocking via interval sets (dual-stack IPv4/IPv6) |
+| `mesh`     | Envoy-style sidecar proxy rules with UID/CIDR/port exclusions |
+| `bridge`   | Container bridge with port mappings and O(1) set-based isolation groups |
+| `engine`   | Multi-agent policy engine with dispatch chains and host restriction sets |
+| `config`   | String→enum dispatchers for TOML/JSON/CLI configuration sources |
+| `netns`    | Per-agent network namespace firewall builder (pairs with agnosys netns apply) |
+| `apply`    | Execute rulesets via `nft -f -` (fork+pipe+execve); batch + incremental rule ops |
+| `inspect`  | Query live firewall state — `status()` returns tables + rule count + raw ruleset |
 
 ## Quick Start
 
-```rust
-use nein::{Firewall, builder};
+```cyrius
+include "lib/nein.cyr"
 
-// Basic host firewall (allow established + SSH, drop rest)
-let fw = builder::basic_host_firewall();
-println!("{}", fw.render());
-fw.apply().await?;
+fn main() {
+    alloc_init();
 
-// Container bridge networking
-let fw = builder::container_bridge("br0", "172.17.0.0/16", "eth0");
-fw.apply().await?;
+    # Basic host firewall (allow established + SSH, drop rest)
+    var fw = basic_host_firewall();
+    var rendered = firewall_render(fw);
+    syscall(1, 1, str_data(rendered), str_len(rendered));
 
-// Custom rules
-use nein::rule::{self, Match, Protocol};
-use nein::table::{Table, Family};
-use nein::chain::{Chain, ChainType, Hook, Policy};
+    return 0;
+}
 
-let mut fw = Firewall::new().dry_run(true);
-let mut table = Table::new("filter", Family::Inet);
-let mut input = Chain::base("input", ChainType::Filter, Hook::Input, 0, Policy::Drop);
-
-input.add_rule(rule::allow_established());
-input.add_rule(rule::allow_tcp(22).comment("SSH"));
-input.add_rule(rule::allow_tcp(8090).comment("daimon"));
-input.add_rule(rule::allow_tcp(8088).comment("hoosh"));
-input.add_rule(rule::deny_source("10.99.0.0/16"));
-
-table.add_chain(input);
-fw.add_table(table);
-fw.apply().await?; // dry-run: prints but doesn't apply
+var r = main();
+syscall(60, r);
 ```
 
-### Network Policies (Agent-to-Agent)
+### Custom rules
 
-```rust
-use nein::policy::{self, Protocol};
+```cyrius
+var fw = firewall_new();
+var t = table_new("filter", FAMILY_INET);
+var input = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
 
-// Allow hoosh to talk to daimon on port 8090
-let policy = policy::agent_to_agent(
-    "hoosh-to-daimon",
-    "10.0.0.1",    // hoosh
-    "10.0.0.2",    // daimon
-    Protocol::Tcp,
-    8090,
-);
-let rules = policy.to_rules();
+chain_add_rule(input, allow_established());
+chain_add_rule(input, allow_tcp(22));
+chain_add_rule(input, allow_tcp(8090));
+chain_add_rule(input, deny_source("10.99.0.0/16"));
+
+table_add_chain(t, input);
+firewall_add_table(fw, t);
+
+# Validate before rendering
+if (is_err_result(firewall_validate(fw)) == 1) {
+    # Input contained injection characters
+    return 1;
+}
+
+var out = firewall_render(fw);
+```
+
+### Agent-to-agent policy
+
+```cyrius
+var np = agent_to_agent("hoosh-to-daimon", "10.0.0.1", "10.0.0.2", PROTO_TCP, 8090);
+var rules = policy_to_rules(np);
 ```
 
 ### Container NAT
 
-```rust
-use nein::nat;
+```cyrius
+# Port forward host:8080 -> container:80
+var dnat = port_forward(8080, "172.17.0.2", 80);
 
-// Port forward host:8080 → container:80
-let dnat = nat::port_forward(8080, "172.17.0.2", 80);
-
-// Masquerade outbound container traffic
-let masq = nat::container_masquerade("172.17.0.0/16", "eth0");
+# Masquerade outbound container traffic
+var masq = container_masquerade("172.17.0.0/16", "eth0");
 ```
 
-## Feature Flags
+### Multi-agent policy engine
 
-| Feature | Description |
-|---------|-------------|
-| `rules` | Core rule/table/chain types (default) |
-| `nat` | NAT rules (DNAT, SNAT, masquerade) |
-| `policy` | Network policy types |
-| `inspect` | Query current firewall state |
-| `full` | All features |
+```cyrius
+var e = policy_engine_new();
+
+var web = agent_policy_new("web", "10.100.1.2");
+ap_allow_inbound(web, ps_tcp(80));
+ap_allow_inbound(web, ps_tcp(443));
+ap_allow_outbound(web, ps_quic(443));
+pe_add_agent(e, web);
+
+var fw = pe_to_firewall(e);  # Generates dispatch chains + per-agent in/out chains
+```
+
+## Security
+
+Every string interpolated into rendered nftables syntax passes through validators that reject dangerous characters (`; { } | \n \r \0 \` $` and quotes where applicable) and enforce length limits. `Match::Raw` is the explicit escape hatch — not validated, caller's responsibility.
+
+See [SECURITY.md](SECURITY.md) for the threat model and disclosure policy.
 
 ## Development
 
 ```sh
-make check          # fmt + clippy + test + audit
-make bench          # criterion benchmarks
-make bench-track    # benchmark with historical tracking
-make coverage       # code coverage report
-make fuzz           # fuzz targets (requires nightly)
+cyrius build src/main.cyr build/nein   # compile
+cyrius test tests/nein.tcyr            # run test suite (541 assertions)
+cyrius bench tests/nein.bcyr           # run benchmarks (30 benchmarks)
+cyrius run tests/nein.fcyr             # fuzz smoke harness
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for full development workflow, [docs/guides/testing.md](docs/guides/testing.md) for testing details.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
+
+## Deferred (blocked on upstream)
+
+- `mcp` — blocked on [bote](https://github.com/MacCracken/bote) Cyrius port
+- full TOML struct parsing — core config dispatchers shipped; full struct parsing scheduled for sutra port start
 
 ## Roadmap
 
-See [docs/development/roadmap.md](docs/development/roadmap.md) for the full roadmap. Completed work is documented in the [CHANGELOG](CHANGELOG.md).
-
-## Documentation
-
-- [Architecture overview](docs/architecture/overview.md)
-- [Threat model](docs/development/threat-model.md)
-- [Architecture decisions](docs/decisions/README.md)
-- [Testing guide](docs/guides/testing.md)
+See [docs/development/roadmap.md](docs/development/roadmap.md). Completed work documented in the [CHANGELOG](CHANGELOG.md).
 
 ## License
 
-GPL-3.0-only — see [LICENSE](LICENSE) for details.
+GPL-3.0-only — see [LICENSE](LICENSE).

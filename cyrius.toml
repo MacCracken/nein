@@ -1,7 +1,7 @@
 [package]
 name = "nein"
-version = "0.1.0"
-description = "nein — programmatic nftables firewall (Cyrius port from 9338 lines of Rust)"
+version = "1.0.0"
+description = "nein — programmatic nftables firewall"
 license = "GPL-3.0-only"
 language = "cyrius"
 cyrius = "4.3.0"

@@ -1,0 +1,487 @@
+# nein engine module — multi-agent policy engine
+#
+# Manages network policies across multiple agents, generating a coherent
+# nftables firewall from all active policies.
+
+# ================================================================
+# Transport enum — distinguishes TCP, UDP, and QUIC (QUIC maps to UDP protocol)
+# ================================================================
+
+enum TransportEnum {
+    TRANS_TCP = 1;
+    TRANS_UDP = 2;
+    TRANS_QUIC = 3;
+}
+
+fn transport_protocol(t) {
+    if (t == TRANS_TCP) { return PROTO_TCP; }
+    return PROTO_UDP;
+}
+
+fn transport_label(t) {
+    if (t == TRANS_TCP) { return "tcp"; }
+    if (t == TRANS_UDP) { return "udp"; }
+    if (t == TRANS_QUIC) { return "quic"; }
+    return "tcp";
+}
+
+# ================================================================
+# PortSpec — { protocol, port, transport }
+# Layout: [protocol:8][port:8][transport:8] = 24 bytes
+# ================================================================
+
+fn port_spec_new(protocol, port, transport) {
+    var ps = alloc(24);
+    store64(ps, protocol);
+    store64(ps + 8, port);
+    store64(ps + 16, transport);
+    return ps;
+}
+
+fn ps_tcp(port) { return port_spec_new(PROTO_TCP, port, TRANS_TCP); }
+fn ps_udp(port) { return port_spec_new(PROTO_UDP, port, TRANS_UDP); }
+fn ps_quic(port) { return port_spec_new(PROTO_UDP, port, TRANS_QUIC); }
+
+fn ps_protocol(ps) { return load64(ps); }
+fn ps_port(ps) { return load64(ps + 8); }
+fn ps_transport(ps) { return load64(ps + 16); }
+
+# ================================================================
+# AgentPolicy — { agent_id, agent_addr, allowed_inbound(vec),
+#   allowed_outbound(vec), allowed_outbound_hosts(vec),
+#   allow_established, allow_loopback }
+# Layout: 7 fields * 8 = 56 bytes
+# ================================================================
+
+fn agent_policy_new(agent_id, agent_addr) {
+    var ap = alloc(56);
+    store64(ap, agent_id);
+    store64(ap + 8, agent_addr);
+    store64(ap + 16, vec_new());
+    store64(ap + 24, vec_new());
+    store64(ap + 32, vec_new());
+    store64(ap + 40, 1);       # allow_established default true
+    store64(ap + 48, 1);       # allow_loopback default true
+    return ap;
+}
+
+fn ap_agent_id(ap) { return load64(ap); }
+fn ap_agent_addr(ap) { return load64(ap + 8); }
+fn ap_allowed_inbound(ap) { return load64(ap + 16); }
+fn ap_allowed_outbound(ap) { return load64(ap + 24); }
+fn ap_allowed_outbound_hosts(ap) { return load64(ap + 32); }
+fn ap_allow_established(ap) { return load64(ap + 40); }
+fn ap_allow_loopback(ap) { return load64(ap + 48); }
+
+fn ap_allow_inbound(ap, ps) { vec_push(load64(ap + 16), ps); return ap; }
+fn ap_allow_outbound(ap, ps) { vec_push(load64(ap + 24), ps); return ap; }
+fn ap_allow_outbound_host(ap, cidr) { vec_push(load64(ap + 32), cidr); return ap; }
+fn ap_set_allow_established(ap, flag) { store64(ap + 40, flag); return ap; }
+fn ap_set_allow_loopback(ap, flag) { store64(ap + 48, flag); return ap; }
+
+fn ap_validate(ap) {
+    var vr = validate_identifier(ap_agent_id(ap));
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_addr(ap_agent_addr(ap));
+    if (is_err_result(vr) == 1) { return vr; }
+    var hosts = ap_allowed_outbound_hosts(ap);
+    var hlen = vec_len(hosts);
+    var i = 0;
+    while (i < hlen) {
+        vr = validate_addr(vec_get(hosts, i));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+# ================================================================
+# Comment builders for engine rules
+# ================================================================
+
+fn _cstr_from_sb(sb) {
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# "AGENT_ID loopback"
+fn _loopback_comment(agent_id) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_id);
+    str_builder_add_cstr(sb, " loopback");
+    return _cstr_from_sb(sb);
+}
+
+# "AGENT_ID loopback out"
+fn _loopback_out_comment(agent_id) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_id);
+    str_builder_add_cstr(sb, " loopback out");
+    return _cstr_from_sb(sb);
+}
+
+# "AGENT_ID DIR LABEL:PORT"
+fn _port_comment(agent_id, direction, label, port) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_id);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, direction);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, label);
+    str_builder_add_cstr(sb, ":");
+    str_builder_add_int(sb, port);
+    return _cstr_from_sb(sb);
+}
+
+# "AGENT_ID outbound LABEL:PORT restricted"
+fn _port_restricted_comment(agent_id, label, port) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_id);
+    str_builder_add_cstr(sb, " outbound ");
+    str_builder_add_cstr(sb, label);
+    str_builder_add_cstr(sb, ":");
+    str_builder_add_int(sb, port);
+    str_builder_add_cstr(sb, " restricted");
+    return _cstr_from_sb(sb);
+}
+
+# "AGENT_ID default deny DIR"
+fn _default_deny_comment(agent_id, direction) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_id);
+    str_builder_add_cstr(sb, " default deny ");
+    str_builder_add_cstr(sb, direction);
+    return _cstr_from_sb(sb);
+}
+
+# "dispatch DIR to/from AGENT_ID"
+fn _dispatch_comment(direction, preposition, agent_id) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "dispatch ");
+    str_builder_add_cstr(sb, direction);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, preposition);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, agent_id);
+    return _cstr_from_sb(sb);
+}
+
+# "AGENT_ID_in" or "AGENT_ID_out"
+fn _chain_name(agent_id, suffix) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_id);
+    str_builder_add_cstr(sb, suffix);
+    return _cstr_from_sb(sb);
+}
+
+# "AGENT_ID_hosts" — set name for host restrictions
+fn _host_set_name(agent_id) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_id);
+    str_builder_add_cstr(sb, "_hosts");
+    return _cstr_from_sb(sb);
+}
+
+# ================================================================
+# Build rules for an agent
+# ================================================================
+
+fn _ap_build_inbound_rules(ap) {
+    var rules = vec_new();
+    var agent_id = ap_agent_id(ap);
+
+    if (ap_allow_established(ap) == 1) {
+        vec_push(rules, allow_established());
+    }
+
+    if (ap_allow_loopback(ap) == 1) {
+        var r = rule_new(verdict_accept());
+        rule_add_match(r, match_iif("lo"));
+        rule_set_comment(r, _loopback_comment(agent_id));
+        vec_push(rules, r);
+    }
+
+    var specs = ap_allowed_inbound(ap);
+    var slen = vec_len(specs);
+    var i = 0;
+    while (i < slen) {
+        var ps = vec_get(specs, i);
+        var r = rule_new(verdict_accept());
+        rule_add_match(r, match_protocol(ps_protocol(ps)));
+        rule_add_match(r, match_dport(ps_port(ps)));
+        rule_set_comment(r, _port_comment(agent_id, "inbound", transport_label(ps_transport(ps)), ps_port(ps)));
+        vec_push(rules, r);
+        i = i + 1;
+    }
+
+    return rules;
+}
+
+# Returns [rules_vec, host_set_or_0]
+# Stored as 16 bytes: [rules:8][set:8]
+fn _ap_build_outbound_rules(ap) {
+    var result = alloc(16);
+    var rules = vec_new();
+    var agent_id = ap_agent_id(ap);
+
+    if (ap_allow_established(ap) == 1) {
+        vec_push(rules, allow_established());
+    }
+
+    if (ap_allow_loopback(ap) == 1) {
+        var r = rule_new(verdict_accept());
+        rule_add_match(r, match_oif("lo"));
+        rule_set_comment(r, _loopback_out_comment(agent_id));
+        vec_push(rules, r);
+    }
+
+    # Build host restriction set if there are any
+    var host_set = 0;
+    var hosts = ap_allowed_outbound_hosts(ap);
+    var hlen = vec_len(hosts);
+    if (hlen > 0) {
+        var set_name = _host_set_name(agent_id);
+        host_set = nft_set_new(set_name, SET_IPV4_ADDR);
+        nft_set_add_flag(host_set, SETFLAG_INTERVAL);
+        var i = 0;
+        while (i < hlen) {
+            nft_set_add_element(host_set, vec_get(hosts, i));
+            i = i + 1;
+        }
+    }
+
+    var specs = ap_allowed_outbound(ap);
+    var slen = vec_len(specs);
+    var i = 0;
+    while (i < slen) {
+        var ps = vec_get(specs, i);
+        var r = rule_new(verdict_accept());
+        rule_add_match(r, match_protocol(ps_protocol(ps)));
+        rule_add_match(r, match_dport(ps_port(ps)));
+        if (host_set != 0) {
+            rule_add_match(r, match_set_lookup("ip daddr", nft_set_name(host_set)));
+            rule_set_comment(r, _port_restricted_comment(agent_id, transport_label(ps_transport(ps)), ps_port(ps)));
+        } else {
+            rule_set_comment(r, _port_comment(agent_id, "outbound", transport_label(ps_transport(ps)), ps_port(ps)));
+        }
+        vec_push(rules, r);
+        i = i + 1;
+    }
+
+    store64(result, rules);
+    store64(result + 8, host_set);
+    return result;
+}
+
+# ================================================================
+# PolicyEngine — { agents(vec of AgentPolicy, ordered by agent_id),
+#   table_name }
+# Layout: [agents:8][table_name:8] = 16 bytes
+# ================================================================
+
+fn policy_engine_new() {
+    var pe = alloc(16);
+    store64(pe, vec_new());
+    store64(pe + 8, "nein_agents");
+    return pe;
+}
+
+fn pe_agents(pe) { return load64(pe); }
+fn pe_table_name(pe) { return load64(pe + 8); }
+
+fn pe_set_table_name(pe, name) {
+    store64(pe + 8, name);
+    return pe;
+}
+
+fn pe_agent_count(pe) { return vec_len(load64(pe)); }
+
+# Find agent index by id (returns 0-based index or -1)
+fn _pe_find_index(pe, agent_id) {
+    var agents = load64(pe);
+    var alen = vec_len(agents);
+    var i = 0;
+    while (i < alen) {
+        if (streq(ap_agent_id(vec_get(agents, i)), agent_id) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Byte-wise C-string comparison: returns -1, 0, or 1
+fn _strcmp_cstr(a, b) {
+    var i = 0;
+    while (1) {
+        var ca = load8(a + i);
+        var cb = load8(b + i);
+        if (ca != cb) {
+            if (ca < cb) { return 0 - 1; }
+            return 1;
+        }
+        if (ca == 0) { return 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Insert while maintaining sorted-by-agent_id order
+fn _pe_insert_sorted(pe, policy) {
+    var agents = load64(pe);
+    var alen = vec_len(agents);
+    var new_agents = vec_new();
+    var aid = ap_agent_id(policy);
+    var inserted = 0;
+    var i = 0;
+    while (i < alen) {
+        var existing = vec_get(agents, i);
+        if (inserted == 0) {
+            if (_strcmp_cstr(ap_agent_id(existing), aid) > 0) {
+                vec_push(new_agents, policy);
+                inserted = 1;
+            }
+        }
+        vec_push(new_agents, existing);
+        i = i + 1;
+    }
+    if (inserted == 0) { vec_push(new_agents, policy); }
+    store64(pe, new_agents);
+    return 0;
+}
+
+# Add or update an agent. Returns Some(prev_policy) on update, None on new.
+fn pe_add_agent(pe, policy) {
+    var idx = _pe_find_index(pe, ap_agent_id(policy));
+    if (idx >= 0) {
+        var agents = load64(pe);
+        var prev = vec_get(agents, idx);
+        # Replace in place: rebuild vec with policy substituted
+        var new_agents = vec_new();
+        var alen = vec_len(agents);
+        var i = 0;
+        while (i < alen) {
+            if (i == idx) { vec_push(new_agents, policy); }
+            else { vec_push(new_agents, vec_get(agents, i)); }
+            i = i + 1;
+        }
+        store64(pe, new_agents);
+        return Some(prev);
+    }
+    _pe_insert_sorted(pe, policy);
+    return None();
+}
+
+fn pe_remove_agent(pe, agent_id) {
+    var idx = _pe_find_index(pe, agent_id);
+    if (idx < 0) { return None(); }
+    var agents = load64(pe);
+    var removed = vec_get(agents, idx);
+    var new_agents = vec_new();
+    var alen = vec_len(agents);
+    var i = 0;
+    while (i < alen) {
+        if (i != idx) { vec_push(new_agents, vec_get(agents, i)); }
+        i = i + 1;
+    }
+    store64(pe, new_agents);
+    return Some(removed);
+}
+
+fn pe_get_agent(pe, agent_id) {
+    var idx = _pe_find_index(pe, agent_id);
+    if (idx < 0) { return None(); }
+    return Some(vec_get(load64(pe), idx));
+}
+
+fn pe_validate(pe) {
+    var vr = validate_identifier(pe_table_name(pe));
+    if (is_err_result(vr) == 1) { return vr; }
+    var agents = pe_agents(pe);
+    var alen = vec_len(agents);
+    var i = 0;
+    while (i < alen) {
+        vr = ap_validate(vec_get(agents, i));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+# ================================================================
+# Build the full firewall
+# ================================================================
+
+fn pe_to_firewall(pe) {
+    var fw = firewall_new();
+    var agents = pe_agents(pe);
+    var alen = vec_len(agents);
+    if (alen == 0) { return fw; }
+
+    var t = table_new(pe_table_name(pe), FAMILY_INET);
+
+    var input = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    var output = chain_base("output", CHAIN_FILTER, HOOK_OUTPUT, 0, POLICY_DROP);
+
+    var i = 0;
+    while (i < alen) {
+        var policy = vec_get(agents, i);
+        var agent_id = ap_agent_id(policy);
+        var agent_addr = ap_agent_addr(policy);
+
+        # Dispatch inbound
+        var in_name = _chain_name(agent_id, "_in");
+        var out_name = _chain_name(agent_id, "_out");
+
+        var disp_in = rule_new(verdict_jump(in_name));
+        rule_add_match(disp_in, match_dest_addr(agent_addr));
+        rule_set_comment(disp_in, _dispatch_comment("inbound", "to", agent_id));
+        chain_add_rule(input, disp_in);
+
+        var disp_out = rule_new(verdict_jump(out_name));
+        rule_add_match(disp_out, match_source_addr(agent_addr));
+        rule_set_comment(disp_out, _dispatch_comment("outbound", "from", agent_id));
+        chain_add_rule(output, disp_out);
+
+        # Per-agent inbound chain
+        var in_chain = chain_regular(in_name);
+        var in_rules = _ap_build_inbound_rules(policy);
+        var irlen = vec_len(in_rules);
+        var j = 0;
+        while (j < irlen) {
+            chain_add_rule(in_chain, vec_get(in_rules, j));
+            j = j + 1;
+        }
+        var deny_in = rule_new(verdict_drop());
+        rule_set_comment(deny_in, _default_deny_comment(agent_id, "inbound"));
+        chain_add_rule(in_chain, deny_in);
+        table_add_chain(t, in_chain);
+
+        # Per-agent outbound chain
+        var out_chain = chain_regular(out_name);
+        var out_result = _ap_build_outbound_rules(policy);
+        var host_set = load64(out_result + 8);
+        if (host_set != 0) {
+            table_add_set(t, host_set);
+        }
+        var out_rules = load64(out_result);
+        var orlen = vec_len(out_rules);
+        j = 0;
+        while (j < orlen) {
+            chain_add_rule(out_chain, vec_get(out_rules, j));
+            j = j + 1;
+        }
+        var deny_out = rule_new(verdict_drop());
+        rule_set_comment(deny_out, _default_deny_comment(agent_id, "outbound"));
+        chain_add_rule(out_chain, deny_out);
+        table_add_chain(t, out_chain);
+
+        i = i + 1;
+    }
+
+    table_add_chain(t, input);
+    table_add_chain(t, output);
+    firewall_add_table(fw, t);
+    return fw;
+}

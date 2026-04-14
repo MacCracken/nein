@@ -1,0 +1,130 @@
+# nein inspect module — query current firewall state
+#
+# Wraps apply::list_ruleset and parses the output into a FirewallStatus.
+
+# ================================================================
+# FirewallStatus — { table_names(vec of cstr), total_rules, raw_ruleset(Str) }
+# Layout: [tables:8][total_rules:8][raw:8] = 24 bytes
+# ================================================================
+
+fn firewall_status_new(tables, total_rules, raw) {
+    var s = alloc(24);
+    store64(s, tables);
+    store64(s + 8, total_rules);
+    store64(s + 16, raw);
+    return s;
+}
+
+fn status_tables(s) { return load64(s); }
+fn status_total_rules(s) { return load64(s + 8); }
+fn status_raw_ruleset(s) { return load64(s + 16); }
+
+# ================================================================
+# Parse a raw ruleset into tables + rule count
+# ================================================================
+
+# Check if a cstr starts with a prefix
+fn _cstr_starts_with(s, prefix) {
+    var plen = strlen(prefix);
+    if (strlen(s) < plen) { return 0; }
+    var i = 0;
+    while (i < plen) {
+        if (load8(s + i) != load8(prefix + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Trim leading/trailing whitespace; returns a fresh cstr
+fn _trim_line(s, len) {
+    var start = 0;
+    while (start < len) {
+        var c = load8(s + start);
+        if (c != 32 && c != 9) { break; }   # not space, not tab
+        start = start + 1;
+    }
+    var end = len;
+    while (end > start) {
+        var c = load8(s + end - 1);
+        if (c != 32 && c != 9 && c != 13) { break; }
+        end = end - 1;
+    }
+    var out_len = end - start;
+    var out = alloc(out_len + 1);
+    memcpy(out, s + start, out_len);
+    store8(out + out_len, 0);
+    return out;
+}
+
+# Strip trailing " {" if present
+fn _strip_open_brace(s) {
+    var len = strlen(s);
+    if (len >= 2) {
+        if (load8(s + len - 1) == 123) {   # '{'
+            if (load8(s + len - 2) == 32) {   # ' '
+                var out = alloc(len - 1);
+                memcpy(out, s, len - 2);
+                store8(out + len - 2, 0);
+                return out;
+            }
+        }
+    }
+    return s;
+}
+
+# Parse the raw ruleset Str, populating:
+#   tables_vec: pushed with each "table FAM NAME" line
+#   Returns rule count (lines that aren't table/chain/type/closing-brace/empty)
+fn _parse_ruleset(raw_str, tables_vec) {
+    var data = str_data(raw_str);
+    var len = str_len(raw_str);
+    var rule_count = 0;
+    var line_start = 0;
+    var i = 0;
+    while (i <= len) {
+        var at_end = 0;
+        if (i == len) { at_end = 1; }
+        var c = 0;
+        if (at_end == 0) { c = load8(data + i); }
+        if (at_end == 1 || c == 10) {   # LF
+            var line_len = i - line_start;
+            if (line_len > 0 || at_end == 0) {
+                var trimmed = _trim_line(data + line_start, line_len);
+                var tlen = strlen(trimmed);
+                if (tlen > 0) {
+                    if (_cstr_starts_with(trimmed, "table ") == 1) {
+                        vec_push(tables_vec, _strip_open_brace(trimmed));
+                    } elif (_cstr_starts_with(trimmed, "chain ") == 1) {
+                        # not a rule
+                    } elif (_cstr_starts_with(trimmed, "type ") == 1) {
+                        # not a rule
+                    } elif (streq(trimmed, "}") == 1) {
+                        # not a rule
+                    } else {
+                        rule_count = rule_count + 1;
+                    }
+                }
+            }
+            line_start = i + 1;
+        }
+        i = i + 1;
+    }
+    return rule_count;
+}
+
+# ================================================================
+# Public API
+# ================================================================
+
+# status() — query live firewall state.
+# Returns Ok(FirewallStatus) or Err on nft failure.
+fn status() {
+    var res = list_ruleset();
+    if (is_err_result(res) == 1) { return res; }
+    var raw = payload(res);
+
+    var tables = vec_new();
+    var count = _parse_ruleset(raw, tables);
+
+    return Ok(firewall_status_new(tables, count, raw));
+}

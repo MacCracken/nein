@@ -1,0 +1,169 @@
+# nein config module — string to enum dispatch helpers
+#
+# Parse string values from config sources (TOML/JSON/CLI) into nein enum
+# constants. Returns the enum value on success or -1 on error.
+# Consumers (sutra, CLI tools) layer TOML/JSON/etc. on top.
+#
+# The scope here is intentionally narrow: the enum dispatch layer.
+# Full TOML struct parsing awaits sutra's port.
+
+# -1 is the sentinel for "unknown value". All nein enum constants start at 1.
+fn _cfg_unknown() { return 0 - 1; }
+
+# --- Family ---
+fn cfg_parse_family(s) {
+    if (streq(s, "inet") == 1) { return FAMILY_INET; }
+    if (streq(s, "ip") == 1) { return FAMILY_IP; }
+    if (streq(s, "ip6") == 1) { return FAMILY_IP6; }
+    if (streq(s, "arp") == 1) { return FAMILY_ARP; }
+    if (streq(s, "bridge") == 1) { return FAMILY_BRIDGE; }
+    if (streq(s, "netdev") == 1) { return FAMILY_NETDEV; }
+    return _cfg_unknown();
+}
+
+# --- ChainType ---
+fn cfg_parse_chain_type(s) {
+    if (streq(s, "filter") == 1) { return CHAIN_FILTER; }
+    if (streq(s, "nat") == 1) { return CHAIN_NAT; }
+    if (streq(s, "route") == 1) { return CHAIN_ROUTE; }
+    return _cfg_unknown();
+}
+
+# --- Hook ---
+fn cfg_parse_hook(s) {
+    if (streq(s, "prerouting") == 1) { return HOOK_PREROUTING; }
+    if (streq(s, "input") == 1) { return HOOK_INPUT; }
+    if (streq(s, "forward") == 1) { return HOOK_FORWARD; }
+    if (streq(s, "output") == 1) { return HOOK_OUTPUT; }
+    if (streq(s, "postrouting") == 1) { return HOOK_POSTROUTING; }
+    if (streq(s, "ingress") == 1) { return HOOK_INGRESS; }
+    return _cfg_unknown();
+}
+
+# --- Policy ---
+fn cfg_parse_policy(s) {
+    if (streq(s, "accept") == 1) { return POLICY_ACCEPT; }
+    if (streq(s, "drop") == 1) { return POLICY_DROP; }
+    return _cfg_unknown();
+}
+
+# --- Protocol ---
+fn cfg_parse_protocol(s) {
+    if (streq(s, "tcp") == 1) { return PROTO_TCP; }
+    if (streq(s, "udp") == 1) { return PROTO_UDP; }
+    if (streq(s, "icmp") == 1) { return PROTO_ICMP; }
+    if (streq(s, "icmpv6") == 1) { return PROTO_ICMPV6; }
+    return _cfg_unknown();
+}
+
+# --- RateUnit ---
+fn cfg_parse_rate_unit(s) {
+    if (streq(s, "second") == 1) { return RATE_SECOND; }
+    if (streq(s, "minute") == 1) { return RATE_MINUTE; }
+    if (streq(s, "hour") == 1) { return RATE_HOUR; }
+    if (streq(s, "day") == 1) { return RATE_DAY; }
+    return _cfg_unknown();
+}
+
+# --- QuotaMode ---
+fn cfg_parse_quota_mode(s) {
+    if (streq(s, "over") == 1) { return QUOTA_OVER; }
+    if (streq(s, "until") == 1) { return QUOTA_UNTIL; }
+    return _cfg_unknown();
+}
+
+# --- QuotaUnit ---
+fn cfg_parse_quota_unit(s) {
+    if (streq(s, "bytes") == 1) { return QUNIT_BYTES; }
+    if (streq(s, "kbytes") == 1) { return QUNIT_KBYTES; }
+    if (streq(s, "mbytes") == 1) { return QUNIT_MBYTES; }
+    if (streq(s, "gbytes") == 1) { return QUNIT_GBYTES; }
+    return _cfg_unknown();
+}
+
+# --- PktType ---
+fn cfg_parse_pkt_type(s) {
+    if (streq(s, "unicast") == 1) { return PKT_UNICAST; }
+    if (streq(s, "broadcast") == 1) { return PKT_BROADCAST; }
+    if (streq(s, "multicast") == 1) { return PKT_MULTICAST; }
+    return _cfg_unknown();
+}
+
+# --- Ipv6ExtHdr ---
+fn cfg_parse_ipv6_ext_hdr(s) {
+    if (streq(s, "hbh") == 1) { return EXT_HOP_BY_HOP; }
+    if (streq(s, "rt") == 1) { return EXT_ROUTING; }
+    if (streq(s, "frag") == 1) { return EXT_FRAGMENT; }
+    if (streq(s, "dst") == 1) { return EXT_DESTINATION; }
+    if (streq(s, "mh") == 1) { return EXT_MOBILITY; }
+    if (streq(s, "auth") == 1) { return EXT_AUTH; }
+    return _cfg_unknown();
+}
+
+# --- CmpOp ---
+fn cfg_parse_cmp_op(s) {
+    if (streq(s, "==") == 1) { return NFT_CMP_EQ; }
+    if (streq(s, "!=") == 1) { return NFT_CMP_NE; }
+    if (streq(s, "<") == 1) { return NFT_CMP_LT; }
+    if (streq(s, ">") == 1) { return NFT_CMP_GT; }
+    if (streq(s, "<=") == 1) { return NFT_CMP_LE; }
+    if (streq(s, ">=") == 1) { return NFT_CMP_GE; }
+    return _cfg_unknown();
+}
+
+# --- LogLevel ---
+fn cfg_parse_log_level(s) {
+    if (streq(s, "emerg") == 1) { return NFT_LOG_EMERG; }
+    if (streq(s, "alert") == 1) { return NFT_LOG_ALERT; }
+    if (streq(s, "crit") == 1) { return NFT_LOG_CRIT; }
+    if (streq(s, "err") == 1) { return NFT_LOG_ERR; }
+    if (streq(s, "warn") == 1) { return NFT_LOG_WARN; }
+    if (streq(s, "notice") == 1) { return NFT_LOG_NOTICE; }
+    if (streq(s, "info") == 1) { return NFT_LOG_INFO; }
+    if (streq(s, "debug") == 1) { return NFT_LOG_DEBUG; }
+    return _cfg_unknown();
+}
+
+# --- RejectReason ---
+fn cfg_parse_reject_reason(s) {
+    if (streq(s, "icmp-host-unreachable") == 1) { return REJECT_ICMP_HOST_UNREACH; }
+    if (streq(s, "icmp-port-unreachable") == 1) { return REJECT_ICMP_PORT_UNREACH; }
+    if (streq(s, "icmp-net-unreachable") == 1) { return REJECT_ICMP_NET_UNREACH; }
+    if (streq(s, "icmp-admin-prohibited") == 1) { return REJECT_ICMP_ADMIN_PROHIB; }
+    if (streq(s, "icmpx-admin-prohibited") == 1) { return REJECT_ICMPX_ADMIN_PROHIB; }
+    if (streq(s, "tcp-reset") == 1) { return REJECT_TCP_RESET; }
+    return _cfg_unknown();
+}
+
+# --- SetType ---
+fn cfg_parse_set_type(s) {
+    if (streq(s, "ipv4_addr") == 1) { return SET_IPV4_ADDR; }
+    if (streq(s, "ipv6_addr") == 1) { return SET_IPV6_ADDR; }
+    if (streq(s, "inet_service") == 1) { return SET_INET_SERVICE; }
+    if (streq(s, "inet_proto") == 1) { return SET_INET_PROTO; }
+    if (streq(s, "ifname") == 1) { return SET_IFNAME; }
+    return _cfg_unknown();
+}
+
+# --- SetFlag ---
+fn cfg_parse_set_flag(s) {
+    if (streq(s, "constant") == 1) { return SETFLAG_CONSTANT; }
+    if (streq(s, "interval") == 1) { return SETFLAG_INTERVAL; }
+    if (streq(s, "timeout") == 1) { return SETFLAG_TIMEOUT; }
+    return _cfg_unknown();
+}
+
+# --- Transport (engine) ---
+fn cfg_parse_transport(s) {
+    if (streq(s, "tcp") == 1) { return TRANS_TCP; }
+    if (streq(s, "udp") == 1) { return TRANS_UDP; }
+    if (streq(s, "quic") == 1) { return TRANS_QUIC; }
+    return _cfg_unknown();
+}
+
+# --- Helper: wrap result as Result<int, ERR_PARSE> ---
+# Useful when a parse function wants consistent error handling
+fn cfg_result(v) {
+    if (v < 0) { return nein_err(ERR_PARSE); }
+    return Ok(v);
+}

@@ -14,6 +14,9 @@ include "src/lib/policy.cyr"
 include "src/lib/geoip.cyr"
 include "src/lib/mesh.cyr"
 include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
 
 fn fuzz_validate(data, len) {
     if (len == 0) { return 0; }
@@ -29,6 +32,24 @@ fn fuzz_validate(data, len) {
     validate_log_prefix(copy);
     validate_nft_element(copy);
     validate_family(copy);
+
+    # Also fuzz config enum dispatchers — must never crash
+    cfg_parse_family(copy);
+    cfg_parse_chain_type(copy);
+    cfg_parse_hook(copy);
+    cfg_parse_policy(copy);
+    cfg_parse_protocol(copy);
+    cfg_parse_rate_unit(copy);
+    cfg_parse_quota_mode(copy);
+    cfg_parse_quota_unit(copy);
+    cfg_parse_pkt_type(copy);
+    cfg_parse_ipv6_ext_hdr(copy);
+    cfg_parse_cmp_op(copy);
+    cfg_parse_log_level(copy);
+    cfg_parse_reject_reason(copy);
+    cfg_parse_set_type(copy);
+    cfg_parse_set_flag(copy);
+    cfg_parse_transport(copy);
     return 0;
 }
 

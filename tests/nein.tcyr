@@ -13,6 +13,11 @@ include "src/lib/policy.cyr"
 include "src/lib/geoip.cyr"
 include "src/lib/mesh.cyr"
 include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
+include "src/lib/apply.cyr"
+include "src/lib/inspect.cyr"
 
 # ================================================================
 # Error tests
@@ -1588,6 +1593,420 @@ fn test_bridge() {
 }
 
 # ================================================================
+# Engine tests
+# ================================================================
+
+fn test_engine() {
+    test_group("engine");
+
+    # Empty engine
+    var e = policy_engine_new();
+    assert_eq(pe_agent_count(e), 0, "empty count");
+    assert(str_len(firewall_render(pe_to_firewall(e))) == 0, "empty render");
+
+    # Add/remove agent
+    e = policy_engine_new();
+    assert(is_none(pe_add_agent(e, agent_policy_new("agent-1", "10.100.0.2"))) == 1, "add returns None");
+    assert_eq(pe_agent_count(e), 1, "count after add");
+    assert(is_some(pe_get_agent(e, "agent-1")) == 1, "get after add");
+    var removed = pe_remove_agent(e, "agent-1");
+    assert(is_some(removed) == 1, "remove returns Some");
+    assert_eq(pe_agent_count(e), 0, "count after remove");
+
+    # Update agent: second add returns Some(prev)
+    e = policy_engine_new();
+    pe_add_agent(e, agent_policy_new("agent-1", "10.100.0.2"));
+    var prev = pe_add_agent(e, agent_policy_new("agent-1", "10.100.0.3"));
+    assert(is_some(prev) == 1, "update returns Some");
+    var curr = pe_get_agent(e, "agent-1");
+    assert(is_some(curr) == 1, "updated agent present");
+    assert(streq(ap_agent_addr(unwrap(curr)), "10.100.0.3") == 1, "new addr");
+
+    # Remove nonexistent
+    assert(is_none(pe_remove_agent(e, "ghost")) == 1, "remove ghost None");
+
+    # Single agent default deny
+    e = policy_engine_new();
+    pe_add_agent(e, agent_policy_new("agent-1", "10.100.0.2"));
+    var rendered = firewall_render(pe_to_firewall(e));
+    assert(str_contains_cstr(rendered, "table inet nein_agents") == 1, "engine table");
+    assert(str_contains_cstr(rendered, "chain agent-1_in") == 1, "in chain");
+    assert(str_contains_cstr(rendered, "chain agent-1_out") == 1, "out chain");
+    assert(str_contains_cstr(rendered, "dispatch inbound to agent-1") == 1, "dispatch in");
+    assert(str_contains_cstr(rendered, "dispatch outbound from agent-1") == 1, "dispatch out");
+    assert(str_contains_cstr(rendered, "default deny inbound") == 1, "default deny in");
+    assert(str_contains_cstr(rendered, "default deny outbound") == 1, "default deny out");
+    assert(str_contains_cstr(rendered, "ct state { established, related }") == 1, "established by default");
+    assert(str_contains_cstr(rendered, "iif \"lo\"") == 1, "loopback by default");
+
+    # Agent with inbound ports
+    e = policy_engine_new();
+    var p = agent_policy_new("web", "10.100.1.2");
+    ap_allow_inbound(p, ps_tcp(80));
+    ap_allow_inbound(p, ps_tcp(443));
+    pe_add_agent(e, p);
+    rendered = firewall_render(pe_to_firewall(e));
+    assert(str_contains_cstr(rendered, "web inbound tcp:80") == 1, "web tcp:80");
+    assert(str_contains_cstr(rendered, "web inbound tcp:443") == 1, "web tcp:443");
+    assert(str_contains_cstr(rendered, "dport 80") == 1, "dport 80");
+    assert(str_contains_cstr(rendered, "dport 443") == 1, "dport 443");
+
+    # Agent with outbound ports
+    e = policy_engine_new();
+    p = agent_policy_new("worker", "10.100.1.3");
+    ap_allow_outbound(p, ps_tcp(443));
+    ap_allow_outbound(p, ps_udp(53));
+    pe_add_agent(e, p);
+    rendered = firewall_render(pe_to_firewall(e));
+    assert(str_contains_cstr(rendered, "worker outbound tcp:443") == 1, "worker tcp:443 out");
+    assert(str_contains_cstr(rendered, "worker outbound udp:53") == 1, "worker udp:53 out");
+
+    # QUIC port spec — protocol=UDP but label=quic
+    e = policy_engine_new();
+    p = agent_policy_new("quic_agent", "10.100.2.1");
+    ap_allow_outbound(p, ps_quic(443));
+    pe_add_agent(e, p);
+    rendered = firewall_render(pe_to_firewall(e));
+    assert(str_contains_cstr(rendered, "quic_agent outbound quic:443") == 1, "quic label");
+    assert(str_contains_cstr(rendered, "udp dport 443") == 1, "quic renders as udp");
+
+    # Outbound host restrictions: O(1) set lookup
+    e = policy_engine_new();
+    p = agent_policy_new("restricted", "10.100.3.1");
+    ap_allow_outbound(p, ps_tcp(443));
+    ap_allow_outbound_host(p, "10.0.0.0/8");
+    ap_allow_outbound_host(p, "192.168.0.0/16");
+    pe_add_agent(e, p);
+    rendered = firewall_render(pe_to_firewall(e));
+    assert(str_contains_cstr(rendered, "set restricted_hosts") == 1, "host set");
+    assert(str_contains_cstr(rendered, "10.0.0.0/8, 192.168.0.0/16") == 1, "host cidrs");
+    assert(str_contains_cstr(rendered, "ip daddr @restricted_hosts") == 1, "set lookup");
+    assert(str_contains_cstr(rendered, "restricted outbound tcp:443 restricted") == 1, "restricted comment");
+
+    # Validate good
+    e = policy_engine_new();
+    pe_add_agent(e, agent_policy_new("a", "10.0.0.1"));
+    assert(is_ok(pe_validate(e)) == 1, "good engine ok");
+    assert(is_ok(firewall_validate(pe_to_firewall(e))) == 1, "engine fw valid");
+
+    # Validate bad agent id
+    e = policy_engine_new();
+    pe_add_agent(e, agent_policy_new("bad;id", "10.0.0.1"));
+    assert(is_err_result(pe_validate(e)) == 1, "bad agent id rejected");
+
+    # Validate bad addr
+    e = policy_engine_new();
+    pe_add_agent(e, agent_policy_new("a", "evil;addr"));
+    assert(is_err_result(pe_validate(e)) == 1, "bad addr rejected");
+
+    # Validate bad outbound host
+    e = policy_engine_new();
+    p = agent_policy_new("a", "10.0.0.1");
+    ap_allow_outbound_host(p, "evil;host");
+    pe_add_agent(e, p);
+    assert(is_err_result(pe_validate(e)) == 1, "bad outbound host rejected");
+
+    # Bad table name
+    e = policy_engine_new();
+    pe_set_table_name(e, "bad;table");
+    assert(is_err_result(pe_validate(e)) == 1, "bad table name rejected");
+
+    # Custom table name
+    e = policy_engine_new();
+    pe_set_table_name(e, "daimon_agents");
+    pe_add_agent(e, agent_policy_new("a", "10.0.0.1"));
+    rendered = firewall_render(pe_to_firewall(e));
+    assert(str_contains_cstr(rendered, "table inet daimon_agents") == 1, "custom table");
+
+    # Disable established/loopback
+    e = policy_engine_new();
+    p = agent_policy_new("strict", "10.0.0.1");
+    ap_set_allow_established(p, 0);
+    ap_set_allow_loopback(p, 0);
+    pe_add_agent(e, p);
+    rendered = firewall_render(pe_to_firewall(e));
+    assert(str_contains_cstr(rendered, "ct state") == 0, "no established");
+    assert(str_contains_cstr(rendered, "iif \"lo\"") == 0, "no loopback");
+
+    # Multiple agents sorted
+    e = policy_engine_new();
+    pe_add_agent(e, agent_policy_new("zebra", "10.0.0.3"));
+    pe_add_agent(e, agent_policy_new("alpha", "10.0.0.1"));
+    pe_add_agent(e, agent_policy_new("mike", "10.0.0.2"));
+    assert_eq(pe_agent_count(e), 3, "three agents");
+    rendered = firewall_render(pe_to_firewall(e));
+    # alpha should appear before mike should appear before zebra
+    var alpha_pos = str_index_of_cstr(rendered, "chain alpha_in");
+    var mike_pos = str_index_of_cstr(rendered, "chain mike_in");
+    var zebra_pos = str_index_of_cstr(rendered, "chain zebra_in");
+    assert(alpha_pos >= 0, "alpha present");
+    assert(alpha_pos < mike_pos, "alpha before mike");
+    assert(mike_pos < zebra_pos, "mike before zebra");
+
+    return 0;
+}
+
+# ================================================================
+# Config tests
+# ================================================================
+
+fn test_config() {
+    test_group("config");
+
+    # Family
+    assert_eq(cfg_parse_family("inet"), FAMILY_INET, "family inet");
+    assert_eq(cfg_parse_family("ip"), FAMILY_IP, "family ip");
+    assert_eq(cfg_parse_family("ip6"), FAMILY_IP6, "family ip6");
+    assert_eq(cfg_parse_family("arp"), FAMILY_ARP, "family arp");
+    assert_eq(cfg_parse_family("bridge"), FAMILY_BRIDGE, "family bridge");
+    assert_eq(cfg_parse_family("netdev"), FAMILY_NETDEV, "family netdev");
+    assert(cfg_parse_family("unknown") < 0, "unknown family");
+    assert(cfg_parse_family("") < 0, "empty family");
+
+    # ChainType
+    assert_eq(cfg_parse_chain_type("filter"), CHAIN_FILTER, "chain_type filter");
+    assert_eq(cfg_parse_chain_type("nat"), CHAIN_NAT, "chain_type nat");
+    assert_eq(cfg_parse_chain_type("route"), CHAIN_ROUTE, "chain_type route");
+    assert(cfg_parse_chain_type("bogus") < 0, "unknown chain_type");
+
+    # Hook
+    assert_eq(cfg_parse_hook("prerouting"), HOOK_PREROUTING, "hook prerouting");
+    assert_eq(cfg_parse_hook("input"), HOOK_INPUT, "hook input");
+    assert_eq(cfg_parse_hook("forward"), HOOK_FORWARD, "hook forward");
+    assert_eq(cfg_parse_hook("output"), HOOK_OUTPUT, "hook output");
+    assert_eq(cfg_parse_hook("postrouting"), HOOK_POSTROUTING, "hook postrouting");
+    assert_eq(cfg_parse_hook("ingress"), HOOK_INGRESS, "hook ingress");
+    assert(cfg_parse_hook("other") < 0, "unknown hook");
+
+    # Policy
+    assert_eq(cfg_parse_policy("accept"), POLICY_ACCEPT, "policy accept");
+    assert_eq(cfg_parse_policy("drop"), POLICY_DROP, "policy drop");
+    assert(cfg_parse_policy("reject") < 0, "unknown policy");
+
+    # Protocol
+    assert_eq(cfg_parse_protocol("tcp"), PROTO_TCP, "proto tcp");
+    assert_eq(cfg_parse_protocol("udp"), PROTO_UDP, "proto udp");
+    assert_eq(cfg_parse_protocol("icmp"), PROTO_ICMP, "proto icmp");
+    assert_eq(cfg_parse_protocol("icmpv6"), PROTO_ICMPV6, "proto icmpv6");
+    assert(cfg_parse_protocol("sctp") < 0, "unknown proto");
+
+    # RateUnit
+    assert_eq(cfg_parse_rate_unit("second"), RATE_SECOND, "rate second");
+    assert_eq(cfg_parse_rate_unit("minute"), RATE_MINUTE, "rate minute");
+    assert_eq(cfg_parse_rate_unit("hour"), RATE_HOUR, "rate hour");
+    assert_eq(cfg_parse_rate_unit("day"), RATE_DAY, "rate day");
+    assert(cfg_parse_rate_unit("week") < 0, "unknown rate");
+
+    # QuotaMode / QuotaUnit
+    assert_eq(cfg_parse_quota_mode("over"), QUOTA_OVER, "quota over");
+    assert_eq(cfg_parse_quota_mode("until"), QUOTA_UNTIL, "quota until");
+    assert_eq(cfg_parse_quota_unit("bytes"), QUNIT_BYTES, "quota bytes");
+    assert_eq(cfg_parse_quota_unit("kbytes"), QUNIT_KBYTES, "quota kbytes");
+    assert_eq(cfg_parse_quota_unit("mbytes"), QUNIT_MBYTES, "quota mbytes");
+    assert_eq(cfg_parse_quota_unit("gbytes"), QUNIT_GBYTES, "quota gbytes");
+
+    # PktType
+    assert_eq(cfg_parse_pkt_type("unicast"), PKT_UNICAST, "pkt unicast");
+    assert_eq(cfg_parse_pkt_type("broadcast"), PKT_BROADCAST, "pkt broadcast");
+    assert_eq(cfg_parse_pkt_type("multicast"), PKT_MULTICAST, "pkt multicast");
+
+    # IPv6ExtHdr
+    assert_eq(cfg_parse_ipv6_ext_hdr("hbh"), EXT_HOP_BY_HOP, "ext hbh");
+    assert_eq(cfg_parse_ipv6_ext_hdr("rt"), EXT_ROUTING, "ext rt");
+    assert_eq(cfg_parse_ipv6_ext_hdr("frag"), EXT_FRAGMENT, "ext frag");
+    assert_eq(cfg_parse_ipv6_ext_hdr("dst"), EXT_DESTINATION, "ext dst");
+    assert_eq(cfg_parse_ipv6_ext_hdr("mh"), EXT_MOBILITY, "ext mh");
+    assert_eq(cfg_parse_ipv6_ext_hdr("auth"), EXT_AUTH, "ext auth");
+
+    # CmpOp
+    assert_eq(cfg_parse_cmp_op("=="), NFT_CMP_EQ, "cmp eq");
+    assert_eq(cfg_parse_cmp_op("!="), NFT_CMP_NE, "cmp ne");
+    assert_eq(cfg_parse_cmp_op("<"), NFT_CMP_LT, "cmp lt");
+    assert_eq(cfg_parse_cmp_op(">"), NFT_CMP_GT, "cmp gt");
+    assert_eq(cfg_parse_cmp_op("<="), NFT_CMP_LE, "cmp le");
+    assert_eq(cfg_parse_cmp_op(">="), NFT_CMP_GE, "cmp ge");
+
+    # LogLevel
+    assert_eq(cfg_parse_log_level("emerg"), NFT_LOG_EMERG, "log emerg");
+    assert_eq(cfg_parse_log_level("alert"), NFT_LOG_ALERT, "log alert");
+    assert_eq(cfg_parse_log_level("crit"), NFT_LOG_CRIT, "log crit");
+    assert_eq(cfg_parse_log_level("err"), NFT_LOG_ERR, "log err");
+    assert_eq(cfg_parse_log_level("warn"), NFT_LOG_WARN, "log warn");
+    assert_eq(cfg_parse_log_level("notice"), NFT_LOG_NOTICE, "log notice");
+    assert_eq(cfg_parse_log_level("info"), NFT_LOG_INFO, "log info");
+    assert_eq(cfg_parse_log_level("debug"), NFT_LOG_DEBUG, "log debug");
+
+    # RejectReason
+    assert_eq(cfg_parse_reject_reason("icmp-host-unreachable"), REJECT_ICMP_HOST_UNREACH, "reject icmp host");
+    assert_eq(cfg_parse_reject_reason("icmp-port-unreachable"), REJECT_ICMP_PORT_UNREACH, "reject icmp port");
+    assert_eq(cfg_parse_reject_reason("icmp-net-unreachable"), REJECT_ICMP_NET_UNREACH, "reject icmp net");
+    assert_eq(cfg_parse_reject_reason("icmp-admin-prohibited"), REJECT_ICMP_ADMIN_PROHIB, "reject icmp admin");
+    assert_eq(cfg_parse_reject_reason("icmpx-admin-prohibited"), REJECT_ICMPX_ADMIN_PROHIB, "reject icmpx admin");
+    assert_eq(cfg_parse_reject_reason("tcp-reset"), REJECT_TCP_RESET, "reject tcp reset");
+    assert(cfg_parse_reject_reason("bogus") < 0, "unknown reject reason");
+
+    # SetType
+    assert_eq(cfg_parse_set_type("ipv4_addr"), SET_IPV4_ADDR, "set ipv4");
+    assert_eq(cfg_parse_set_type("ipv6_addr"), SET_IPV6_ADDR, "set ipv6");
+    assert_eq(cfg_parse_set_type("inet_service"), SET_INET_SERVICE, "set inet_service");
+    assert_eq(cfg_parse_set_type("inet_proto"), SET_INET_PROTO, "set inet_proto");
+    assert_eq(cfg_parse_set_type("ifname"), SET_IFNAME, "set ifname");
+
+    # SetFlag
+    assert_eq(cfg_parse_set_flag("constant"), SETFLAG_CONSTANT, "setflag constant");
+    assert_eq(cfg_parse_set_flag("interval"), SETFLAG_INTERVAL, "setflag interval");
+    assert_eq(cfg_parse_set_flag("timeout"), SETFLAG_TIMEOUT, "setflag timeout");
+
+    # Transport
+    assert_eq(cfg_parse_transport("tcp"), TRANS_TCP, "trans tcp");
+    assert_eq(cfg_parse_transport("udp"), TRANS_UDP, "trans udp");
+    assert_eq(cfg_parse_transport("quic"), TRANS_QUIC, "trans quic");
+
+    # cfg_result wrapper
+    var r = cfg_result(FAMILY_INET);
+    assert(is_ok(r) == 1, "cfg_result wraps Ok");
+    assert_eq(payload(r), FAMILY_INET, "cfg_result payload");
+    r = cfg_result(0 - 1);
+    assert(is_err_result(r) == 1, "cfg_result wraps Err on -1");
+    assert_eq(err_code(r), ERR_PARSE, "cfg_result Err has ERR_PARSE");
+
+    return 0;
+}
+
+# ================================================================
+# Netns tests
+# ================================================================
+
+fn test_netns() {
+    test_group("netns");
+
+    # Default build
+    var nsf = namespace_firewall_new("test-agent");
+    var fw = nsf_build(nsf);
+    var rendered = firewall_render(fw);
+    assert(str_contains_cstr(rendered, "table inet agnos_agent") == 1, "nsf table");
+    assert(str_contains_cstr(rendered, "chain input") == 1, "nsf input chain");
+    assert(str_contains_cstr(rendered, "chain output") == 1, "nsf output chain");
+    assert(str_contains_cstr(rendered, "policy drop") == 1, "default inbound drop");
+    assert(str_contains_cstr(rendered, "policy accept") == 1, "default outbound accept");
+    assert(str_contains_cstr(rendered, "ct state { established, related }") == 1, "established");
+    assert(str_contains_cstr(rendered, "iif \"lo\"") == 1, "loopback in");
+    assert(str_contains_cstr(rendered, "oif \"lo\"") == 1, "loopback out");
+    assert(str_contains_cstr(rendered, "dport 53") == 1, "dns");
+    assert(str_contains_cstr(rendered, "test-agent dns") == 1, "dns comment");
+
+    # Default validates
+    assert(is_ok(firewall_validate(nsf_build(namespace_firewall_new("test-agent")))) == 1, "default nsf validates");
+
+    # Inbound ports
+    nsf = namespace_firewall_new("test-agent");
+    nsf_allow_inbound(nsf, ps_tcp(8080));
+    nsf_allow_inbound(nsf, ps_tcp(443));
+    rendered = firewall_render(nsf_build(nsf));
+    assert(str_contains_cstr(rendered, "dport 8080") == 1, "inbound 8080");
+    assert(str_contains_cstr(rendered, "dport 443") == 1, "inbound 443");
+    assert(str_contains_cstr(rendered, "test-agent inbound tcp:8080") == 1, "inbound tcp:8080 comment");
+    assert(str_contains_cstr(rendered, "test-agent inbound tcp:443") == 1, "inbound tcp:443 comment");
+
+    # Outbound ports
+    nsf = namespace_firewall_new("test-agent");
+    nsf_allow_outbound(nsf, ps_tcp(443));
+    nsf_allow_outbound(nsf, ps_udp(123));
+    rendered = firewall_render(nsf_build(nsf));
+    assert(str_contains_cstr(rendered, "test-agent outbound tcp:443") == 1, "outbound tcp:443");
+    assert(str_contains_cstr(rendered, "test-agent outbound udp:123") == 1, "outbound udp:123");
+
+    # Outbound host restriction — one rule per (port, host)
+    nsf = namespace_firewall_new("test-agent");
+    nsf_allow_outbound(nsf, ps_tcp(443));
+    nsf_allow_outbound_host(nsf, "1.2.3.0/24");
+    nsf_allow_outbound_host(nsf, "4.5.6.0/24");
+    rendered = firewall_render(nsf_build(nsf));
+    assert(str_contains_cstr(rendered, "ip daddr 1.2.3.0/24") == 1, "daddr 1.2.3");
+    assert(str_contains_cstr(rendered, "ip daddr 4.5.6.0/24") == 1, "daddr 4.5.6");
+    assert(str_contains_cstr(rendered, "tcp:443 -> 1.2.3.0/24") == 1, "host comment 1");
+    assert(str_contains_cstr(rendered, "tcp:443 -> 4.5.6.0/24") == 1, "host comment 2");
+
+    # no_established / no_loopback / no_dns
+    nsf = namespace_firewall_new("strict");
+    nsf_no_established(nsf);
+    nsf_no_loopback(nsf);
+    nsf_no_dns(nsf);
+    rendered = firewall_render(nsf_build(nsf));
+    assert(str_contains_cstr(rendered, "ct state") == 0, "no established");
+    assert(str_contains_cstr(rendered, "\"lo\"") == 0, "no loopback");
+    assert(str_contains_cstr(rendered, "dport 53") == 0, "no dns");
+
+    # Custom policies
+    nsf = namespace_firewall_new("locked");
+    nsf_set_inbound_policy(nsf, POLICY_DROP);
+    nsf_set_outbound_policy(nsf, POLICY_DROP);
+    rendered = firewall_render(nsf_build(nsf));
+    # Both chains should have policy drop
+    var dp_count = 0;
+    var pos = 0;
+    # Check both "policy drop" present (we know 2 should exist)
+    assert(str_contains_cstr(rendered, "hook input priority 0; policy drop") == 1, "in drop");
+    assert(str_contains_cstr(rendered, "hook output priority 0; policy drop") == 1, "out drop");
+
+    return 0;
+}
+
+# ================================================================
+# Inspect parse tests (pure function — no nft subprocess needed)
+# ================================================================
+
+# Build a Str from a cstr literal for _parse_ruleset
+fn _cstr_to_str(c) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, c);
+    return str_builder_build(sb);
+}
+
+fn test_inspect_parse() {
+    test_group("inspect_parse");
+
+    # Empty ruleset
+    var tables = vec_new();
+    var count = _parse_ruleset(_cstr_to_str(""), tables);
+    assert_eq(count, 0, "empty ruleset: 0 rules");
+    assert_eq(vec_len(tables), 0, "empty ruleset: 0 tables");
+
+    # Single table, single chain, two rules
+    var raw = "table inet filter {\n  chain input {\n    type filter hook input priority 0; policy drop;\n    ct state { established, related } accept\n    tcp dport 22 accept\n  }\n}\n";
+    tables = vec_new();
+    count = _parse_ruleset(_cstr_to_str(raw), tables);
+    # "type" line is not counted; "ct state ..." and "tcp dport 22" are rules
+    # policy line contains "type ... policy drop;" — starts with "type" so excluded
+    assert_eq(count, 2, "two rules counted");
+    assert_eq(vec_len(tables), 1, "one table");
+    assert(streq(vec_get(tables, 0), "table inet filter") == 1, "table header captured");
+
+    # Multiple tables
+    raw = "table inet filter {\n  chain input {\n    tcp dport 22 accept\n  }\n}\ntable ip nat {\n  chain postrouting {\n    masquerade\n  }\n}\n";
+    tables = vec_new();
+    count = _parse_ruleset(_cstr_to_str(raw), tables);
+    assert_eq(count, 2, "two tables: two rules");
+    assert_eq(vec_len(tables), 2, "two tables");
+    assert(streq(vec_get(tables, 0), "table inet filter") == 1, "first table");
+    assert(streq(vec_get(tables, 1), "table ip nat") == 1, "second table");
+
+    # Closing brace and chain/type lines don't count as rules
+    raw = "table inet t {\n  chain c {\n    type filter hook input priority 0; policy drop;\n  }\n}\n";
+    tables = vec_new();
+    count = _parse_ruleset(_cstr_to_str(raw), tables);
+    assert_eq(count, 0, "header-only ruleset: 0 rules");
+    assert_eq(vec_len(tables), 1, "one table still");
+
+    # FirewallStatus struct
+    var s = firewall_status_new(vec_new(), 0, _cstr_to_str(""));
+    assert(vec_len(status_tables(s)) == 0, "status tables empty");
+    assert_eq(status_total_rules(s), 0, "status rules 0");
+
+    return 0;
+}
+
+# ================================================================
 # Main
 # ================================================================
 
@@ -1654,6 +2073,18 @@ fn main() {
 
     # bridge
     test_bridge();
+
+    # engine
+    test_engine();
+
+    # config
+    test_config();
+
+    # netns
+    test_netns();
+
+    # inspect (pure parsing — no nft subprocess)
+    test_inspect_parse();
 
     return assert_summary();
 }

@@ -117,7 +117,7 @@ enum CmpOpEnum {
 enum RejectReasonEnum {
     REJECT_ICMP_HOST_UNREACH = 1;
     REJECT_ICMP_PORT_UNREACH = 2;
-    REJECT_INFT_CMP_NET_UNREACH = 3;
+    REJECT_ICMP_NET_UNREACH = 3;
     REJECT_ICMP_ADMIN_PROHIB = 4;
     REJECT_ICMPX_ADMIN_PROHIB = 5;
     REJECT_TCP_RESET = 6;
@@ -198,7 +198,7 @@ fn _cmp_op_str(op) {
 fn _reject_reason_str(r) {
     if (r == REJECT_ICMP_HOST_UNREACH) { return "icmp type host-unreachable"; }
     if (r == REJECT_ICMP_PORT_UNREACH) { return "icmp type port-unreachable"; }
-    if (r == REJECT_INFT_CMP_NET_UNREACH) { return "icmp type net-unreachable"; }
+    if (r == REJECT_ICMP_NET_UNREACH) { return "icmp type net-unreachable"; }
     if (r == REJECT_ICMP_ADMIN_PROHIB) { return "icmp type admin-prohibited"; }
     if (r == REJECT_ICMPX_ADMIN_PROHIB) { return "icmpx type admin-prohibited"; }
     if (r == REJECT_TCP_RESET) { return "tcp reset"; }

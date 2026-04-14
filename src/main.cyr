@@ -18,6 +18,11 @@ include "src/lib/policy.cyr"
 include "src/lib/geoip.cyr"
 include "src/lib/mesh.cyr"
 include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
+include "src/lib/apply.cyr"
+include "src/lib/inspect.cyr"
 
 fn main() {
     alloc_init();
