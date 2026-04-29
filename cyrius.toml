@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "nein — programmatic nftables firewall"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "4.3.0"
+cyrius = "4.5.0"
 
 [build]
 entry = "src/main.cyr"
