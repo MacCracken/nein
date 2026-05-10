@@ -10,7 +10,7 @@ Pattern lifted from agnosys/agnostik 1.2.x. Refresh policy:
 - 🟠 **Yellow** — refreshed in the previous minor; due for a read-through
 - 🔴 **Red** — multiple minors stale; rewrite candidate
 
-Last refresh of this ledger: **2026-05-10** (post v1.1.4 — closeout pass, all 🟠 docs refreshed to ✅).
+Last refresh of this ledger: **2026-05-10** (post v1.2.0 — first feature minor; capability-map doc added).
 
 ## Top-level docs
 
@@ -52,6 +52,7 @@ Each ADR is dated at write-time; superseding ADRs reference the originals.
 |-----|--------------|--------|-------|
 | `docs/development/roadmap.md` | 2026-05-10 | ✅ | Restructured in v1.1.0; v1.1.1 / v1.1.2 progress folded in. |
 | `docs/development/threat-model.md` | 2026-05-10 | ✅ | Full Rust-era → Cyrius rewrite in v1.1.2: 8 numbered threats (T-1 through T-8), folds in v1.1.1 findings on PATH-injection allowlist + symbol-collision shadow + supply chain. |
+| `docs/development/capability-map.md` | 2026-05-10 | ✅ | New in v1.2.0. Per-module syscall + subprocess + fs-path footprint. Two reading lenses: rendering-only (zero syscall surface) vs apply-layer (9 sys_* wrappers + CAP_NET_ADMIN). |
 
 ## Guides
 

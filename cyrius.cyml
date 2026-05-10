@@ -11,6 +11,33 @@ cyrius = "5.10.34"
 entry = "src/main.cyr"
 output = "build/nein"
 
+# `[lib]` declares the modules `cyrius distlib` concatenates into
+# `dist/nein.cyr` — the single-file bundle consumed by stiva / aegis
+# / daimon / sutra. Order matches `src/main.cyr`'s include chain:
+# error → validate → primitives → aggregator → feature modules →
+# integrators. Pattern lifted from agnosys / agnostik 1.2.x.
+[lib]
+modules = [
+    "src/lib/error.cyr",
+    "src/lib/validate.cyr",
+    "src/lib/rule.cyr",
+    "src/lib/set.cyr",
+    "src/lib/nat.cyr",
+    "src/lib/chain.cyr",
+    "src/lib/table.cyr",
+    "src/lib/firewall.cyr",
+    "src/lib/builder.cyr",
+    "src/lib/policy.cyr",
+    "src/lib/geoip.cyr",
+    "src/lib/mesh.cyr",
+    "src/lib/bridge.cyr",
+    "src/lib/engine.cyr",
+    "src/lib/config.cyr",
+    "src/lib/netns.cyr",
+    "src/lib/apply.cyr",
+    "src/lib/inspect.cyr",
+]
+
 [deps]
 stdlib = [
     "string",

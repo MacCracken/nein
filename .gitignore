@@ -1,10 +1,14 @@
 # Build
 /build/
-/dist/
 
 # Cyrius
+# /lib/ is the resolved-deps directory (cyrius deps populates it from
+# the version-pinned stdlib + [deps.*] in cyrius.cyml). Never committed.
 /lib/
-cyrius.lock
+
+# `dist/` and `cyrius.lock` are intentionally tracked:
+#   dist/nein.cyr is the single-file consumer bundle (CI staleness gate)
+#   cyrius.lock holds sha256 of each resolved dep (CI hash-verify gate)
 
 # Rust (preserved in rust-old/)
 rust-old/target/

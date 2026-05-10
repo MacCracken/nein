@@ -4,6 +4,74 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] — 2026-05-10
+
+First feature minor since the port. Adds the consumer-bundle shape,
+the audit-trail story, and the capability map — all patterns the
+broader AGNOS ecosystem stabilized on between agnosys 1.0.0 and
+1.2.x. 580/580 tests pass; zero nein-side type-check warnings;
+binary unchanged on x86_64 (635 KB DCE).
+
+### Added
+
+- **`dist/nein.cyr` bundle.** New `[lib]` section in `cyrius.cyml`
+  declares the 18 modules; `cyrius distlib` writes the single-file
+  4621-line / 147 KB bundle to `dist/nein.cyr`. Consumers
+  (stiva, daimon, aegis, sutra) pull this one file via
+  `[deps.nein] modules = ["dist/nein.cyr"]` instead of vendoring
+  individual files. CI gate (`Verify dist bundle is in sync`)
+  rebuilds + diffs to ensure the committed bundle matches the
+  source tree on every PR.
+- **Sakshi tracing on `apply.cyr`.** `_run_nft_stdin` and
+  `_run_nft_capture` both wrap their fork/pipe/execve sequence
+  in a `sakshi_span_enter` / `sakshi_span_exit` pair. Per-step
+  failures emit `sakshi_error`; nft exit=0 emits `sakshi_info`;
+  nft exit nonzero emits `sakshi_warn`. exit=127 (no executable
+  found at any of the three allowlisted nft paths) gets its own
+  error message so the operator can distinguish "no nft installed"
+  from a real rule-application failure. Audit-trail coverage on
+  apply is now end-to-end; CLAUDE.md mandate honored.
+- **`docs/development/capability-map.md`** — per-module footprint
+  for syscalls, `sys_*` wrappers, subprocess binaries, and
+  hard-coded fs paths. Two reading lenses for sandbox-policy
+  authors: "rendering-only callers" (zero syscall surface) and
+  "apply-layer callers" (9 `sys_*` wrappers, 3 nft paths,
+  `CAP_NET_ADMIN`). Pattern lifted from agnosys 1.2.x.
+- **`cyrius.lock` and `dist/` now tracked in git.** Both were
+  previously gitignored. The lockfile being in-tree turns the CI
+  "Verify dep hashes" step from informational-warning to a hard
+  gate. The bundle being in-tree means consumers don't run
+  `cyrius distlib` themselves.
+
+### Changed
+
+- **`docs/doc-health.md`** — adds capability-map row (✅,
+  refreshed in v1.2.0); ledger refresh date bumped.
+- **`docs/development/roadmap.md`** — v1.2.0 marked done with
+  honest scope notes. The original v1.2.0 plan included a
+  "split deps by profile" item; investigation showed nein's
+  `netns.cyr` is builder-only (consumers integrate
+  `netns_apply_nftables_ruleset` themselves) so the split is
+  unnecessary. That item is removed. OTLP audit-emit deferred:
+  it would re-pull the agnostik dep dropped in v1.1.1, which
+  doesn't pay for itself for a single function (`Span_to_otlp_proto`).
+  The annotation pass on the remaining 14 modules carries to
+  v1.2.1.
+
+### Deferred
+
+- **OTLP audit-emit hook.** Was scoped for v1.2.0; deferred —
+  the only consumer is agnostik 1.2.0's `Span_to_otlp_proto`,
+  and re-pulling agnostik for one function regresses the v1.1.1
+  cleanup. A nein-side OTLP emitter could be written, but no
+  consumer is asking for it yet. Will revisit when
+  daimon / aegis actually wire OTLP intake.
+- **Annotation pass on remaining 14 `src/lib/` modules.**
+  Mechanical work — chain, table, set, nat, firewall, builder,
+  policy, geoip, mesh, bridge, engine, config, netns, inspect.
+  Now that the cstring/Str/i64 patterns are settled, this is a
+  steady-state cleanup that fits v1.2.1.
+
 ## [1.1.4] — 2026-05-10
 
 v1.1 minor closeout pass. Prose-doc currency, dead-code audit, clean

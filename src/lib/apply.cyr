@@ -13,10 +13,21 @@ fn _run_nft_stdin(input_buf, input_len) {
     var pipe_in[16];
     var pipe_err[16];
 
-    if (sys_pipe(&pipe_in) < 0) { return nein_err(ERR_NFT_FAILED); }
+    var sk_span_name = "nein.apply.run_nft_stdin";
+    sakshi_span_enter(sk_span_name, strlen(sk_span_name));
+
+    if (sys_pipe(&pipe_in) < 0) {
+        var sk_pipe_err = "nein.apply: sys_pipe(stdin) failed";
+        sakshi_error(sk_pipe_err, strlen(sk_pipe_err));
+        sakshi_span_exit();
+        return nein_err(ERR_NFT_FAILED);
+    }
     if (sys_pipe(&pipe_err) < 0) {
         sys_close(load32(&pipe_in));
         sys_close(load32(&pipe_in + 4));
+        var sk_pipe_err2 = "nein.apply: sys_pipe(stderr) failed";
+        sakshi_error(sk_pipe_err2, strlen(sk_pipe_err2));
+        sakshi_span_exit();
         return nein_err(ERR_NFT_FAILED);
     }
 
@@ -29,6 +40,9 @@ fn _run_nft_stdin(input_buf, input_len) {
     if (pid < 0) {
         sys_close(in_rfd); sys_close(in_wfd);
         sys_close(err_rfd); sys_close(err_wfd);
+        var sk_fork_err = "nein.apply: sys_fork failed";
+        sakshi_error(sk_fork_err, strlen(sk_fork_err));
+        sakshi_span_exit();
         return nein_err(ERR_NFT_FAILED);
     }
 
@@ -75,10 +89,26 @@ fn _run_nft_stdin(input_buf, input_len) {
     sys_waitpid(pid, &status, 0);
 
     if (WIFEXITED(status) == 1) {
-        if (WEXITSTATUS(status) == 127) { return nein_err(ERR_PERMISSION_DENIED); }
-        if (WEXITSTATUS(status) != 0) { return nein_err(ERR_NFT_FAILED); }
+        if (WEXITSTATUS(status) == 127) {
+            var sk_perm = "nein.apply: nft exit=127 (no executable found)";
+            sakshi_error(sk_perm, strlen(sk_perm));
+            sakshi_span_exit();
+            return nein_err(ERR_PERMISSION_DENIED);
+        }
+        if (WEXITSTATUS(status) != 0) {
+            var sk_nft = "nein.apply: nft exit nonzero";
+            sakshi_warn(sk_nft, strlen(sk_nft));
+            sakshi_span_exit();
+            return nein_err(ERR_NFT_FAILED);
+        }
+        var sk_ok = "nein.apply: nft exit=0";
+        sakshi_info(sk_ok, strlen(sk_ok));
+        sakshi_span_exit();
         return nein_ok();
     }
+    var sk_unk = "nein.apply: nft did not exit cleanly";
+    sakshi_error(sk_unk, strlen(sk_unk));
+    sakshi_span_exit();
     return nein_err(ERR_NFT_FAILED);
 }
 
@@ -88,8 +118,16 @@ fn _run_nft_stdin(input_buf, input_len) {
 # ================================================================
 
 fn _run_nft_capture(argv, nft_path) {
+    var sk_span_name = "nein.apply.run_nft_capture";
+    sakshi_span_enter(sk_span_name, strlen(sk_span_name));
+
     var pipe_out[16];
-    if (sys_pipe(&pipe_out) < 0) { return nein_err(ERR_NFT_FAILED); }
+    if (sys_pipe(&pipe_out) < 0) {
+        var sk_pe = "nein.apply: sys_pipe(capture) failed";
+        sakshi_error(sk_pe, strlen(sk_pe));
+        sakshi_span_exit();
+        return nein_err(ERR_NFT_FAILED);
+    }
 
     var out_rfd = load32(&pipe_out);
     var out_wfd = load32(&pipe_out + 4);
@@ -97,6 +135,9 @@ fn _run_nft_capture(argv, nft_path) {
     var pid = sys_fork();
     if (pid < 0) {
         sys_close(out_rfd); sys_close(out_wfd);
+        var sk_fe = "nein.apply: sys_fork(capture) failed";
+        sakshi_error(sk_fe, strlen(sk_fe));
+        sakshi_span_exit();
         return nein_err(ERR_NFT_FAILED);
     }
 
@@ -130,10 +171,26 @@ fn _run_nft_capture(argv, nft_path) {
     sys_waitpid(pid, &status, 0);
 
     if (WIFEXITED(status) == 1) {
-        if (WEXITSTATUS(status) == 127) { return nein_err(ERR_PERMISSION_DENIED); }
-        if (WEXITSTATUS(status) != 0) { return nein_err(ERR_NFT_FAILED); }
+        if (WEXITSTATUS(status) == 127) {
+            var sk_p = "nein.apply: nft capture exit=127";
+            sakshi_error(sk_p, strlen(sk_p));
+            sakshi_span_exit();
+            return nein_err(ERR_PERMISSION_DENIED);
+        }
+        if (WEXITSTATUS(status) != 0) {
+            var sk_n = "nein.apply: nft capture exit nonzero";
+            sakshi_warn(sk_n, strlen(sk_n));
+            sakshi_span_exit();
+            return nein_err(ERR_NFT_FAILED);
+        }
+        var sk_o = "nein.apply: nft capture exit=0";
+        sakshi_info(sk_o, strlen(sk_o));
+        sakshi_span_exit();
         return Ok(str_builder_build(sb));
     }
+    var sk_u = "nein.apply: nft capture did not exit cleanly";
+    sakshi_error(sk_u, strlen(sk_u));
+    sakshi_span_exit();
     return nein_err(ERR_NFT_FAILED);
 }
 

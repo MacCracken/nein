@@ -190,6 +190,22 @@ jobs:
         # perf trade-offs.
         run: scripts/bench-regression.sh
 
+      - name: Verify dist bundle is in sync with src/
+        # `cyrius distlib` reads [lib] modules from cyrius.cyml and writes
+        # dist/nein.cyr — the single-file bundle consumer crates pull in
+        # via `[deps.nein] modules = ["dist/nein.cyr"]`. The bundle is
+        # tracked in git so consumers don't have to run distlib themselves;
+        # this step verifies it's regenerated when [lib] or src/lib/*.cyr
+        # change. Pattern lifted from agnosys / agnostik 1.2.x.
+        run: |
+          cyrius distlib
+          if ! git diff --quiet dist/nein.cyr 2>/dev/null; then
+            echo "ERROR: dist/nein.cyr is stale. Run 'cyrius distlib' and commit."
+            git --no-pager diff dist/nein.cyr | head -40
+            exit 1
+          fi
+          echo "dist bundle matches src/"
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -253,7 +269,7 @@ jobs:
       - name: Check required docs
         run: |
           MISSING=0
-          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE CLAUDE.md cyrius.cyml docs/doc-health.md docs/development/roadmap.md docs/development/threat-model.md; do
+          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE CLAUDE.md cyrius.cyml docs/doc-health.md docs/development/roadmap.md docs/development/threat-model.md docs/development/capability-map.md; do
             if [ -f "$doc" ]; then echo "  OK: $doc"; else echo "  MISSING: $doc"; MISSING=1; fi
           done
           exit $MISSING

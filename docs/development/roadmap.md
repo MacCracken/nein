@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-05-10 (post v1.1.4 — v1.1 minor closeout).
+Last refresh: 2026-05-10 (post v1.2.0 — first feature minor shipped).
 
 The arc since v1.0.0 has been catch-up — toolchain 4.5.0 → 5.10.34, agnosys
 0.97.2 → 1.2.4, agnostik 0.97.1 → 1.2.1. v1.1.x is the housekeeping shoulder
@@ -70,40 +70,36 @@ build verification — no source-level behavior change.
 - `SECURITY.md` refreshed for v1.1.x (folded T-1…T-8 references)
 - `docs/architecture/overview.md` refreshed (module surface + data flow
   + cstring/Str/i64 boundary convention)
-- Closeout: dead-code audit (all "dead" warnings are unused stdlib —
-  not nein's fault), full build from clean, downstream consumers
+- Closeout: dead-code audit, full build from clean, downstream consumers
   surveyed (none actually depend on nein yet)
+
+### v1.2.0 — 2026-05-10
+First feature minor since the port. Consumer-bundle shape, audit-trail
+story, capability map.
+
+- `dist/nein.cyr` bundle (147 KB, 4621 lines) via `cyrius distlib` from
+  new `[lib]` section in `cyrius.cyml`. CI staleness gate.
+- Sakshi tracing on `apply.cyr` — `_run_nft_stdin` + `_run_nft_capture`
+  wrapped in `sakshi_span_enter` / `sakshi_span_exit`; per-step error
+  + warn + info events
+- `docs/development/capability-map.md` — per-module syscall / subprocess
+  / fs-path footprint with rendering-only vs apply-layer reading lenses
+- `cyrius.lock` and `dist/` moved from gitignore to in-tree — supply
+  chain hash gate now hard, consumers no longer run distlib themselves
+- Scope revision documented: original "split deps by profile" item
+  removed (nein's netns is builder-only); OTLP audit-emit deferred (no
+  consumer asking, would regress the v1.1.1 agnostik drop)
 
 ---
 
-## v1.2.0 — Profile-aware deps + audit emit (next, feature minor)
+## v1.2.x — Annotation closeout (patches, no API change)
 
-The first feature minor since the port. Adopts patterns the broader AGNOS
-ecosystem stabilized on between agnosys 1.0.0 and 1.2.x.
-
-- [ ] **Split deps by profile.** `apply.cyr` + `netns.cyr` need the netns
-      helpers (`netns_apply_nftables_ruleset`) that live in
-      `dist/agnosys-system.cyr`, not `agnosys-core`. Pull both profiles via
-      `#ifdef` gates so downstream consumers stay slim (per CLAUDE.md
-      "consumers pull only what they need")
-- [ ] **Sakshi tracing on apply-layer fns.** CLAUDE.md mandates structured
-      logging on syscall sites; today only some apply-layer fns emit
-      spans. Audit `apply.cyr`, `inspect.cyr`, `engine.cyr` for full
-      coverage; tests assert span emission on success + failure
-- [ ] **Optional OTLP audit-emit hook.** Use agnostik 1.2.0's
-      `Span_to_otlp_proto` to expose an opt-in audit stream — daimon /
-      aegis can consume rule-apply events without a custom format
-- [ ] **Capability-map doc** (`docs/development/capability-map.md`) —
-      enumerates the syscalls, paths (`/proc/net`, `nft` binary location),
-      and capabilities (`CAP_NET_ADMIN`) nein touches. Pattern lifted from
-      agnosys 1.2.1 — feeds seccomp-policy authors
-- [ ] **`cyrius distlib` bundle.** Ship `dist/nein.cyr` as the canonical
-      single-file consumption form for stiva / aegis / sutra (matches
-      agnosys / agnostik / darshana convention). Bundle-staleness CI gate
-- [ ] **Annotation pass on remaining `src/lib/` modules** (chain, table,
-      set, nat, firewall, builder, policy, geoip, mesh, bridge, engine,
-      config, netns, inspect) — purely mechanical now that the
-      cstring/Str/i64 patterns are settled from v1.1.2 / v1.1.3
+### v1.2.1 — Annotation pass on remaining modules (next)
+- [ ] `: cstring` / `: Str` / `: i64` annotation pass on the remaining 14
+      `src/lib/` modules: chain, table, set, nat, firewall, builder,
+      policy, geoip, mesh, bridge, engine, config, netns, inspect.
+      Mechanical now that the patterns are settled from v1.1.2 / v1.1.3.
+      ~250 fns. Will land as one batched patch.
 
 ---
 
