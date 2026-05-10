@@ -598,14 +598,14 @@ fn rule_validate(r) {
         var v2 = match_val2(m);
 
         if (mt == MATCH_SOURCE_ADDR || mt == MATCH_DEST_ADDR ||
-            mt == MATCH_SOURCE_ADDR6 || mt == MATCH_DEST_ADDR6) {
+        mt == MATCH_SOURCE_ADDR6 || mt == MATCH_DEST_ADDR6) {
             vr = validate_addr(v1);
             if (is_err_result(vr) == 1) { return vr; }
         } elif (mt == MATCH_IIF || mt == MATCH_OIF) {
             vr = validate_iface(v1);
             if (is_err_result(vr) == 1) { return vr; }
         } elif (mt == MATCH_CT_HELPER || mt == MATCH_FLOW_OFFLOAD ||
-                mt == MATCH_CT_TIMEOUT_SET) {
+        mt == MATCH_CT_TIMEOUT_SET) {
             vr = validate_identifier(v1);
             if (is_err_result(vr) == 1) { return vr; }
         } elif (mt == MATCH_SET_LOOKUP) {

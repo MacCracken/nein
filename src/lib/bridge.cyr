@@ -101,7 +101,7 @@ fn _pm_forward_comment(pm) {
 
 fn _pm_to_nat_rule(pm) {
     return nat_dnat(pm_protocol(pm), pm_host_port(pm), pm_container_addr(pm),
-                    pm_container_port(pm), _pm_comment(pm));
+    pm_container_port(pm), _pm_comment(pm));
 }
 
 fn _pm_to_forward_rule(pm) {

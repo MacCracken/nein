@@ -26,6 +26,6 @@ fn nein_err(code) {
 }
 
 # Extract the error code from an Err result
-fn err_code(r) {
+fn nein_err_code(r) {
     return payload(r);
 }

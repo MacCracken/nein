@@ -1,7 +1,7 @@
 # nein — programmatic nftables firewall
 # Ported from 9338 lines of Rust
 #
-# Stdlib auto-included via cyrius.toml
+# Stdlib auto-included via cyrius.cyml
 
 # --- Project modules ---
 # Dependency order: core -> feature modules -> integrators

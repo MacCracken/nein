@@ -43,9 +43,3 @@ git = "https://github.com/MacCracken/agnosys.git"
 path = "../agnosys"
 tag = "1.2.4"
 modules = ["dist/agnosys-core.cyr"]
-
-[deps.agnostik]
-git = "https://github.com/MacCracken/agnostik.git"
-path = "../agnostik"
-tag = "1.2.1"
-modules = ["dist/agnostik.cyr"]

@@ -4,6 +4,63 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.1] — 2026-05-10
+
+CI gate expansion + portability fixes surfaced by the new gates. All 580
+tests pass on x86_64 **and** aarch64. Binary size: 809 KB → 636 KB on
+x86_64 (-21%); aarch64 cross-build emits 679 KB.
+
+### Added
+
+- **CI gates** (mirrored from agnosys/agnostik patterns):
+  - `cyrius fmt` drift gate (diff against committed source)
+  - `cyrius lint` gate on `src/` (fail on `^\s*warn ` lines)
+  - `cyrius vet` (include-graph audit)
+  - `cyrius capacity --check` (informational — current tool emits
+    arch-peer-resolution false-positives, exits 0)
+  - aarch64 cross-build step (best-effort; skip with warning if
+    `cc5_aarch64` is missing from the toolchain bundle)
+  - `CYRIUS_DCE=1` enabled on all builds
+  - Security-scan job: `sys_system` calls, hardcoded writes to
+    `/etc` / `/bin` / `/sbin` (apply.cyr allowlisted — `/sbin/nft`
+    execve is nein's reason to exist), fn-scope buffers ≥ 4 KB (warn)
+    / ≥ 64 KB (fail)
+- `CYRIUS_NO_WARN_SHADOW_LIB=1` set workflow-wide to silence the
+  ./lib/ cwd-shadow note (the resolved deps directory is intentional)
+
+### Fixed
+
+- **aarch64 portability** (`src/lib/apply.cyr`): three call sites
+  switched from `syscall(SYS_PIPE, ...)` (x86-only — aarch64 uses
+  `SYS_PIPE2`) to the portable `sys_pipe(...)` stdlib wrapper that
+  exists in both arch peers. Unblocks aarch64 cross-builds.
+- **Symbol-collision shadowing**:
+  - `network_policy_new` (`src/lib/policy.cyr`) → `nein_network_policy_new`
+    — agnostik 1.2.x introduced a no-arg `network_policy_new` that
+    silently shadowed nein's 3-arg version via include order.
+  - `err_code` (`src/lib/error.cyr`) → `nein_err_code` — `err_code`
+    is now stdlib (lib/syscalls_*.cyr) for errno extraction; nein's
+    Result-payload extractor collided.
+- **`src/main.cyr`**: stale `cyrius.toml` reference in header comment
+  updated to `cyrius.cyml`.
+- **`src/lib/{rule,nat,bridge}.cyr`**: continuation-line indent drift
+  from the pre-`cyrius fmt` era; now fmt-clean.
+- **`tests/nein.tcyr`**: extracted three readability variables
+  (`v_bad`, `v_good`, `expected_cm`) to fit the 120-char line limit
+  on render-assertion call sites.
+
+### Removed
+
+- **agnostik dependency** — nein never called any agnostik symbol
+  (the original 0.97.1 import was speculative). Dropping the dep
+  eliminates four cross-crate `err_*` duplicate-fn warnings
+  (`err_permission_denied`, `err_invalid_argument`, `err_not_supported`,
+  `err_io` are defined in both agnosys-core and agnostik) and removes
+  the `trait` stdlib requirement that came in with agnostik's
+  OpenTelemetry traits. Cuts ~170 KB from the x86_64 binary.
+- `trait` stdlib entry from `cyrius.cyml` (was added briefly for the
+  agnostik traits; no longer needed).
+
 ## [1.1.0] — 2026-05-10
 
 Toolchain + dependency modernization. No source-level API changes; all 580 tests pass under the new toolchain.

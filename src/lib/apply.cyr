@@ -13,8 +13,8 @@ fn _run_nft_stdin(input_buf, input_len) {
     var pipe_in[16];
     var pipe_err[16];
 
-    if (syscall(SYS_PIPE, &pipe_in) < 0) { return nein_err(ERR_NFT_FAILED); }
-    if (syscall(SYS_PIPE, &pipe_err) < 0) {
+    if (sys_pipe(&pipe_in) < 0) { return nein_err(ERR_NFT_FAILED); }
+    if (sys_pipe(&pipe_err) < 0) {
         sys_close(load32(&pipe_in));
         sys_close(load32(&pipe_in + 4));
         return nein_err(ERR_NFT_FAILED);
@@ -89,7 +89,7 @@ fn _run_nft_stdin(input_buf, input_len) {
 
 fn _run_nft_capture(argv, nft_path) {
     var pipe_out[16];
-    if (syscall(SYS_PIPE, &pipe_out) < 0) { return nein_err(ERR_NFT_FAILED); }
+    if (sys_pipe(&pipe_out) < 0) { return nein_err(ERR_NFT_FAILED); }
 
     var out_rfd = load32(&pipe_out);
     var out_wfd = load32(&pipe_out + 4);

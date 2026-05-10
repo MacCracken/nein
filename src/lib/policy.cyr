@@ -45,7 +45,7 @@ fn policy_rule_add_port(pr, protocol, port) {
 # Layout: [name:8][target:8][ingress:8][egress:8][default_action:8] = 40 bytes
 # ================================================================
 
-fn network_policy_new(name, target, default_action) {
+fn nein_network_policy_new(name, target, default_action) {
     var np = alloc(40);
     store64(np, name);
     store64(np + 8, target);
@@ -190,7 +190,7 @@ fn policy_to_rules(np) {
 # ================================================================
 
 fn agent_to_agent(name, source, dest, protocol, port) {
-    var np = network_policy_new(name, dest, PACT_DENY);
+    var np = nein_network_policy_new(name, dest, PACT_DENY);
     var pr = policy_rule_new(source);
     policy_rule_add_port(pr, protocol, port);
     policy_add_ingress(np, pr);

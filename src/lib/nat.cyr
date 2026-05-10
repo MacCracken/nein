@@ -236,7 +236,7 @@ fn port_range_forward(host_start, host_end, container_addr, container_start) {
     var range_size = host_end - host_start;
     var container_end = container_start + range_size;
     return nat_dnat_range(PROTO_TCP, host_start, host_end, container_addr,
-                         container_start, container_end, "container port range fwd");
+    container_start, container_end, "container port range fwd");
 }
 
 fn container_masquerade(subnet, outbound_iface) {
