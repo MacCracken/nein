@@ -12,6 +12,8 @@ apply::flush_table/2
 apply::insert_rule_live/4
 apply::list_ruleset/0
 apply::list_ruleset_with_handles/0
+apply::nein_nft_path/0
+apply::nein_set_nft_path/1
 apply::replace_rule_live/5
 bridge::bf_add_isolation_group/2
 bridge::bf_add_port_mapping/2

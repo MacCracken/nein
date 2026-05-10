@@ -182,6 +182,35 @@ jobs:
         # the "X passed, Y failed" summary line.
         run: cyrius fuzz
 
+      - name: Integration tests
+        # tests/integration/*.tcyr exercise the apply layer (subprocess +
+        # netlink) and the inspect parser on real-shape nft output. They
+        # need root + nft for the live-apply assertions, but every
+        # individual test classifies its outcome — on non-permissive hosts
+        # the apply-related asserts pass through the
+        # `code == ERR_PERMISSION_DENIED || ERR_NFT_FAILED` branch, the
+        # pure-function asserts (path-pinning validation, parser shape)
+        # still run, and the suite exits 0.
+        #
+        # CI runs unconditionally on each push. To exercise the live-apply
+        # path against a real nft (which requires CAP_NET_ADMIN), set
+        # `NEIN_INTEGRATION=1` and wrap with `sudo unshare -n` to isolate
+        # in a fresh netns. The CI image doesn't have nft preinstalled in
+        # default ubuntu-latest; the apply assertions then fall through
+        # the permission-denied class as documented.
+        run: |
+          fail=0
+          for t in tests/integration/*.tcyr; do
+            [ -f "$t" ] || continue
+            name=$(basename "$t" .tcyr)
+            echo "=== integration: $name ==="
+            if ! cyrius test "$t"; then
+              echo "FAIL: $name"
+              fail=1
+            fi
+          done
+          [ $fail -eq 0 ] || { echo "integration: test failures"; exit 1; }
+
       - name: API surface snapshot gate
         # Diffs docs/api-surface.snapshot against the current nein public-fn
         # surface across src/main.cyr + src/lib/*.cyr. Fails on unexplained

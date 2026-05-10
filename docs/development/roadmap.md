@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-05-10 (post v1.3.0 — validation-depth minor).
+Last refresh: 2026-05-10 (post v1.4.0 — apply-layer hardening minor).
 
 The arc since v1.0.0 has been catch-up — toolchain 4.5.0 → 5.10.34, agnosys
 0.97.2 → 1.2.4, agnostik 0.97.1 → 1.2.1. v1.1.x is the housekeeping shoulder
@@ -117,38 +117,36 @@ documented.
   caller migration; revisit in v1.4.0); doctest pass (no `///`
   comments yet; v1.3.1 if patching continues)
 
-## v1.3.x — Optional patches
-
-### v1.3.1 — Doctest pass (next, if patching)
-- [ ] Add `///` doc-comment examples to public-fn surface where
-      non-obvious from the type signature (validate.cyr's 8 validators
-      are good starting candidates — they all have well-defined
-      input/output examples)
-- [ ] CI `cyrius doctest` gate
-
 ---
 
----
+## v1.4.0 — 2026-05-10
+Apply-layer hardening minor. Closed threat-model T-3 (PATH-injection
+multi-path race), hardened the inspect parser for real-shape nft output,
+scaffolded integration tests.
 
-## v1.4.0 — Apply-layer integration (minor, requires root tier)
+- `nein_set_nft_path` / `nein_nft_path` — single pinned absolute path
+  with runtime override; replaces the pre-v1.4.0 3-path fallback chain
+- `_parse_ruleset` block-nesting tracker — set/map/flowtable bodies no
+  longer count as rules; chain-internal handle annotations skipped
+- `tests/integration/apply_smoke.tcyr` scaffold with apply-outcome
+  classifier; CI step runs unconditionally
+- Deferred to v1.5.0: live-rule diff (`nein diff`); too big without
+  splitting v1.4.0's hardening theme
 
-- [ ] **Real-nftables integration test harness** (`tests/integration/`).
-      Gated on `NEIN_INTEGRATION=1` + root; runs in a network namespace
-      so it doesn't touch the host ruleset. CI runs under a privileged
-      container or skips with a `::warning::` if unavailable
-- [ ] **`nft` binary discovery + pinning.** Today apply.cyr's
-      `_nft_cmd` builds `["nft", "-f", "-"]` and execve resolves via
-      PATH. Validate against a configurable absolute path (default
-      `/usr/sbin/nft`) and refuse to apply if mismatch — closes a
-      PATH-injection vector
-- [ ] **list_ruleset_with_handles parser hardening.** The handle parser
-      (`_parse_ruleset` in inspect.cyr) is line-oriented; today it
-      passes a smoke test only. Round-trip fuzzing against
-      `nft list ruleset` output for representative tables
-- [ ] **Live-rule diffing.** `nein diff <target.toml>` — compare an
-      in-memory firewall plan against the live kernel ruleset; output
-      the minimal set of add/delete operations to converge. Pairs with
-      sutra's idempotent-apply playbook semantics
+## v1.5.0 — Live-rule diff + idempotent apply (next, feature minor)
+
+- [ ] **`nein diff <target>` module** — compare an in-memory firewall
+      plan against the live kernel ruleset (via `list_ruleset_with_handles`)
+      and emit the minimal set of `add` / `insert` / `delete` operations
+      to converge. Pairs with sutra's idempotent-apply playbook
+      semantics. New module `src/lib/diff.cyr`.
+- [ ] **Apply transactions** — wrap a diff plan in `nft -f -` atomically
+      so partial failures don't leave the ruleset in a half-converged
+      state. Builds on the v1.4.0 apply layer.
+- [ ] **Doctest pass** — once the diff API is settled, add `///`
+      examples to the validate / apply / diff public-fn surface; CI
+      `cyrius doctest` gate.
+- [ ] Re-evaluate **packed Result** with diff-layer hot paths in mind.
 
 ---
 

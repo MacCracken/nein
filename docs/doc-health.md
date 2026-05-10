@@ -10,13 +10,13 @@ Pattern lifted from agnosys/agnostik 1.2.x. Refresh policy:
 - 🟠 **Yellow** — refreshed in the previous minor; due for a read-through
 - 🔴 **Red** — multiple minors stale; rewrite candidate
 
-Last refresh of this ledger: **2026-05-10** (post v1.2.0 — first feature minor; capability-map doc added).
+Last refresh of this ledger: **2026-05-10** (post v1.4.0 — apply-layer hardening; T-3 closed; integration scaffold).
 
 ## Top-level docs
 
 | Doc | Last refresh | Status | Notes |
 |-----|--------------|--------|-------|
-| `README.md` | 2026-05-10 | ✅ | Refreshed in v1.1.3: bumped test/bench counts (541→580, 30→31), removed Rust-syntax `Match::Raw`, added `cyrius deps` + aarch64 build commands, linked the Cyrius-era threat model. |
+| `README.md` | 2026-05-10 | ✅ | Refreshed in v1.4.0: test count 580→585; added `nein_set_nft_path` example for systems with nft outside `/usr/sbin/`; added `tests/integration/` section with permission-denied class doc. |
 | `CHANGELOG.md` | 2026-05-10 | ✅ | Updated each release. |
 | `CLAUDE.md` | 2026-05-10 | ✅ | Refreshed in v1.1.3: cc3→cc5, pinned cyrius=5.10.34, removed phantom `mcp.cyr` from architecture tree, CI-gate inventory in status line. |
 | `CONTRIBUTING.md` | 2026-05-10 | ✅ | Refreshed in v1.1.4: cargo/Makefile/clippy → cyrius CI reproduction recipe, new-module workflow with api-surface update, threat-model coupling. |
@@ -51,8 +51,8 @@ Each ADR is dated at write-time; superseding ADRs reference the originals.
 | Doc | Last refresh | Status | Notes |
 |-----|--------------|--------|-------|
 | `docs/development/roadmap.md` | 2026-05-10 | ✅ | Restructured in v1.1.0; v1.1.1 / v1.1.2 progress folded in. |
-| `docs/development/threat-model.md` | 2026-05-10 | ✅ | Full Rust-era → Cyrius rewrite in v1.1.2: 8 numbered threats (T-1 through T-8), folds in v1.1.1 findings on PATH-injection allowlist + symbol-collision shadow + supply chain. |
-| `docs/development/capability-map.md` | 2026-05-10 | ✅ | New in v1.2.0. Per-module syscall + subprocess + fs-path footprint. Two reading lenses: rendering-only (zero syscall surface) vs apply-layer (9 sys_* wrappers + CAP_NET_ADMIN). |
+| `docs/development/threat-model.md` | 2026-05-10 | ✅ | T-3 hardened in v1.4.0: single pinned absolute path, no fallback chain, runtime override via `nein_set_nft_path` (validated: absolute / ≤ 256 bytes / non-null). Pre-v1.4.0 multi-path race documented in the "Pre-v1.4.0 behavior" subsection. |
+| `docs/development/capability-map.md` | 2026-05-10 | ✅ | Subprocess section refreshed in v1.4.0: single pinned `nft` path (default `/usr/sbin/nft`, override via `nein_set_nft_path`) replaces the prior 3-path fallback. |
 
 ## Guides
 

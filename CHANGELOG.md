@@ -4,6 +4,69 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.0] — 2026-05-10
+
+Apply-layer hardening minor. Closes threat-model T-3 (PATH-injection
+race), hardens the inspect parser against real-shape `nft list ruleset`
+output, scaffolds an integration test harness for the apply path.
+585/585 tests pass (was 580 — 5 new parser tests); api-surface grew
+by 2 fns (`nein_nft_path`, `nein_set_nft_path`).
+
+### Added
+
+- **`nein_set_nft_path(path: cstring): i64`** — runtime override for the
+  `nft` binary path. Validates absolute (must start with `/`), length
+  (≤ 256 bytes), non-null. Default `/usr/sbin/nft`; override on systems
+  with nft elsewhere (Alpine, Void, embedded).
+- **`nein_nft_path(): cstring`** — read-back accessor.
+- **`tests/integration/apply_smoke.tcyr`** — apply-layer integration
+  scaffold. 6 assertions covering: default path value, valid override,
+  relative-path rejection, null-path rejection, apply outcome
+  classification (Ok / ERR_PERMISSION_DENIED / ERR_NFT_FAILED — all
+  three are valid on different host policy), `_parse_ruleset` against
+  representative real-shape nft output with handle annotations.
+  Designed to run anywhere; live-apply assertions fall through the
+  permission-denied class on non-permissive hosts.
+- **CI `Integration tests` step** — runs `cyrius test tests/integration/*.tcyr`
+  unconditionally; the test classifier handles whether root + nft are
+  available. To exercise the live-apply path explicitly, set
+  `NEIN_INTEGRATION=1` and wrap with `sudo unshare -n` to isolate in a
+  fresh netns.
+
+### Changed
+
+- **Threat model T-3 closed at the multi-path-race level.** The pre-v1.4.0
+  `/usr/sbin/nft` → `/sbin/nft` → `/usr/bin/nft` fallback chain (a soft
+  form of PATH consultation) replaced with a **single pinned absolute
+  path**. An attacker who could plant a binary at `/usr/sbin/nft` no
+  longer wins the race against a separately-installed nft at
+  `/sbin/nft` — the operator chooses which path to trust.
+- **`_parse_ruleset` block-nesting tracker.** The inspect-layer rule
+  counter now tracks `{`/`}` nesting and the block kind at each level.
+  Lines inside `set` / `map` / `flowtable` / `ct timeout` blocks are
+  NOT counted as rules (previously `flags interval;` / `elements = …;` /
+  `devices = …;` all spuriously incremented the count). New
+  `_classify_block_open` helper. Comment / handle-annotation lines
+  (`# handle N`) inside chains are also skipped.
+- **Threat model + capability map + README + doc-health** refreshed to
+  reflect the v1.4.0 changes. The capability-map's subprocess section
+  rewrites from "three paths tried in order" to "single pinned path,
+  configurable".
+
+### Deferred (with rationale)
+
+- **`nein diff <target>`** — live-rule diffing was scoped for v1.4.0
+  but is a significant new module (parse target plan + parse live
+  ruleset + compute minimal add/delete set + render incremental nft
+  commands). Roughly 200+ LOC plus a fresh test surface. Defer to
+  **v1.5.0** so v1.4.0 ships the hardening + scaffold cleanly.
+- **Packed Result on hot paths** — still no measured win on the
+  validator bracket. Re-evaluate after live-rule diffing lands (which
+  may surface heap-alloc pressure on a hotter path).
+- **Doctest pass** — still no `///` comments. Folds into v1.5.0's docs
+  pass once the diffing API stabilizes (any new doctest examples want
+  the diff surface to be stable first).
+
 ## [1.3.0] — 2026-05-10
 
 Validation-depth minor. Fuzz harness expanded from one monolithic file

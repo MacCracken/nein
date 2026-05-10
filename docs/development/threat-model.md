@@ -1,7 +1,8 @@
 # Threat Model
 
-Last refresh: **2026-05-10** (v1.1.2). Supersedes the Rust-era model
-inherited at v1.0.0.
+Last refresh: **2026-05-10** (v1.4.0 — T-3 hardened to single pinned
+absolute path; integration test scaffold + inspect-parser hardening
+added).
 
 ## Scope
 
@@ -77,18 +78,34 @@ attacker controls `PATH` and can place a malicious `nft` earlier in the
 search path, they get arbitrary execution under nein's caller (typically
 root with `CAP_NET_ADMIN`).
 
-**Current mitigation.** The execve call tries **absolute paths only**
-in order: `/usr/sbin/nft` → `/sbin/nft` → `/usr/bin/nft`. PATH is not
-consulted. The v1.1.1 security-scan CI gate allowlists these three
-paths in `src/lib/apply.cyr` and fails the build on any new
-`"/etc/"` / `"/bin/"` / un-allowlisted `"/sbin/"` literal added
+**Current mitigation (v1.4.0).** The execve call uses **a single pinned
+absolute path** — no PATH consultation, no fallback chain. The default
+is `/usr/sbin/nft`; callers running on systems with nft elsewhere
+override at runtime via `nein_set_nft_path("/sbin/nft")`. The setter
+rejects:
+
+- `0` / null pointers
+- Non-absolute paths (anything not starting with `/`)
+- Paths longer than 256 bytes
+
+The v1.1.1 security-scan CI gate continues to allowlist `src/lib/apply.cyr`
+for path literals; that exception is now narrower (one literal default
+plus the doc-comment block) but the gate still fails the build on any
+new `"/etc/"` / `"/bin/"` / un-allowlisted `"/sbin/"` literal added
 elsewhere.
 
-**Residual risk.** A compromised system that has rewritten `/sbin/nft`
-is already root-equivalent — nein cannot defend against that. Roadmap
-item v1.4.0 ("nft binary discovery + pinning") adds a configurable
-absolute path with mismatch refusal, closing the case where multiple
-nft binaries exist with diverging behavior.
+**Pre-v1.4.0 behavior** tried `/usr/sbin/nft` → `/sbin/nft` →
+`/usr/bin/nft` in order. That was a soft form of PATH consultation: an
+attacker who controlled `/usr/sbin/` could plant a malicious binary
+before the real one, since execve would try it first. The v1.4.0 single-
+path model forces the operator to either trust `/usr/sbin/nft` exactly
+or set the path explicitly — closing the multi-path race.
+
+**Residual risk.** A compromised system that has rewritten the
+configured `nft` binary at its absolute path is already root-equivalent
+— nein cannot defend against that. The mitigation is upstream
+(integrity-protected filesystems via dm-verity / IMA / etc., out of
+nein's scope).
 
 ### T-4 — child-process hygiene
 

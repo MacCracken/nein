@@ -5,6 +5,37 @@
 # stderr is captured via a second pipe for error reporting.
 
 # ================================================================
+# nft binary path — pinned, configurable, no PATH consultation
+# ================================================================
+#
+# v1.4.0 hardening (threat-model T-3): the nft subprocess is always
+# launched via an *absolute* path. No PATH lookup. The default is
+# /usr/sbin/nft; callers running on systems with nft elsewhere
+# (Alpine, Void, embedded distros) override via `nein_set_nft_path`.
+#
+# Pre-v1.4.0 behavior tried /usr/sbin/nft → /sbin/nft → /usr/bin/nft
+# in order, which was a soft form of PATH consultation (an attacker
+# who controlled /usr/sbin/ could plant a malicious binary before the
+# real one). v1.4.0 forces a single explicit path so the operator
+# either trusts /usr/sbin/nft exactly, or sets the path explicitly.
+
+# Stored as a global-data cstring slot. alloc_init() sets the default;
+# callers can override at runtime via nein_set_nft_path.
+var _nein_nft_path = "/usr/sbin/nft";
+
+fn nein_nft_path(): cstring { return _nein_nft_path; }
+
+# Override the absolute path to nft. Must start with '/'. Returns
+# Ok(0) on accept, Err(ERR_INVALID_RULE) on reject.
+fn nein_set_nft_path(path: cstring): i64 {
+    if (path == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (load8(path) != 47) { return nein_err(ERR_INVALID_RULE); }   # '/'
+    if (strlen(path) > 256) { return nein_err(ERR_INVALID_RULE); }
+    _nein_nft_path = path;
+    return nein_ok();
+}
+
+# ================================================================
 # Low-level: spawn nft with stdin from buffer, capture stderr
 # Returns Ok(0) on exit 0, Err(ERR_NFT_FAILED) on non-zero or failure.
 # ================================================================
@@ -59,10 +90,8 @@ fn _run_nft_stdin(input_buf, input_len) {
         store64(argv + 8, "-f");
         store64(argv + 16, "-");
         store64(argv + 24, 0);
-        sys_execve("/usr/sbin/nft", argv, 0);
-        # Fallback path
-        sys_execve("/sbin/nft", argv, 0);
-        sys_execve("/usr/bin/nft", argv, 0);
+        # Single pinned absolute path — no PATH consultation (T-3).
+        sys_execve(_nein_nft_path, argv, 0);
         sys_exit(127);
     }
 
@@ -144,9 +173,8 @@ fn _run_nft_capture(argv, nft_path) {
     if (pid == 0) {
         sys_dup2(out_wfd, 1);
         sys_close(out_rfd); sys_close(out_wfd);
-        sys_execve("/usr/sbin/nft", argv, 0);
-        sys_execve("/sbin/nft", argv, 0);
-        sys_execve("/usr/bin/nft", argv, 0);
+        # Single pinned absolute path — no PATH consultation (T-3).
+        sys_execve(_nein_nft_path, argv, 0);
         sys_exit(127);
     }
 

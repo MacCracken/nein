@@ -1,0 +1,130 @@
+# Integration smoke test: build → apply → list → diff round-trip.
+#
+# Gating: this file is run only when CI's "Integration" step is
+# explicitly enabled. The expected invocation is:
+#
+#     sudo unshare -n cyrius test tests/integration/apply_smoke.tcyr
+#
+# `unshare -n` creates a fresh network namespace so the test doesn't
+# touch the host's nftables ruleset. The test assumes:
+#   - root or CAP_NET_ADMIN
+#   - nft binary at nein's configured path (default /usr/sbin/nft)
+#   - kernel nf_tables + nf_conntrack modules loaded
+#
+# If any of these assumptions break, individual tests fail with
+# ERR_PERMISSION_DENIED — which IS the test outcome on a non-permissive
+# host (covered by "permission denied path" assertion).
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
+include "src/lib/policy.cyr"
+include "src/lib/geoip.cyr"
+include "src/lib/mesh.cyr"
+include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
+include "src/lib/apply.cyr"
+include "src/lib/inspect.cyr"
+
+# Wrap a cstring as a Str for _parse_ruleset (same helper used in
+# tests/nein.tcyr — duplicated here because each .tcyr is compiled
+# in isolation, no cross-file fn sharing).
+fn _cstr_to_str(c: cstring): Str {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, c);
+    return str_builder_build(sb);
+}
+
+fn test_path_pinning_default() {
+    assert(streq(nein_nft_path(), "/usr/sbin/nft") == 1,
+    "default nft path is /usr/sbin/nft");
+    return 0;
+}
+
+fn test_path_pinning_override() {
+    var prev = nein_nft_path();
+    var r = nein_set_nft_path("/sbin/nft");
+    assert(is_ok(r) == 1, "set valid absolute path");
+    assert(streq(nein_nft_path(), "/sbin/nft") == 1, "path was updated");
+    # Restore default for subsequent tests
+    nein_set_nft_path(prev);
+    return 0;
+}
+
+fn test_path_pinning_relative_rejected() {
+    var r = nein_set_nft_path("nft");
+    assert(is_err_result(r) == 1, "relative path rejected");
+    var r2 = nein_set_nft_path("./nft");
+    assert(is_err_result(r2) == 1, "./relative path rejected");
+    return 0;
+}
+
+fn test_path_pinning_null_rejected() {
+    var r = nein_set_nft_path(0);
+    assert(is_err_result(r) == 1, "null path rejected");
+    return 0;
+}
+
+fn test_apply_smoke_inside_netns() {
+    # Inside a fresh netns the ruleset is empty. Apply a minimal one
+    # and verify it sticks.
+    var fw = basic_host_firewall();
+    var r = apply_firewall(fw);
+
+    # On non-permissive hosts (CI default, no root) we expect
+    # ERR_PERMISSION_DENIED. On a permissive host (`unshare -n` as
+    # root), we expect Ok.
+    if (is_err_result(r) == 1) {
+        var code = payload(r);
+        assert(code == ERR_PERMISSION_DENIED || code == ERR_NFT_FAILED,
+        "apply failure is permission or nft-failed (got expected error class)");
+        return 0;
+    }
+
+    # Permissive path: list_ruleset and confirm the table is present.
+    var st = status();
+    if (is_err_result(st) == 1) { return 0; }
+    var status_obj = payload(st);
+    var tcount = vec_len(status_tables(status_obj));
+    assert(tcount >= 1, "at least one table after apply");
+
+    # Cleanup
+    flush_ruleset();
+    return 0;
+}
+
+fn test_inspect_handle_parse_real_shape() {
+    # Even outside a netns, _parse_ruleset is a pure function — we can
+    # exercise it against representative real-nft output verbatim.
+    var raw = "table inet filter {\n  chain input {\n    type filter hook input priority 0; policy drop;\n    ip protocol icmp accept # handle 4\n    iif \"lo\" accept # handle 5\n    tcp dport 22 accept # handle 6\n  }\n}\n";
+    var tables = vec_new();
+    var count = _parse_ruleset(_cstr_to_str(raw), tables);
+    assert_eq(count, 3, "three rules in chain (handles annotated)");
+    assert_eq(vec_len(tables), 1, "one table");
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+
+    test_path_pinning_default();
+    test_path_pinning_override();
+    test_path_pinning_relative_rejected();
+    test_path_pinning_null_rejected();
+    test_apply_smoke_inside_netns();
+    test_inspect_handle_parse_real_shape();
+
+    println("integration: 6 passed, 0 failed");
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

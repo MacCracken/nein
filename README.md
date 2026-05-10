@@ -125,6 +125,14 @@ validators that reject dangerous characters (`;`, `{`, `}`, `|`, `\n`,
 variant is the explicit escape hatch — not validated, caller's
 responsibility (see [ADR-0004](docs/decisions/0004-raw-match-escape-hatch.md)).
 
+The `nft` subprocess is invoked via a single pinned absolute path
+(default `/usr/sbin/nft`); PATH is not consulted. Override on systems
+with nft elsewhere:
+
+```cyrius
+nein_set_nft_path("/sbin/nft");        # Alpine / Void / embedded distros
+```
+
 See [SECURITY.md](SECURITY.md) and [docs/development/threat-model.md](docs/development/threat-model.md)
 for the disclosure policy and full threat model.
 
@@ -134,10 +142,16 @@ for the disclosure policy and full threat model.
 cyrius deps                            # resolve dependencies into ./lib/
 cyrius build src/main.cyr build/nein   # compile (x86_64)
 cyrius build --aarch64 src/main.cyr build/nein-aarch64
-cyrius test tests/nein.tcyr            # run test suite (580 assertions)
+cyrius test tests/nein.tcyr            # run test suite (585 assertions)
 cyrius bench tests/nein.bcyr           # run benchmarks (31 benchmarks)
-cyrius run tests/nein.fcyr             # fuzz smoke harness
+cyrius fuzz                            # 5 per-target fuzz drivers
 ```
+
+Integration tests against a real nftables / netns live in
+`tests/integration/` — run via `cyrius test tests/integration/*.tcyr`.
+The pure-function assertions (path-pinning validation, parser shape)
+work on any host; the live-apply assertions need root + nft, and fall
+through the permission-denied class on non-permissive hosts.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 

@@ -72,15 +72,58 @@ fn _strip_open_brace(s: cstring): cstring {
     return s;
 }
 
+# Block-nesting context — only lines inside a `chain` block count as
+# rules. v1.4.0 hardening: previously every non-table/non-chain/non-type
+# line was counted as a rule, which mis-counted contents of `set`,
+# `map`, `flowtable`, `ct timeout` blocks (e.g. `flags interval;`,
+# `elements = { … };`) as rules. The block-stack tracker keeps a
+# string for the innermost open block kind: "chain", "set", "map",
+# "flowtable", "ct_timeout", or 0 (top-level / table).
+#
+# A line counts as a rule iff:
+#   - block_kind == "chain"
+#   - the line is not a `chain` opener, `type ` header, `policy `
+#     declaration, `}` close, comment (#), or blank
+enum BlockKind {
+    BLOCK_NONE = 0;
+    BLOCK_TABLE = 1;
+    BLOCK_CHAIN = 2;
+    BLOCK_SET = 3;
+    BLOCK_MAP = 4;
+    BLOCK_FLOWTABLE = 5;
+    BLOCK_CT_TIMEOUT = 6;
+}
+
+# Classify the opening line of a block. Returns BLOCK_NONE if the line
+# doesn't open a block.
+fn _classify_block_open(trimmed: cstring): i64 {
+    if (_cstr_starts_with(trimmed, "table ") == 1) { return BLOCK_TABLE; }
+    if (_cstr_starts_with(trimmed, "chain ") == 1) { return BLOCK_CHAIN; }
+    if (_cstr_starts_with(trimmed, "set ") == 1) { return BLOCK_SET; }
+    if (_cstr_starts_with(trimmed, "map ") == 1) { return BLOCK_MAP; }
+    if (_cstr_starts_with(trimmed, "flowtable ") == 1) { return BLOCK_FLOWTABLE; }
+    if (_cstr_starts_with(trimmed, "ct timeout ") == 1) { return BLOCK_CT_TIMEOUT; }
+    return BLOCK_NONE;
+}
+
 # Parse the raw ruleset Str, populating:
 #   tables_vec: pushed with each "table FAM NAME" line
-#   Returns rule count (lines that aren't table/chain/type/closing-brace/empty)
+#   Returns rule count — counted only inside `chain` blocks; lines
+#   inside set/map/flowtable/ct_timeout bodies are NOT rules.
+#
+# Block-stack depth is bounded by nesting in real nft output
+# (table → chain/set/map → optional inner). 16 slots is comfortable.
 fn _parse_ruleset(raw_str: Str, tables_vec: i64): i64 {
     var data = str_data(raw_str);
     var len = str_len(raw_str);
     var rule_count = 0;
     var line_start = 0;
     var i = 0;
+
+    var block_stack[16];
+    var bs_depth = 0;
+    store64(&block_stack, BLOCK_NONE);
+
     while (i <= len) {
         var at_end = 0;
         if (i == len) { at_end = 1; }
@@ -92,17 +135,40 @@ fn _parse_ruleset(raw_str: Str, tables_vec: i64): i64 {
                 var trimmed = _trim_line(data + line_start, line_len);
                 var tlen = strlen(trimmed);
                 if (tlen > 0) {
+                    var current_block = load64(&block_stack + bs_depth * 8);
+
                     if (_cstr_starts_with(trimmed, "table ") == 1) {
                         vec_push(tables_vec, _strip_open_brace(trimmed));
-                    } elif (_cstr_starts_with(trimmed, "chain ") == 1) {
-                        # not a rule
-                    } elif (_cstr_starts_with(trimmed, "type ") == 1) {
-                        # not a rule
+                        if (bs_depth < 15) {
+                            bs_depth = bs_depth + 1;
+                            store64(&block_stack + bs_depth * 8, BLOCK_TABLE);
+                        }
                     } elif (streq(trimmed, "}") == 1) {
-                        # not a rule
-                    } else {
-                        rule_count = rule_count + 1;
+                        # Block close. Pop the stack if we have anything.
+                        if (bs_depth > 0) { bs_depth = bs_depth - 1; }
+                    } elif (_classify_block_open(trimmed) != BLOCK_NONE) {
+                        # Open inner block.
+                        var kind = _classify_block_open(trimmed);
+                        if (bs_depth < 15) {
+                            bs_depth = bs_depth + 1;
+                            store64(&block_stack + bs_depth * 8, kind);
+                        }
+                    } elif (current_block == BLOCK_CHAIN) {
+                        # Inside a chain: count only real rule lines.
+                        # Skip the `type … hook … priority …; policy …;` header
+                        # and any `# handle N` annotations.
+                        if (_cstr_starts_with(trimmed, "type ") == 1) {
+                            # not a rule
+                        } elif (_cstr_starts_with(trimmed, "policy ") == 1) {
+                            # not a rule
+                        } elif (load8(trimmed) == 35) {   # '#'
+                            # comment / handle annotation
+                        } else {
+                            rule_count = rule_count + 1;
+                        }
                     }
+                    # Otherwise: inside set/map/flowtable/ct_timeout/table —
+                    # nothing to count.
                 }
             }
             line_start = i + 1;

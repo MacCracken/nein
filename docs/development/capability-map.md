@@ -7,8 +7,8 @@ small enough that a generator script isn't needed yet — agnosys's
 `scripts/gen-capability-map.sh` pattern would be the template if it
 gets one).
 
-**Last refresh:** 2026-05-10 (v1.2.0)
-**nein version:** 1.2.0
+**Last refresh:** 2026-05-10 (v1.4.0)
+**nein version:** 1.4.0
 **cyrius version:** 5.10.34
 
 ## How to read this
@@ -118,13 +118,13 @@ library and invoke their own `main()`.
 
 **Subprocess binaries:**
 
-- `/usr/sbin/nft` (tried first)
-- `/sbin/nft` (tried second)
-- `/usr/bin/nft` (tried third)
+- Single pinned absolute path. Default: `/usr/sbin/nft`. Override at
+  runtime via `nein_set_nft_path(path: cstring)` (validates: absolute
+  path, ≤ 256 bytes, non-null).
 
-PATH is not consulted. Mismatched / replaced binaries at any of these
-paths is **not** mitigated by nein — see threat model T-3 and roadmap
-v1.4.0 ("nft binary discovery + pinning") for the planned hardening.
+PATH is not consulted; the v1.4.0 model removed the prior
+`/usr/sbin → /sbin → /usr/bin` fallback chain to close the multi-path
+race documented in threat model T-3.
 
 ## Capabilities (Linux)
 
