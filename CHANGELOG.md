@@ -4,6 +4,28 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.0] — 2026-05-10
+
+Toolchain + dependency modernization. No source-level API changes; all 580 tests pass under the new toolchain.
+
+### Changed
+
+- **Cyrius**: 4.5.0 → 5.10.34 (declared in `cyrius.cyml`)
+- **agnosys**: 0.97.2 → 1.2.4 — switched to `dist/agnosys-core.cyr` bundle (modules-via-distlib pattern)
+- **agnostik**: 0.97.1 → 1.2.1 — switched to `dist/agnostik.cyr` bundle
+- **Manifest**: `cyrius.toml` → `cyrius.cyml` with `${file:VERSION}` interpolation, `repository` field, and `output = "build/nein"`
+- **Lockfile**: `cyrius.lock` now generated and committed (sha256 per resolved dep)
+- **CI workflows**: rewritten against the agnosys/agnostik 5.10.x pattern — versioned install layout (`~/.cyrius/versions/<v>/{bin,lib}` + symlinks, required by cc5 ≥ 5.10.9 for arch-peer include resolution), version extracted from `cyrius.cyml` via grep, lockfile-hash verification step, ELF magic check, version-consistency gate against CHANGELOG
+
+### Removed
+
+- `.cyrius-toolchain` — obsolete; the cyrius version is now declared in `cyrius.cyml`
+- `sakshi_full` stdlib entry — not present in 5.10.x stdlib (`sakshi` alone is sufficient)
+
+### Fixed
+
+- `.gitignore` ambiguity: `lib/*.cyr` (which could match `src/lib/*.cyr` at any depth) replaced with anchored `/lib/`. Added `cyrius.lock` is tracked; `/lib/` and `/dist/` are not.
+
 ## [1.0.0] — 2026-04-13
 
 Complete rewrite from Rust to Cyrius. Rust source preserved in `rust-old/` for reference.
