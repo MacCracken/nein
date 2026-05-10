@@ -3,8 +3,8 @@
 /dist/
 
 # Cyrius
-lib/*.cyr
-!lib/k*.cyr
+/lib/
+cyrius.lock
 
 # Rust (preserved in rust-old/)
 rust-old/target/
