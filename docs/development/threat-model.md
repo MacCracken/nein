@@ -1,92 +1,189 @@
 # Threat Model
 
-## Attack Surface
+Last refresh: **2026-05-10** (v1.1.2). Supersedes the Rust-era model
+inherited at v1.0.0.
 
-nein generates nftables rules from Rust types and applies them via the `nft`
-command. The primary threats are:
+## Scope
 
-### 1. nftables Syntax Injection
+nein renders nftables rulesets from typed Cyrius values and applies them
+by piping the rendered text to `nft -f -` via fork + pipe + execve. The
+threat model covers:
 
-**Threat:** An attacker controls a string value (IP address, interface name,
-comment) that is interpolated into the rendered nftables ruleset, injecting
-arbitrary nft commands.
+1. Inputs flowing from a caller into the rendered ruleset (injection)
+2. The handoff to the `nft` subprocess (subprocess hygiene, PATH attacks)
+3. The kernel-side surface nein touches (privilege model)
+4. Supply chain — Cyrius toolchain, agnosys dependency, lockfile
 
-**Mitigation:** The `validate` module checks all string inputs against an
-allowlist of safe characters. Dangerous characters (`;`, `{`, `}`, `|`, `\n`,
-`\r`, `\0`, `` ` ``, `$`, `"`) are rejected. IP addresses are further
-validated via `std::net::IpAddr::parse()` for semantic correctness.
-`Firewall::apply()` calls `validate()` before rendering.
+Out of scope: the `nft` userspace tool's own attack surface, the kernel
+netfilter subsystem, and downstream callers (stiva, daimon, aegis,
+sutra) which carry their own threat models.
 
-**Residual risk:** `Match::Raw` bypasses validation. It is documented as
-requiring trusted input only. The convenience builders `matching_addrs()` and
-`matching_addrs6()` use `Raw` internally but validate each address before
-embedding.
+## Threats
 
-### 2. Incremental Apply Injection
+### T-1 — nftables syntax injection
 
-**Threat:** Functions like `add_rule()`, `insert_rule()`, `replace_rule()` take
-string parameters that are interpolated into nft commands. An attacker-controlled
-`family`, `table`, `chain`, or `rule` parameter could inject nft commands.
+**Threat.** A caller passes attacker-influenced strings (IP, interface
+name, comment, log prefix, set element) that get interpolated into the
+rendered ruleset, injecting arbitrary nft commands when piped to
+`nft -f -`.
 
-**Mitigation:** All incremental apply functions validate parameters before
-interpolation:
-- `family` is validated against a closed set (`inet`, `ip`, `ip6`, `arp`,
-  `bridge`, `netdev`) via `validate_family()`.
-- `table` and `chain` are validated as identifiers (alphanumeric + `_` + `-`,
-  max 64 chars).
-- `rule` bodies are validated via `validate_nft_element()` which rejects
-  dangerous characters.
-- `handle` values are typed `u64`, no injection possible.
+**Mitigation.** Every string interpolated into nftables grammar passes
+through a `validate_*` function in `src/lib/validate.cyr` before the
+render call. Validators reject the dangerous-char set `; { } | \n \r \0
+\` $ "` plus per-type allowlists:
 
-### 3. Privilege Escalation
+| Validator | Allowlist |
+|-----------|-----------|
+| `validate_identifier` | alnum + `_` + `-`, 1–64 chars (table/chain names) |
+| `validate_addr` | hex + `.` + `:` + `/`, must contain a digit and at least one of `.`/`:` (IPv4/IPv6/CIDR) |
+| `validate_iface` | alnum + `_` + `-` + `.`, 1–15 chars (Linux `IFNAMSIZ`) |
+| `validate_family` | closed set: `inet`/`ip`/`ip6`/`arp`/`bridge`/`netdev` |
+| `validate_ct_state` | closed set: `new`/`established`/`related`/`invalid`/`untracked` |
+| `validate_comment` | rejects `"` and dangerous chars; ≤ 128 chars |
+| `validate_log_prefix` | same as comment but ≤ 64 chars (nftables limit) |
+| `validate_nft_element` | rejects `"` and dangerous chars; non-empty |
 
-**Threat:** nein spawns `nft` which requires root or `CAP_NET_ADMIN`. A
-compromised caller could use nein to modify firewall rules.
+`firewall_validate` walks the full tree before render; downstream
+`apply_*` functions validate any new strings passed at apply time. As
+of v1.1.2, all validators carry `(s: cstring): i64` annotations so the
+type-check gate catches a wrong-type input at compile time.
 
-**Mitigation:** nein does not manage privileges. Callers are responsible for
-running with appropriate capabilities. The library returns
-`NeinError::PermissionDenied` if `nft` fails with permission errors.
+**Residual risk.** The `Raw` Match variant (per ADR-0004) bypasses
+validation — documented for trusted-input use only. The convenience
+builders `matching_addrs` / `matching_addrs6` use Raw internally but
+pre-validate each address. Callers who construct `Raw` matches
+themselves own the validation contract.
 
-### 4. Denial of Service via Rule Explosion
+### T-2 — incremental-apply injection
 
-**Threat:** A configuration with many agents, ports, or isolation groups
-generates a large number of rules, overwhelming the nftables subsystem.
+**Threat.** `add_rule_live` / `insert_rule_live` / `replace_rule_live` /
+`delete_rule_live` take `family`/`table`/`chain` strings plus a rule
+struct and shell out to `nft add rule …`. Attacker-controlled string
+parameters could inject nft commands.
 
-**Mitigation:** Bridge isolation and PolicyEngine outbound hosts use nftables
-named sets (O(1) lookup) instead of explicit per-pair rules. The
-`Firewall::tables()` accessor allows inspection before applying.
-`Firewall::deduplicate()` can remove redundant rules.
+**Mitigation.** Every incremental-apply function validates its string
+parameters before interpolation:
 
-### 5. TOML Config Injection
+- `family` — `validate_family` (closed set)
+- `table` / `chain` — `validate_identifier`
+- Rule bodies — rendered via `rule_render`, which already passed
+  validate-during-construction
+- Handles — `i64`, no injection surface
 
-**Threat:** Malformed TOML input to `config::from_toml()` produces unexpected
+### T-3 — `nft` PATH injection
+
+**Threat.** `apply.cyr` invokes the nft binary via `execve`. If an
+attacker controls `PATH` and can place a malicious `nft` earlier in the
+search path, they get arbitrary execution under nein's caller (typically
+root with `CAP_NET_ADMIN`).
+
+**Current mitigation.** The execve call tries **absolute paths only**
+in order: `/usr/sbin/nft` → `/sbin/nft` → `/usr/bin/nft`. PATH is not
+consulted. The v1.1.1 security-scan CI gate allowlists these three
+paths in `src/lib/apply.cyr` and fails the build on any new
+`"/etc/"` / `"/bin/"` / un-allowlisted `"/sbin/"` literal added
+elsewhere.
+
+**Residual risk.** A compromised system that has rewritten `/sbin/nft`
+is already root-equivalent — nein cannot defend against that. Roadmap
+item v1.4.0 ("nft binary discovery + pinning") adds a configurable
+absolute path with mismatch refusal, closing the case where multiple
+nft binaries exist with diverging behavior.
+
+### T-4 — child-process hygiene
+
+**Threat.** The forked `nft` child could become a zombie, leak file
+descriptors, or hang the parent if stdin writes fail.
+
+**Mitigation.** `_run_nft_stdin` and `_run_nft_capture` always close
+the unused pipe ends, drain stderr, and call `sys_waitpid` regardless
+of the stdin-write outcome. On execve failure the child falls through
+to `sys_exit(127)`; the parent observes that exit status and returns
+`Err(ERR_PERMISSION_DENIED)`.
+
+**Residual risk.** A pathological `nft` that never terminates would
+block the parent's `sys_waitpid`. Timeouts are not currently set on
+that call. Tracked as a future hardening item — low priority because
+nft itself is not adversarial.
+
+### T-5 — denial of service via rule explosion
+
+**Threat.** A configuration with many agents, isolation groups, or
+geoip country lists produces a ruleset so large that nft rejects it
+or the kernel netfilter table runs out of memory.
+
+**Mitigation.**
+- Bridge port isolation (ADR-0007) and the `PolicyEngine` outbound-host
+  set use **named nftables sets** instead of per-pair rules — O(1)
+  lookup, O(N) memory in the element count, no rule-count blowup.
+- GeoIP rules use **interval sets** so a country with thousands of
+  CIDRs compresses to one set with `flags interval`.
+- `firewall_render` is observable before any apply — callers can size
+  the output and refuse to apply if implausible.
+
+### T-6 — TOML config inputs
+
+**Threat.** A malformed or adversarial TOML config produces unexpected
 rules.
 
-**Mitigation:** TOML parsing is handled by the `toml` crate. Invalid structure
-returns `NeinError::Parse`. Valid TOML that produces invalid rules is caught by
-`validate()` before apply.
+**Mitigation.** Today nein consumes only **scoped enum dispatchers**
+from `config.cyr` — they accept individual strings and return enum
+variants or `Err(ERR_PARSE)`. Full TOML struct parsing is not yet
+shipped (blocked on richer `toml` stdlib parsing, roadmap v2.0.0).
+Once it lands, the same `validate_*` pass applies — the TOML parser
+is a typed-input source like any other.
 
-### 6. Child Process Handling
+### T-7 — symbol-collision shadow
 
-**Threat:** The `nft` child process is not waited on, creating zombie processes
-or resource leaks.
+**Threat (historical, fixed in v1.1.1).** When a dependency adds a
+function with the same name as one of nein's, "last definition wins"
+silently shadows nein's implementation. If the shadow has different
+semantics (e.g. agnostik 1.2.x's no-arg `network_policy_new` vs nein's
+3-arg version), nein's callers get wrong behavior.
 
-**Mitigation:** `apply::run_nft_stdin()` always calls `wait_with_output()`,
-even if the stdin write fails.
+**Mitigation.** v1.1.1 audited and renamed colliding symbols:
+- `network_policy_new` → `nein_network_policy_new`
+- `err_code` → `nein_err_code`
 
-### 7. MCP Tool Input
+CI's build step prints any `duplicate fn` warnings (the toolchain
+emits them on stdout); a green build implies zero collisions. Future
+deps that introduce new collisions surface on the first build after
+the bump.
 
-**Threat:** MCP tool handlers (`nein_allow`, `nein_deny`) receive JSON input
-from agents. Malicious input could inject nft commands.
+### T-8 — supply chain
 
-**Mitigation:** `build_allow_rule()` and `build_deny_rule()` validate `table`,
-`chain` (as identifiers), `source` (as address), and `protocol` (closed set
-`tcp`/`udp`) before constructing rule strings.
+**Threat.** A compromised Cyrius toolchain release or a poisoned
+agnosys release could inject malicious code into the nein binary.
 
-## Supply Chain
+**Mitigation.**
+- Cyrius version is pinned in `cyrius.cyml` (`cyrius = "5.10.34"`);
+  CI installs from the version-pinned GitHub release URL — no `latest`,
+  no floating tags.
+- `cyrius.lock` records sha256 of each resolved dep. CI's
+  `cyrius deps --verify` step fails on hash mismatch.
+- nein's dep set is **deliberately minimal**: agnosys 1.2.4
+  (`dist/agnosys-core.cyr` profile only) is the sole `[deps.*]`
+  entry as of v1.1.1. The agnostik dep was dropped in v1.1.1 after
+  audit found zero call sites.
+- No external `unsafe` paths — Cyrius doesn't have an `unsafe` block
+  concept; all syscall surface is stdlib-mediated and surfaced through
+  the security-scan CI gate.
 
-- `cargo audit` — checks all dependencies against the RustSec advisory database
-- `cargo deny check` — enforces license allowlist, bans wildcards, denies
-  unknown registries/git sources
-- No `unsafe` code in the library
-- Fuzz targets cover rule rendering, TOML parsing, and validation
+## What is NOT a mitigation
+
+- **No stack canaries.** Cyrius does not emit stack-protector epilogues.
+  Buffer-overflow exploit primitives are bounded by source-level
+  validation, not runtime checks. See `_run_nft_stdin`'s `var errbuf[4096]`
+  and `_run_nft_capture`'s `var buf[4096]` — both are written by
+  `sys_read` with explicit length caps; the v1.1.1 security-scan gate
+  flags any new fn-scope buffer ≥ 4 KB for review (≥ 64 KB fails the
+  build).
+- **No ASLR-aware hardening at compile time.** Inherits whatever the
+  Cyrius runtime + Linux loader provide.
+
+## Discovery process
+
+Found a defect that affects this surface? Follow `SECURITY.md`'s private
+disclosure process. The next minor cuts may fold the fix in; CVE-class
+findings get a SECURITY-tagged patch and a `## Security` section in
+`CHANGELOG.md`.

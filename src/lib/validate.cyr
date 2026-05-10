@@ -10,7 +10,7 @@
 #
 # Checked by scanning each byte of the input string.
 
-fn _is_dangerous_char(c) {
+fn _is_dangerous_char(c: i64): i64 {
     if (c == 59) { return 1; }    # ;
     if (c == 123) { return 1; }   # {
     if (c == 125) { return 1; }   # }
@@ -23,7 +23,7 @@ fn _is_dangerous_char(c) {
     return 0;
 }
 
-fn _has_dangerous_char(s) {
+fn _has_dangerous_char(s: cstring): i64 {
     var len = strlen(s);
     var i = 0;
     while (i < len) {
@@ -33,7 +33,7 @@ fn _has_dangerous_char(s) {
     return 0;
 }
 
-fn _has_quote(s) {
+fn _has_quote(s: cstring): i64 {
     var len = strlen(s);
     var i = 0;
     while (i < len) {
@@ -44,7 +44,7 @@ fn _has_quote(s) {
 }
 
 # Check if a character is alphanumeric or _ or -
-fn _is_ident_char(c) {
+fn _is_ident_char(c: i64): i64 {
     # a-z
     if (c >= 97 && c <= 122) { return 1; }
     # A-Z
@@ -58,14 +58,14 @@ fn _is_ident_char(c) {
 }
 
 # Check if a character is valid for interface names (alnum, -, _, .)
-fn _is_iface_char(c) {
+fn _is_iface_char(c: i64): i64 {
     if (_is_ident_char(c) == 1) { return 1; }
     if (c == 46) { return 1; }   # .
     return 0;
 }
 
 # Check if a character is valid in IP/CIDR notation (hex digits, . : /)
-fn _is_addr_char(c) {
+fn _is_addr_char(c: i64): i64 {
     # 0-9
     if (c >= 48 && c <= 57) { return 1; }
     # a-f
@@ -83,7 +83,7 @@ fn _is_addr_char(c) {
 
 # Validate an nftables identifier (table name, chain name).
 # Must be non-empty, alphanumeric plus _ and -, at most 64 chars.
-fn validate_identifier(s) {
+fn validate_identifier(s: cstring): i64 {
     var len = strlen(s);
     if (len == 0) { return nein_err(ERR_INVALID_RULE); }
     if (len > 64) { return nein_err(ERR_INVALID_RULE); }
@@ -101,7 +101,7 @@ fn validate_identifier(s) {
 # Validate an IP address or CIDR string.
 # Allows only characters valid in IP/CIDR notation (hex digits, . : /).
 # Rejects dangerous injection characters and non-address strings.
-fn validate_addr(s) {
+fn validate_addr(s: cstring): i64 {
     var len = strlen(s);
     if (len == 0) { return nein_err(ERR_INVALID_RULE); }
 
@@ -141,7 +141,7 @@ fn validate_addr(s) {
 
 # Validate an nftables address family.
 # Must be one of: inet, ip, ip6, arp, bridge, netdev.
-fn validate_family(s) {
+fn validate_family(s: cstring): i64 {
     if (streq(s, "inet") == 1) { return nein_ok(); }
     if (streq(s, "ip") == 1) { return nein_ok(); }
     if (streq(s, "ip6") == 1) { return nein_ok(); }
@@ -153,7 +153,7 @@ fn validate_family(s) {
 
 # Validate a network interface name.
 # Up to 15 chars, alphanumeric plus - _ .
-fn validate_iface(s) {
+fn validate_iface(s: cstring): i64 {
     var len = strlen(s);
     if (len == 0) { return nein_err(ERR_INVALID_RULE); }
     if (len > 15) { return nein_err(ERR_INVALID_RULE); }
@@ -170,7 +170,7 @@ fn validate_iface(s) {
 
 # Validate a connection tracking state.
 # Must be: new, established, related, invalid, untracked.
-fn validate_ct_state(s) {
+fn validate_ct_state(s: cstring): i64 {
     if (streq(s, "new") == 1) { return nein_ok(); }
     if (streq(s, "established") == 1) { return nein_ok(); }
     if (streq(s, "related") == 1) { return nein_ok(); }
@@ -181,7 +181,7 @@ fn validate_ct_state(s) {
 
 # Validate a comment string.
 # Rejects double quotes and dangerous chars. Max 128 chars.
-fn validate_comment(s) {
+fn validate_comment(s: cstring): i64 {
     var len = strlen(s);
     if (len > 128) { return nein_err(ERR_INVALID_RULE); }
     if (_has_quote(s) == 1) { return nein_err(ERR_INVALID_RULE); }
@@ -191,7 +191,7 @@ fn validate_comment(s) {
 
 # Validate a log prefix string.
 # Same constraints as comments but max 64 chars (nftables limit).
-fn validate_log_prefix(s) {
+fn validate_log_prefix(s: cstring): i64 {
     var len = strlen(s);
     if (len > 64) { return nein_err(ERR_INVALID_RULE); }
     if (_has_quote(s) == 1) { return nein_err(ERR_INVALID_RULE); }
@@ -201,7 +201,7 @@ fn validate_log_prefix(s) {
 
 # Validate a set/map element string.
 # Non-empty, no dangerous chars, no quotes.
-fn validate_nft_element(s) {
+fn validate_nft_element(s: cstring): i64 {
     var len = strlen(s);
     if (len == 0) { return nein_err(ERR_INVALID_RULE); }
     if (_has_quote(s) == 1) { return nein_err(ERR_INVALID_RULE); }

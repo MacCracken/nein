@@ -4,6 +4,48 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.2] — 2026-05-10
+
+Type-check arc + doc currency. No runtime behavior change; 580/580 tests
+pass on x86_64 and aarch64. Type-check gate (`CYRIUS_TYPE_CHECK=1`) now
+green with zero nein-side warnings.
+
+### Added
+
+- **`CYRIUS_TYPE_CHECK=1` CI gate**. Routes cyrius build output through
+  a tempfile (matches agnostik's $-eats-null-bytes workaround), filters
+  stdlib self-flags via `^warning:lib/` and the known-tracked
+  `large static data` warning (roadmap v1.3.0 — str_builder audit), and
+  fails on any other `^warning:` line.
+- **`: cstring` / `: i64` parameter annotations** on `src/lib/validate.cyr`'s
+  full surface (8 public validators + 6 private char-class helpers). All
+  validators carry `(s: cstring): i64` shapes — the security-critical
+  injection surface is now type-checked end-to-end.
+- **`: i64` annotations on `src/lib/error.cyr`**. `nein_ok`, `nein_err`,
+  `nein_err_code` annotated to match packed-Result conventions.
+- **`docs/doc-health.md`** — currency ledger for prose documentation,
+  patterned on agnosys/agnostik 1.2.x. Tracks refresh age and traffic-light
+  status (✅/🟠/🔴) for top-level docs, architecture, ADRs, development,
+  and guides.
+
+### Changed
+
+- **`docs/development/threat-model.md`** — full rewrite. The v1.0.0 file
+  was Rust-era prose referencing `std::net::IpAddr::parse()`,
+  `cargo audit`, `Firewall::deduplicate()`, and Match::Raw — replaced
+  with a Cyrius-era 8-threat model (T-1 syntax injection, T-2
+  incremental-apply, T-3 nft PATH injection, T-4 child-process
+  hygiene, T-5 rule explosion, T-6 TOML inputs, T-7 symbol-collision
+  shadow, T-8 supply chain). Folds in v1.1.1's
+  `/usr/sbin/nft`→`/sbin/nft`→`/usr/bin/nft` allowlist and the
+  `nein_*`-prefix collision audit.
+
+### Deferred
+
+- `: cstring` / `: Str` annotations on rule.cyr (71 fns, mixed-type
+  constructors) and apply.cyr (15 fns, heterogeneous shapes) — too
+  sprawling for v1.1.2's patch scope. Queued for v1.1.3.
+
 ## [1.1.1] — 2026-05-10
 
 CI gate expansion + portability fixes surfaced by the new gates. All 580

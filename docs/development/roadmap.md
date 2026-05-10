@@ -38,25 +38,24 @@ cross-build green. Binary -21% on x86_64.
   agnostik (renamed to `nein_*` prefix)
 - Removed: agnostik dependency (never actually used in source)
 
+### v1.1.2 — 2026-05-10
+Type-check arc + doc currency. Zero nein-side type-check warnings.
+
+- `CYRIUS_TYPE_CHECK=1` CI gate (filters stdlib self-flags + known-tracked
+  large-static-data warning)
+- `: cstring` / `: i64` annotations on validate.cyr + error.cyr surfaces
+- `docs/doc-health.md` currency ledger (✅/🟠/🔴 traffic light per doc)
+- `docs/development/threat-model.md` rewritten Rust-era → Cyrius-era,
+  8 numbered threats (T-1 through T-8)
+
 ---
 
 ## v1.1.x — CI / housekeeping (patches, no API change)
 
-### v1.1.2 — Type-check + doc-health (next)
-- [ ] `CYRIUS_TYPE_CHECK=1` build gate — verify zero nein-side warnings
-      under the type-check arc default-on (cyrius v5.10.26+); filter
-      stdlib self-flags via path prefix per agnostik's pattern
-- [ ] `: Str` / `: cstring` parameter annotations on nein's public API
-      (validate.cyr, rule.cyr, builder.cyr) — surfaces intent, no
-      runtime cost
-- [ ] Doc-health table scaffold (`docs/doc-health.md`) tracking refresh
-      ages for architecture / threat-model / roadmap. Pattern lifted
-      from agnosys 1.2.x
-- [ ] Threat-model refresh — re-survey injection surface against
-      `nft list ruleset` parsing path; v1.0.0 audit predates the
-      inspect.cyr handle-parser work
-
-### v1.1.3 — Surface snapshot + bench-regression gate
+### v1.1.3 — Surface snapshot + bench-regression gate (next)
+- [ ] `: cstring` / `: Str` annotation pass on rule.cyr (71 fns) and
+      apply.cyr (15 fns) — deferred from v1.1.2 due to scope. Constructors
+      take heterogeneous types; needs per-fn care
 - [ ] `docs/api-surface.snapshot` + `scripts/api-surface.sh check` gate —
       diffs current public-fn surface vs snapshot; fails on unexplained
       adds/removes (lifted from agnostik 1.0.5+)
@@ -65,6 +64,7 @@ cross-build green. Binary -21% on x86_64.
       threshold; `[bench-regression-ack]` commit-message bypass for
       intentional perf trade-offs
 - [ ] CHANGELOG / roadmap currency check in CI
+- [ ] README + CLAUDE.md refresh (both flagged 🟠 in doc-health)
 
 ---
 

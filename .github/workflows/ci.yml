@@ -107,6 +107,31 @@ jobs:
           CYRIUS_DCE=1 cyrius build src/main.cyr build/nein
           echo "nein (x86_64): $(wc -c < build/nein) bytes"
 
+      - name: Type-check (CYRIUS_TYPE_CHECK=1)
+        # Cyrius v5.10.26+ ships type-check default-on (cstring / Str
+        # annotations on stdlib + nein's annotated surface). Filter stdlib
+        # self-flags (`warning:lib/...`) and known-tracked
+        # `large static data` (roadmap v1.3.0 — str_builder audit); any
+        # OTHER nein-side warning fails the build. Tempfile routing
+        # because $(...) drops null bytes from cyrius's stderr stream —
+        # same workaround agnostik uses.
+        run: |
+          tmp=$(mktemp)
+          CYRIUS_TYPE_CHECK=1 cyrius build src/main.cyr build/nein-tc > "$tmp" 2>&1
+          if grep -E "^warning:" "$tmp" \
+              | grep -vE "^warning:lib/" \
+              | grep -v "large static data" \
+              | head -1 | grep -q .; then
+            echo "type-check: nein-side warnings present"
+            grep -E "^warning:" "$tmp" \
+              | grep -vE "^warning:lib/" \
+              | grep -v "large static data"
+            rm -f "$tmp"
+            exit 1
+          fi
+          echo "type-check: no nein-side warnings"
+          rm -f "$tmp"
+
       - name: Verify ELF
         run: xxd -l 4 build/nein | grep -q "7f45 4c46"
 

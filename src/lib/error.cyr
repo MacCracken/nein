@@ -16,16 +16,16 @@ enum NeinError {
 # --- Result helpers ---
 
 # Return Ok(0)
-fn nein_ok() {
+fn nein_ok(): i64 {
     return Ok(0);
 }
 
 # Return Err(code)
-fn nein_err(code) {
+fn nein_err(code: i64): i64 {
     return Err(code);
 }
 
 # Extract the error code from an Err result
-fn nein_err_code(r) {
+fn nein_err_code(r: i64): i64 {
     return payload(r);
 }
