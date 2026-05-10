@@ -19,11 +19,11 @@ Consumers:
   sutra  ──→ nein (fleet-wide firewall playbooks)
 ```
 
-## Modules (18)
+## Modules (19)
 
 | Module     | Purpose |
 |------------|---------|
-| `error`    | `NeinError` enum + packed Result helpers |
+| `error`    | `NeinError` enum + Result helpers |
 | `validate` | Injection-safe validators for identifiers, addresses, interfaces, comments, set elements |
 | `rule`     | 30 Match variants, 13 Verdict variants, Rule struct, render/validate |
 | `set`      | Named sets (ipv4_addr, ipv6_addr, inet_service, inet_proto, ifname) and verdict maps |
@@ -41,6 +41,7 @@ Consumers:
 | `netns`    | Per-agent network namespace firewall builder (pairs with agnosys netns apply) |
 | `apply`    | Execute rulesets via `nft -f -` (fork+pipe+execve); batch + incremental rule ops |
 | `inspect`  | Query live firewall state — `status()` returns tables + rule count + raw ruleset |
+| `diff`     | Live-rule diff + idempotent apply — converge the live ruleset onto a target plan with the minimal nft op set |
 
 ## Quick Start
 
@@ -103,6 +104,20 @@ var dnat = port_forward(8080, "172.17.0.2", 80);
 var masq = container_masquerade("172.17.0.0/16", "eth0");
 ```
 
+### Idempotent apply (live-rule diff)
+
+```cyrius
+# Build the target firewall.
+var fw = basic_host_firewall();
+
+# Apply only the deltas — no full re-apply if already in sync.
+var r = nein_diff(fw);
+if (is_ok(r) == 1) {
+    var ops = payload(r);
+    # vec_len(ops) is the number of nft commands that were applied.
+}
+```
+
 ### Multi-agent policy engine
 
 ```cyrius
@@ -142,7 +157,7 @@ for the disclosure policy and full threat model.
 cyrius deps                            # resolve dependencies into ./lib/
 cyrius build src/main.cyr build/nein   # compile (x86_64)
 cyrius build --aarch64 src/main.cyr build/nein-aarch64
-cyrius test tests/nein.tcyr            # run test suite (585 assertions)
+cyrius test tests/nein.tcyr            # run test suite (601 assertions)
 cyrius bench tests/nein.bcyr           # run benchmarks (31 benchmarks)
 cyrius fuzz                            # 5 per-target fuzz drivers
 ```

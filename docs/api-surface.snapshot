@@ -77,6 +77,16 @@ config::cfg_parse_set_flag/1
 config::cfg_parse_set_type/1
 config::cfg_parse_transport/1
 config::cfg_result/1
+diff::diff_apply/1
+diff::diff_compute/2
+diff::diff_parse_live/1
+diff::diff_target_rules/1
+diff::live_rule_body/1
+diff::live_rule_chain/1
+diff::live_rule_family/1
+diff::live_rule_handle/1
+diff::live_rule_table/1
+diff::nein_diff/1
 engine::agent_policy_new/2
 engine::ap_agent_addr/1
 engine::ap_agent_id/1

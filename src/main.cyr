@@ -23,6 +23,7 @@ include "src/lib/config.cyr"
 include "src/lib/netns.cyr"
 include "src/lib/apply.cyr"
 include "src/lib/inspect.cyr"
+include "src/lib/diff.cyr"
 
 fn main() {
     alloc_init();

@@ -18,6 +18,7 @@ include "src/lib/config.cyr"
 include "src/lib/netns.cyr"
 include "src/lib/apply.cyr"
 include "src/lib/inspect.cyr"
+include "src/lib/diff.cyr"
 
 # ================================================================
 # Error tests
@@ -2036,6 +2037,64 @@ fn test_inspect_parse() {
     return 0;
 }
 
+fn test_diff() {
+    test_group("diff");
+
+    # --- Live parser extracts handles correctly ---
+    var raw = "table inet filter { # handle 1\n  chain input { # handle 1\n    type filter hook input priority 0; policy drop;\n    tcp dport 22 accept # handle 7\n    tcp dport 80 accept # handle 8\n  }\n}\n";
+    var live = diff_parse_live(_cstr_to_str(raw));
+    assert_eq(vec_len(live), 2, "parser found 2 live rules");
+    var r0 = vec_get(live, 0);
+    assert_eq(live_rule_handle(r0), 7, "first rule handle = 7");
+    assert(streq(live_rule_family(r0), "inet") == 1, "first rule family");
+    assert(streq(live_rule_table(r0), "filter") == 1, "first rule table");
+    assert(streq(live_rule_chain(r0), "input") == 1, "first rule chain");
+    assert(streq(live_rule_body(r0), "tcp dport 22 accept") == 1, "first rule body (handle stripped)");
+    var r1 = vec_get(live, 1);
+    assert_eq(live_rule_handle(r1), 8, "second rule handle = 8");
+
+    # --- Identical target + live = empty diff ---
+    var fw = firewall_new();
+    var t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(c, allow_tcp(22));
+    chain_add_rule(c, allow_tcp(80));
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+    var ops = diff_compute(fw, _cstr_to_str(raw));
+    assert_eq(vec_len(ops), 0, "identical target + live = no ops");
+
+    # --- Target has rule not in live = "add rule" ---
+    var raw_partial = "table inet filter { # handle 1\n  chain input { # handle 1\n    type filter hook input priority 0; policy drop;\n    tcp dport 22 accept # handle 7\n  }\n}\n";
+    ops = diff_compute(fw, _cstr_to_str(raw_partial));
+    assert_eq(vec_len(ops), 1, "target has 1 extra rule = 1 add op");
+    var add_op = vec_get(ops, 0);
+    assert(str_contains_cstr(_cstr_to_str(add_op), "add rule inet filter input") == 1, "op starts with add rule");
+    assert(str_contains_cstr(_cstr_to_str(add_op), "tcp dport 80 accept") == 1, "op contains the new rule body");
+
+    # --- Live has extra rule not in target = "delete rule" ---
+    var raw_extra = "table inet filter { # handle 1\n  chain input { # handle 1\n    type filter hook input priority 0; policy drop;\n    tcp dport 22 accept # handle 7\n    tcp dport 80 accept # handle 8\n    tcp dport 443 accept # handle 9\n  }\n}\n";
+    ops = diff_compute(fw, _cstr_to_str(raw_extra));
+    assert_eq(vec_len(ops), 1, "live has 1 extra rule = 1 delete op");
+    var del_op = vec_get(ops, 0);
+    assert(str_contains_cstr(_cstr_to_str(del_op), "delete rule inet filter input handle 9") == 1, "op references handle 9");
+
+    # --- Empty target vs populated live = all deletes ---
+    var empty_fw = firewall_new();
+    var empty_t = table_new("filter", FAMILY_INET);
+    table_add_chain(empty_t, chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP));
+    firewall_add_table(empty_fw, empty_t);
+    ops = diff_compute(empty_fw, _cstr_to_str(raw));
+    assert_eq(vec_len(ops), 2, "empty target = delete both live rules");
+
+    # --- _strip_handle_suffix on line without handle ---
+    var bh = _strip_handle_suffix("tcp dport 22 accept");
+    assert(streq(load64(bh), "tcp dport 22 accept") == 1, "no-handle body unchanged");
+    assert_eq(load64(bh + 8), 0, "no-handle handle = 0");
+
+    return 0;
+}
+
 # ================================================================
 # Main
 # ================================================================
@@ -2063,6 +2122,9 @@ fn main() {
     test_rule_render_matches();
     test_rule_render_log_advanced();
     test_rule_validate();
+
+    # diff
+    test_diff();
 
     # set
     test_set_render();

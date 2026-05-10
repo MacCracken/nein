@@ -7,8 +7,8 @@ small enough that a generator script isn't needed yet — agnosys's
 `scripts/gen-capability-map.sh` pattern would be the template if it
 gets one).
 
-**Last refresh:** 2026-05-10 (v1.4.0)
-**nein version:** 1.4.0
+**Last refresh:** 2026-05-10 (v1.5.0)
+**nein version:** 1.5.0
 **cyrius version:** 5.10.34
 
 ## How to read this
@@ -94,6 +94,21 @@ exposure.
 Note: nein is a library; `main()` exists only as a build target so the
 test harness has something to link. Production consumers import the
 library and invoke their own `main()`.
+
+### `diff` (`src/lib/diff.cyr`)
+
+| | Count |
+|---|---|
+| Direct syscalls | 0 |
+| `sys_*` wrappers | 0 (transitively via apply when `nein_diff` runs) |
+| Subprocess binaries | 0 (transitively `nft` via apply) |
+| Filesystem paths | 0 |
+
+Pure rule-rendering + string-parsing module. `diff_compute` is a pure
+function (target firewall + raw live ruleset → Vec of nft command
+strings). The syscall surface only opens when a caller chains the
+result through `diff_apply` or `nein_diff`, which transitively use
+the apply-layer wrappers below.
 
 ### `apply` (`src/lib/apply.cyr`)
 

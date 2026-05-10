@@ -36,6 +36,7 @@ modules = [
     "src/lib/netns.cyr",
     "src/lib/apply.cyr",
     "src/lib/inspect.cyr",
+    "src/lib/diff.cyr",
 ]
 
 [deps]

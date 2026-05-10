@@ -10,15 +10,15 @@ Pattern lifted from agnosys/agnostik 1.2.x. Refresh policy:
 - 🟠 **Yellow** — refreshed in the previous minor; due for a read-through
 - 🔴 **Red** — multiple minors stale; rewrite candidate
 
-Last refresh of this ledger: **2026-05-10** (post v1.4.0 — apply-layer hardening; T-3 closed; integration scaffold).
+Last refresh of this ledger: **2026-05-10** (post v1.5.0 — live-rule diff shipped; roadmap cleaned to forward-looking only).
 
 ## Top-level docs
 
 | Doc | Last refresh | Status | Notes |
 |-----|--------------|--------|-------|
-| `README.md` | 2026-05-10 | ✅ | Refreshed in v1.4.0: test count 580→585; added `nein_set_nft_path` example for systems with nft outside `/usr/sbin/`; added `tests/integration/` section with permission-denied class doc. |
+| `README.md` | 2026-05-10 | ✅ | Refreshed in v1.5.0: test count 585→601, public-fn count 350→360, new `diff` module mentioned in module table + `nein_diff` quick-start example. |
 | `CHANGELOG.md` | 2026-05-10 | ✅ | Updated each release. |
-| `CLAUDE.md` | 2026-05-10 | ✅ | Refreshed in v1.1.3: cc3→cc5, pinned cyrius=5.10.34, removed phantom `mcp.cyr` from architecture tree, CI-gate inventory in status line. |
+| `CLAUDE.md` | 2026-05-10 | ✅ | Refreshed in v1.5.0: status line bumped to v1.5.0; added `diff.cyr` to architecture tree; test count 580→601. |
 | `CONTRIBUTING.md` | 2026-05-10 | ✅ | Refreshed in v1.1.4: cargo/Makefile/clippy → cyrius CI reproduction recipe, new-module workflow with api-surface update, threat-model coupling. |
 | `SECURITY.md` | 2026-05-10 | ✅ | Refreshed in v1.1.4: ties to T-1…T-8, PATH-injection allowlist, symbol-collision audit, lockfile-pinned deps. Supported-versions table updated for v1.1.x baseline. |
 | `VERSION` | 2026-05-10 | ✅ | Mechanical. |
@@ -50,9 +50,9 @@ Each ADR is dated at write-time; superseding ADRs reference the originals.
 
 | Doc | Last refresh | Status | Notes |
 |-----|--------------|--------|-------|
-| `docs/development/roadmap.md` | 2026-05-10 | ✅ | Restructured in v1.1.0; v1.1.1 / v1.1.2 progress folded in. |
+| `docs/development/roadmap.md` | 2026-05-10 | ✅ | Cleaned in v1.5.0 to forward-looking only. Release history moved to CHANGELOG.md; the roadmap tracks "what's next" and explicit deferrals with rationale. |
 | `docs/development/threat-model.md` | 2026-05-10 | ✅ | T-3 hardened in v1.4.0: single pinned absolute path, no fallback chain, runtime override via `nein_set_nft_path` (validated: absolute / ≤ 256 bytes / non-null). Pre-v1.4.0 multi-path race documented in the "Pre-v1.4.0 behavior" subsection. |
-| `docs/development/capability-map.md` | 2026-05-10 | ✅ | Subprocess section refreshed in v1.4.0: single pinned `nft` path (default `/usr/sbin/nft`, override via `nein_set_nft_path`) replaces the prior 3-path fallback. |
+| `docs/development/capability-map.md` | 2026-05-10 | ✅ | v1.5.0 refresh: new `diff` module entry (pure rendering, no direct syscalls; transitively uses apply-layer wrappers via `diff_apply` / `nein_diff`). |
 
 ## Guides
 

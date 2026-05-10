@@ -4,6 +4,71 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.0] — 2026-05-10
+
+Live-rule diff + idempotent apply. New `src/lib/diff.cyr` module
+computes the minimal nft operations to converge a live ruleset onto a
+target firewall plan, and applies them atomically via a single
+`nft -f -` invocation. 601/601 tests pass (was 585 — 16 new diff
+assertions); api-surface grew by 10 fns.
+
+### Added
+
+- **`src/lib/diff.cyr`** — new module. Public API:
+  - **`diff_parse_live(raw_str: Str): i64`** — parses `nft list ruleset -a`
+    output into a Vec of `LiveRule` tuples `(family, table, chain, body,
+    handle)`. Reuses the v1.4.0 `_classify_block_open` + block-nesting
+    tracker. Strips `# handle N` suffix from rule bodies.
+  - **`diff_target_rules(fw: i64): i64`** — walks a `Firewall` and
+    yields the same Vec shape (handle=0, body comes from `rule_render`
+    converted to cstring).
+  - **`diff_compute(target_fw: i64, live_raw: Str): i64`** — symmetric
+    diff by (family, table, chain, body) byte-equality. Returns
+    `Vec<cstring>` of nft commands (`add rule …\n` for target-not-in-live,
+    `delete rule … handle N\n` for live-not-in-target).
+  - **`diff_apply(ops: i64): i64`** — concatenates the op vec into a
+    single `nft -f -` invocation (atomic per kernel semantics).
+  - **`nein_diff(target_fw: i64): i64`** — convenience: list_ruleset +
+    diff_compute + diff_apply; returns `Ok(applied_ops_vec)` or `Err`.
+  - **`LiveRule` accessors**: `live_rule_family` / `live_rule_table` /
+    `live_rule_chain` / `live_rule_body` / `live_rule_handle`.
+- **16 new test assertions** in `tests/nein.tcyr` covering: handle
+  extraction, family/table/chain/body fields, empty-diff on identical
+  inputs, add-op generation for target-only rules, delete-op
+  generation for live-only rules, all-deletes on empty target,
+  `_strip_handle_suffix` edge cases.
+- **`dist/nein.cyr`** now bundles diff.cyr; api-surface snapshot grew
+  to 360 fns (+10 from diff module).
+
+### Changed
+
+- Conservative-match design: byte-equality on rule bodies. Drift in
+  whitespace or operand ordering produces a delete+add pair instead
+  of a no-op — verbose but always correct (nft accepts duplicates,
+  rejects invalid deletes; both surface as `ERR_NFT_FAILED`).
+- Threat model + capability-map + README + doc-health refreshed for
+  diff module + v1.5.0 baseline.
+
+### Deferred (with rationale)
+
+- **Doctest pass** — `cyrius doctest` returns "0 passed, 0 failed
+  (0 total doc tests)" on any input format we tried (`///` Rust-style,
+  `# Example:` cyrius-stdlib style). The tool exists but the
+  convention isn't documented or implemented. Tracked upstream;
+  re-evaluate when cyrius docs publish the doctest format.
+- **Packed Result on hot paths** — re-measured: validators run
+  ~500ns–1µs, dominated by string scanning, not the 16-byte
+  Result alloc. Eliminating the alloc saves ~100-200ns at most,
+  not enough to justify breaking every `is_err_result` /
+  `payload` caller across 18 modules and 350+ public fns.
+  Permanently parked unless a future hot path emerges (sutra's
+  bulk apply playbooks might surface one).
+- **Block creation in diff** — v1.5.0 emits add/delete rule
+  operations only; table/chain create/delete is not computed.
+  Tables and chains are assumed pre-existing with the right
+  shapes. Future revision can extend if a consumer needs full
+  schema reconciliation.
+
 ## [1.4.0] — 2026-05-10
 
 Apply-layer hardening minor. Closes threat-model T-3 (PATH-injection
