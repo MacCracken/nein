@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-05-10 (post v1.1.0).
+Last refresh: 2026-05-10 (post v1.1.3).
 
 The arc since v1.0.0 has been catch-up — toolchain 4.5.0 → 5.10.34, agnosys
 0.97.2 → 1.2.4, agnostik 0.97.1 → 1.2.1. v1.1.x is the housekeeping shoulder
@@ -48,23 +48,33 @@ Type-check arc + doc currency. Zero nein-side type-check warnings.
 - `docs/development/threat-model.md` rewritten Rust-era → Cyrius-era,
   8 numbered threats (T-1 through T-8)
 
+### v1.1.3 — 2026-05-10
+Surface tracking + annotation pass on the construction surface + prose
+refresh.
+
+- `scripts/api-surface.sh` + `docs/api-surface.snapshot` (348 fns)
+- `scripts/bench-regression.sh` + `docs/benchmarks/history.csv` baseline
+- Currency check (CHANGELOG dated entry + roadmap refresh ≤ 90 days)
+- ~55 type annotations across rule.cyr (match/verdict constructors) and
+  apply.cyr (full public surface)
+- README + CLAUDE.md refresh (both 🟠 → ✅ in doc-health)
+
 ---
 
 ## v1.1.x — CI / housekeeping (patches, no API change)
 
-### v1.1.3 — Surface snapshot + bench-regression gate (next)
-- [ ] `: cstring` / `: Str` annotation pass on rule.cyr (71 fns) and
-      apply.cyr (15 fns) — deferred from v1.1.2 due to scope. Constructors
-      take heterogeneous types; needs per-fn care
-- [ ] `docs/api-surface.snapshot` + `scripts/api-surface.sh check` gate —
-      diffs current public-fn surface vs snapshot; fails on unexplained
-      adds/removes (lifted from agnostik 1.0.5+)
-- [ ] `scripts/bench-regression.sh` gate against
-      `benchmarks/bench-history.csv` — fail on per-op slowdown beyond
-      threshold; `[bench-regression-ack]` commit-message bypass for
-      intentional perf trade-offs
-- [ ] CHANGELOG / roadmap currency check in CI
-- [ ] README + CLAUDE.md refresh (both flagged 🟠 in doc-health)
+v1.1 minor closeout is one or two patches away. Remaining items batched
+toward v1.2.0:
+
+### Optional v1.1.4 — closeout sweep
+- [ ] Fmt/lint/vet pass on tests/ files (currently informational)
+- [ ] `docs/architecture/overview.md` refresh (🟠 — predates v1.1.x)
+- [ ] `CONTRIBUTING.md` refresh (🟠 — Rust-era cargo commands)
+- [ ] `SECURITY.md` refresh (🟠 — fold v1.1.x findings)
+- [ ] Annotation pass on the remaining `src/lib/` modules (chain, table,
+      set, nat, firewall, builder, policy, geoip, mesh, bridge, engine,
+      config, netns, inspect) — purely mechanical now that the
+      cstring/Str/i64 patterns are settled
 
 ---
 

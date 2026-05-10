@@ -150,22 +150,22 @@ fn _nft_cmd(cmd_cstr) {
 # ================================================================
 
 # Apply a ruleset (Str or cstr). For Str, caller should use apply_ruleset_str.
-fn apply_ruleset_cstr(ruleset_cstr) {
+fn apply_ruleset_cstr(ruleset_cstr: cstring): i64 {
     return _run_nft_stdin(ruleset_cstr, strlen(ruleset_cstr));
 }
 
-fn apply_ruleset_str(ruleset_str) {
+fn apply_ruleset_str(ruleset_str: Str): i64 {
     return _run_nft_stdin(str_data(ruleset_str), str_len(ruleset_str));
 }
 
-fn apply_firewall(fw) {
+fn apply_firewall(fw: i64): i64 {
     var vr = firewall_validate(fw);
     if (is_err_result(vr) == 1) { return vr; }
     var ruleset = firewall_render(fw);
     return apply_ruleset_str(ruleset);
 }
 
-fn flush_ruleset() {
+fn flush_ruleset(): i64 {
     return _nft_cmd("flush ruleset\n");
 }
 
@@ -192,7 +192,7 @@ fn _build_nft_line(verb, family, table, chain_or_null) {
     return out;
 }
 
-fn flush_table(family, table) {
+fn flush_table(family: cstring, table: cstring): i64 {
     var vr = validate_family(family);
     if (is_err_result(vr) == 1) { return vr; }
     vr = validate_identifier(table);
@@ -200,7 +200,7 @@ fn flush_table(family, table) {
     return _nft_cmd(_build_nft_line("flush table", family, table, 0));
 }
 
-fn delete_table(family, table) {
+fn delete_table(family: cstring, table: cstring): i64 {
     var vr = validate_family(family);
     if (is_err_result(vr) == 1) { return vr; }
     vr = validate_identifier(table);
@@ -208,7 +208,7 @@ fn delete_table(family, table) {
     return _nft_cmd(_build_nft_line("delete table", family, table, 0));
 }
 
-fn flush_chain(family, table, chain) {
+fn flush_chain(family: cstring, table: cstring, chain: cstring): i64 {
     var vr = validate_family(family);
     if (is_err_result(vr) == 1) { return vr; }
     vr = validate_identifier(table);
@@ -218,7 +218,7 @@ fn flush_chain(family, table, chain) {
     return _nft_cmd(_build_nft_line("flush chain", family, table, chain));
 }
 
-fn delete_chain(family, table, chain) {
+fn delete_chain(family: cstring, table: cstring, chain: cstring): i64 {
     var vr = validate_family(family);
     if (is_err_result(vr) == 1) { return vr; }
     vr = validate_identifier(table);
@@ -271,35 +271,35 @@ fn _validate_rule_args(family, table, chain, rule) {
 }
 
 # add rule FAM TAB CHN RULE
-fn add_rule_live(family, table, chain, rule) {
+fn add_rule_live(family: cstring, table: cstring, chain: cstring, rule: cstring): i64 {
     var vr = _validate_rule_args(family, table, chain, rule);
     if (is_err_result(vr) == 1) { return vr; }
     return _nft_cmd(_build_rule_line("add rule", family, table, chain, rule, 0, 0));
 }
 
 # insert rule FAM TAB CHN RULE (prepends)
-fn insert_rule_live(family, table, chain, rule) {
+fn insert_rule_live(family: cstring, table: cstring, chain: cstring, rule: cstring): i64 {
     var vr = _validate_rule_args(family, table, chain, rule);
     if (is_err_result(vr) == 1) { return vr; }
     return _nft_cmd(_build_rule_line("insert rule", family, table, chain, rule, 0, 0));
 }
 
 # add rule FAM TAB CHN position POS RULE
-fn add_rule_after_live(family, table, chain, position_handle, rule) {
+fn add_rule_after_live(family: cstring, table: cstring, chain: cstring, position_handle: i64, rule: cstring): i64 {
     var vr = _validate_rule_args(family, table, chain, rule);
     if (is_err_result(vr) == 1) { return vr; }
     return _nft_cmd(_build_rule_line("add rule", family, table, chain, rule, "position", position_handle));
 }
 
 # replace rule FAM TAB CHN handle H RULE
-fn replace_rule_live(family, table, chain, handle, new_rule) {
+fn replace_rule_live(family: cstring, table: cstring, chain: cstring, handle: i64, new_rule: cstring): i64 {
     var vr = _validate_rule_args(family, table, chain, new_rule);
     if (is_err_result(vr) == 1) { return vr; }
     return _nft_cmd(_build_rule_line("replace rule", family, table, chain, new_rule, "handle", handle));
 }
 
 # delete rule FAM TAB CHN handle H
-fn delete_rule_live(family, table, chain, handle) {
+fn delete_rule_live(family: cstring, table: cstring, chain: cstring, handle: i64): i64 {
     var vr = validate_family(family);
     if (is_err_result(vr) == 1) { return vr; }
     vr = validate_identifier(table);
@@ -328,7 +328,7 @@ fn delete_rule_live(family, table, chain, handle) {
 # Public: list / inspect
 # ================================================================
 
-fn list_ruleset() {
+fn list_ruleset(): i64 {
     var argv = alloc(32);
     store64(argv, "nft");
     store64(argv + 8, "list");
@@ -337,7 +337,7 @@ fn list_ruleset() {
     return _run_nft_capture(argv, 0);
 }
 
-fn list_ruleset_with_handles() {
+fn list_ruleset_with_handles(): i64 {
     var argv = alloc(40);
     store64(argv, "nft");
     store64(argv + 8, "-a");

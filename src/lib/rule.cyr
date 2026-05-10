@@ -239,36 +239,36 @@ fn match_val3(m) { return load64(m + 24); }
 
 # Match constructors
 
-fn match_source_addr(addr) { return match_new(MATCH_SOURCE_ADDR, addr, 0, 0); }
-fn match_dest_addr(addr) { return match_new(MATCH_DEST_ADDR, addr, 0, 0); }
-fn match_source_addr6(addr) { return match_new(MATCH_SOURCE_ADDR6, addr, 0, 0); }
-fn match_dest_addr6(addr) { return match_new(MATCH_DEST_ADDR6, addr, 0, 0); }
-fn match_protocol(proto) { return match_new(MATCH_PROTOCOL, proto, 0, 0); }
-fn match_dport(port) { return match_new(MATCH_DPORT, port, 0, 0); }
-fn match_sport(port) { return match_new(MATCH_SPORT, port, 0, 0); }
-fn match_dport_range(lo, hi) { return match_new(MATCH_DPORT_RANGE, lo, hi, 0); }
-fn match_iif(iface) { return match_new(MATCH_IIF, iface, 0, 0); }
-fn match_oif(iface) { return match_new(MATCH_OIF, iface, 0, 0); }
-fn match_ct_state(states_str) { return match_new(MATCH_CT_STATE, states_str, 0, 0); }
-fn match_limit(rate, unit, burst) { return match_new(MATCH_LIMIT, rate, unit, burst); }
-fn match_set_lookup(field, set_name) { return match_new(MATCH_SET_LOOKUP, field, set_name, 0); }
-fn match_ct_helper(helper) { return match_new(MATCH_CT_HELPER, helper, 0, 0); }
-fn match_tcp_flags(flags_str) { return match_new(MATCH_TCP_FLAGS, flags_str, 0, 0); }
-fn match_icmp_type(tname) { return match_new(MATCH_ICMP_TYPE, tname, 0, 0); }
-fn match_icmpv6_type(tname) { return match_new(MATCH_ICMPV6_TYPE, tname, 0, 0); }
-fn match_meta_mark(val) { return match_new(MATCH_META_MARK, val, 0, 0); }
-fn match_quota(mode, amount, unit) { return match_new(MATCH_QUOTA, mode, amount, unit); }
-fn match_flow_offload(name) { return match_new(MATCH_FLOW_OFFLOAD, name, 0, 0); }
-fn match_ct_timeout_set(name) { return match_new(MATCH_CT_TIMEOUT_SET, name, 0, 0); }
-fn match_icmp_type_code(tname, code) { return match_new(MATCH_ICMP_TYPE_CODE, tname, code, 0); }
-fn match_icmpv6_type_code(tname, code) { return match_new(MATCH_ICMPV6_TYPE_CODE, tname, code, 0); }
-fn match_vlan_id(id) { return match_new(MATCH_VLAN_ID, id, 0, 0); }
-fn match_dscp(val) { return match_new(MATCH_DSCP, val, 0, 0); }
-fn match_ipv6_ext_hdr(hdr) { return match_new(MATCH_IPV6_EXT_HDR, hdr, 0, 0); }
-fn match_frag_off(mask, op, value) { return match_new(MATCH_FRAG_OFF, mask, op, value); }
-fn match_pkt_type(pt) { return match_new(MATCH_PKT_TYPE, pt, 0, 0); }
-fn match_conn_limit(count) { return match_new(MATCH_CONN_LIMIT, count, 0, 0); }
-fn match_raw(expr) { return match_new(MATCH_RAW, expr, 0, 0); }
+fn match_source_addr(addr: cstring): i64 { return match_new(MATCH_SOURCE_ADDR, addr, 0, 0); }
+fn match_dest_addr(addr: cstring): i64 { return match_new(MATCH_DEST_ADDR, addr, 0, 0); }
+fn match_source_addr6(addr: cstring): i64 { return match_new(MATCH_SOURCE_ADDR6, addr, 0, 0); }
+fn match_dest_addr6(addr: cstring): i64 { return match_new(MATCH_DEST_ADDR6, addr, 0, 0); }
+fn match_protocol(proto: cstring): i64 { return match_new(MATCH_PROTOCOL, proto, 0, 0); }
+fn match_dport(port: i64): i64 { return match_new(MATCH_DPORT, port, 0, 0); }
+fn match_sport(port: i64): i64 { return match_new(MATCH_SPORT, port, 0, 0); }
+fn match_dport_range(lo: i64, hi: i64): i64 { return match_new(MATCH_DPORT_RANGE, lo, hi, 0); }
+fn match_iif(iface: cstring): i64 { return match_new(MATCH_IIF, iface, 0, 0); }
+fn match_oif(iface: cstring): i64 { return match_new(MATCH_OIF, iface, 0, 0); }
+fn match_ct_state(states_str: cstring): i64 { return match_new(MATCH_CT_STATE, states_str, 0, 0); }
+fn match_limit(rate: i64, unit: i64, burst: i64): i64 { return match_new(MATCH_LIMIT, rate, unit, burst); }
+fn match_set_lookup(field: cstring, set_name: cstring): i64 { return match_new(MATCH_SET_LOOKUP, field, set_name, 0); }
+fn match_ct_helper(helper: cstring): i64 { return match_new(MATCH_CT_HELPER, helper, 0, 0); }
+fn match_tcp_flags(flags_str: cstring): i64 { return match_new(MATCH_TCP_FLAGS, flags_str, 0, 0); }
+fn match_icmp_type(tname: cstring): i64 { return match_new(MATCH_ICMP_TYPE, tname, 0, 0); }
+fn match_icmpv6_type(tname: cstring): i64 { return match_new(MATCH_ICMPV6_TYPE, tname, 0, 0); }
+fn match_meta_mark(val: i64): i64 { return match_new(MATCH_META_MARK, val, 0, 0); }
+fn match_quota(mode: i64, amount: i64, unit: i64): i64 { return match_new(MATCH_QUOTA, mode, amount, unit); }
+fn match_flow_offload(name: cstring): i64 { return match_new(MATCH_FLOW_OFFLOAD, name, 0, 0); }
+fn match_ct_timeout_set(name: cstring): i64 { return match_new(MATCH_CT_TIMEOUT_SET, name, 0, 0); }
+fn match_icmp_type_code(tname: cstring, code: i64): i64 { return match_new(MATCH_ICMP_TYPE_CODE, tname, code, 0); }
+fn match_icmpv6_type_code(tname: cstring, code: i64): i64 { return match_new(MATCH_ICMPV6_TYPE_CODE, tname, code, 0); }
+fn match_vlan_id(id: i64): i64 { return match_new(MATCH_VLAN_ID, id, 0, 0); }
+fn match_dscp(val: i64): i64 { return match_new(MATCH_DSCP, val, 0, 0); }
+fn match_ipv6_ext_hdr(hdr: i64): i64 { return match_new(MATCH_IPV6_EXT_HDR, hdr, 0, 0); }
+fn match_frag_off(mask: i64, op: i64, value: i64): i64 { return match_new(MATCH_FRAG_OFF, mask, op, value); }
+fn match_pkt_type(pt: i64): i64 { return match_new(MATCH_PKT_TYPE, pt, 0, 0); }
+fn match_conn_limit(count: i64): i64 { return match_new(MATCH_CONN_LIMIT, count, 0, 0); }
+fn match_raw(expr: cstring): i64 { return match_new(MATCH_RAW, expr, 0, 0); }
 
 # ================================================================
 # Verdict struct — { type, val1, val2, val3, val4 }
@@ -292,21 +292,21 @@ fn verdict_val3(v) { return load64(v + 24); }
 fn verdict_val4(v) { return load64(v + 32); }
 
 # Verdict constructors
-fn verdict_accept() { return verdict_new(VERDICT_ACCEPT, 0, 0, 0, 0); }
-fn verdict_drop() { return verdict_new(VERDICT_DROP, 0, 0, 0, 0); }
-fn verdict_reject() { return verdict_new(VERDICT_REJECT, 0, 0, 0, 0); }
-fn verdict_reject_with(reason) { return verdict_new(VERDICT_REJECT_WITH, reason, 0, 0, 0); }
-fn verdict_jump(chain) { return verdict_new(VERDICT_JUMP, chain, 0, 0, 0); }
-fn verdict_goto(chain) { return verdict_new(VERDICT_GOTO, chain, 0, 0, 0); }
-fn verdict_return() { return verdict_new(VERDICT_RETURN, 0, 0, 0, 0); }
-fn verdict_log(prefix) { return verdict_new(VERDICT_LOG, prefix, 0, 0, 0); }
-fn verdict_counter() { return verdict_new(VERDICT_COUNTER, 0, 0, 0, 0); }
-fn verdict_set_mark(val) { return verdict_new(VERDICT_SET_MARK, val, 0, 0, 0); }
-fn verdict_set_ct_mark(val) { return verdict_new(VERDICT_SET_CT_MARK, val, 0, 0, 0); }
-fn verdict_log_advanced(prefix, level, group, snaplen) {
+fn verdict_accept(): i64 { return verdict_new(VERDICT_ACCEPT, 0, 0, 0, 0); }
+fn verdict_drop(): i64 { return verdict_new(VERDICT_DROP, 0, 0, 0, 0); }
+fn verdict_reject(): i64 { return verdict_new(VERDICT_REJECT, 0, 0, 0, 0); }
+fn verdict_reject_with(reason: i64): i64 { return verdict_new(VERDICT_REJECT_WITH, reason, 0, 0, 0); }
+fn verdict_jump(chain: cstring): i64 { return verdict_new(VERDICT_JUMP, chain, 0, 0, 0); }
+fn verdict_goto(chain: cstring): i64 { return verdict_new(VERDICT_GOTO, chain, 0, 0, 0); }
+fn verdict_return(): i64 { return verdict_new(VERDICT_RETURN, 0, 0, 0, 0); }
+fn verdict_log(prefix: cstring): i64 { return verdict_new(VERDICT_LOG, prefix, 0, 0, 0); }
+fn verdict_counter(): i64 { return verdict_new(VERDICT_COUNTER, 0, 0, 0, 0); }
+fn verdict_set_mark(val: i64): i64 { return verdict_new(VERDICT_SET_MARK, val, 0, 0, 0); }
+fn verdict_set_ct_mark(val: i64): i64 { return verdict_new(VERDICT_SET_CT_MARK, val, 0, 0, 0); }
+fn verdict_log_advanced(prefix: cstring, level: i64, group: i64, snaplen: i64): i64 {
     return verdict_new(VERDICT_LOG_ADVANCED, prefix, level, group, snaplen);
 }
-fn verdict_counter_named(name) { return verdict_new(VERDICT_COUNTER_NAMED, name, 0, 0, 0); }
+fn verdict_counter_named(name: cstring): i64 { return verdict_new(VERDICT_COUNTER_NAMED, name, 0, 0, 0); }
 
 # ================================================================
 # Rule struct — { verdict, matches (vec), comment }

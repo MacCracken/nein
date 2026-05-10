@@ -4,6 +4,64 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.3] — 2026-05-10
+
+Surface-tracking gates + annotation pass on the construction surface +
+prose-doc refresh. 580/580 tests pass on both arches; zero nein-side
+type-check warnings.
+
+### Added
+
+- **`scripts/api-surface.sh` + `docs/api-surface.snapshot`.** New
+  `<module>::<fn>/<arity>` snapshot of nein's 348 public fns across
+  `src/main.cyr` + `src/lib/*.cyr`. CI `check` mode diffs current
+  against committed snapshot and fails on unexplained adds/removes.
+  Intentional API bumps regenerate via `scripts/api-surface.sh update`
+  and ride into the same PR. Note: `cyrius_api_surface` upstream
+  doesn't yet walk `src/lib/` includes, so this script greps source
+  directly while emitting the same shape — drop-in once upstream
+  resolves.
+- **`scripts/bench-regression.sh` + `docs/benchmarks/history.csv`.**
+  Initial baseline (31 benchmarks, captured at v1.1.2 commit) seeded
+  the CSV. Gate fires on > 50% (ns-bracket, abs ≥ 50ns) or > 80%
+  (µs-bracket, abs ≥ 2µs) slowdown vs the most recent committed row
+  per benchmark. `[bench-regression-ack]` in the HEAD commit message
+  bypasses the gate for intentional perf trade-offs. Pattern lifted
+  from agnostik.
+- **Currency check (CHANGELOG + roadmap).** New CI step asserts the
+  current `VERSION`'s `## [X.Y.Z] — YYYY-MM-DD` line exists in
+  `CHANGELOG.md` with a non-future date, and that the roadmap's
+  `Last refresh:` marker is ≤ 90 days old. Catches the "forgot to
+  bump the date" class of PR mistake.
+- **`docs/doc-health.md`** added to the required-docs check (was
+  added in v1.1.2 but the CI check didn't gate it).
+- **Type annotations** on the construction surface — ~55 fns:
+  - `src/lib/rule.cyr` — all match/verdict constructors carry
+    `(arg: cstring|i64): i64` shapes. cstring args: `addr`, `proto`,
+    `iface`, `states_str`, `field`/`set_name`, `helper`,
+    `flags_str`, `tname`, `name`, `expr`, `chain`, `prefix`. i64
+    args: `port`, `rate`/`unit`/`burst`, `val`, `reason`, `code`,
+    `id`, `hdr`, `pt`, `count`, `mask`/`op`/`value`, log levels.
+  - `src/lib/apply.cyr` — full public surface (15 fns) annotated.
+    `apply_ruleset_str` uses `Str` (stdlib `: Str` type) rather than
+    `cstring`; everything else uses `cstring` for the
+    family/table/chain/rule injection boundary plus `i64` for
+    handles.
+
+### Changed
+
+- **`README.md`** — refreshed for v1.1.x baseline. Bumped test count
+  (541 → 580) and bench count (30 → 31). Rust-syntax `Match::Raw`
+  replaced with prose pointing at ADR-0004. Added `cyrius deps` to
+  the build commands. Linked the new `docs/development/threat-model.md`
+  alongside `SECURITY.md`. Doc-health row updated: 🟠 → ✅.
+- **`CLAUDE.md`** — refreshed for v1.1.x baseline. cc3 → cc5; pinned
+  cyrius version + CI gate inventory in the status line. Removed
+  `mcp.cyr` from the architecture tree (it doesn't exist; blocked on
+  bote per roadmap v2.0.0). Doc-health row updated: 🟠 → ✅.
+- **CI required-docs check** now also gates `docs/doc-health.md`,
+  `docs/development/roadmap.md`, `docs/development/threat-model.md`.
+
 ## [1.1.2] — 2026-05-10
 
 Type-check arc + doc currency. No runtime behavior change; 580/580 tests

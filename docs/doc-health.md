@@ -10,15 +10,15 @@ Pattern lifted from agnosys/agnostik 1.2.x. Refresh policy:
 - 🟠 **Yellow** — refreshed in the previous minor; due for a read-through
 - 🔴 **Red** — multiple minors stale; rewrite candidate
 
-Last refresh of this ledger: **2026-05-10** (post v1.1.2 scaffold).
+Last refresh of this ledger: **2026-05-10** (post v1.1.3 — README + CLAUDE.md refreshed; doc-health and threat-model ✅).
 
 ## Top-level docs
 
 | Doc | Last refresh | Status | Notes |
 |-----|--------------|--------|-------|
-| `README.md` | 2026-04-13 | 🟠 | Predates v1.1.0 toolchain migration; section on building still mentions Cyrius 4.x patterns. Refresh queued for v1.2.0. |
+| `README.md` | 2026-05-10 | ✅ | Refreshed in v1.1.3: bumped test/bench counts (541→580, 30→31), removed Rust-syntax `Match::Raw`, added `cyrius deps` + aarch64 build commands, linked the Cyrius-era threat model. |
 | `CHANGELOG.md` | 2026-05-10 | ✅ | Updated each release. |
-| `CLAUDE.md` | 2026-04-13 | 🟠 | "Cyrius 4.3.0" / version notes need a sweep against the 5.10.34 baseline. Roadmap and ecosystem references current. |
+| `CLAUDE.md` | 2026-05-10 | ✅ | Refreshed in v1.1.3: cc3→cc5, pinned cyrius=5.10.34, removed phantom `mcp.cyr` from architecture tree, CI-gate inventory in status line. |
 | `CONTRIBUTING.md` | 2026-03-22 | 🟠 | Pre-toolchain-migration. Build/test/bench commands need refresh against `cyrius build` / `cyrius test` shapes. |
 | `SECURITY.md` | 2026-04-02 | 🟠 | Disclosure process current; CVE-pattern audit list could fold in v1.1.1 findings (rename collisions, aarch64 pipe). |
 | `VERSION` | 2026-05-10 | ✅ | Mechanical. |
