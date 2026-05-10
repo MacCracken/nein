@@ -1,82 +1,119 @@
 # Security Policy
 
+Last refresh: **2026-05-10** (v1.1.4).
+
 ## Scope
 
-nein is a programmatic nftables firewall library that generates and applies
-firewall rules via the `nft` command. It runs with elevated privileges
-(root or `CAP_NET_ADMIN`).
+nein is a programmatic nftables firewall library that renders rulesets
+from typed Cyrius values and applies them via `fork + pipe + execve` to
+the `nft` binary. It is intended to run under root or `CAP_NET_ADMIN`
+in the caller's process.
 
-The primary security-relevant surface areas are:
+The detailed threat model lives in
+[`docs/development/threat-model.md`](docs/development/threat-model.md) —
+8 numbered threats (T-1 through T-8). This file is the **policy**
+shorthand; consult the threat model for the mitigations.
 
-- **nftables injection** — string values (addresses, interface names, comments)
-  interpolated into rendered nftables syntax. All values pass through the
-  `validate` module to reject dangerous characters (`;`, `{`, `}`, newlines,
-  etc.) before rendering. IP addresses are parsed with `std::net::IpAddr` for
-  semantic validation beyond character filtering.
-- **Incremental apply operations** — `add_rule`, `insert_rule`, `replace_rule`,
-  etc. validate all parameters (family against closed set, table/chain as
-  identifiers, rule body as nft element) before interpolation into nft commands.
-- **Privilege escalation** — nein spawns `nft` as a child process. The library
-  itself does not manage privileges; callers are responsible for capability
-  management.
-- **TOML config parsing** — the `config` feature deserialises TOML into firewall
-  rules. Malformed input is rejected at parse time; valid TOML that produces
-  invalid rules is caught at `validate()` time.
-- **`Match::Raw` bypass** — the `Raw` match variant emits strings verbatim
-  without validation. It must only receive trusted, hard-coded values. The
-  convenience builders `matching_addrs()` and `matching_addrs6()` use `Raw`
-  internally but validate each address before embedding.
-- **Bulk builders** — `matching_ports()` uses typed `u16` values (no injection
-  risk). `matching_addrs()`/`matching_addrs6()` validate each address via
-  `validate_addr()` before constructing the anonymous set expression.
+## Reporting a Vulnerability
+
+If you discover a security vulnerability in nein, please report it
+responsibly:
+
+1. **Email** [security@agnos.dev](mailto:security@agnos.dev) with a
+   description of the issue, steps to reproduce, and any relevant
+   context (kernel version, `nft --version`, nein version).
+2. **Do not** open a public issue for security vulnerabilities.
+3. You will receive an acknowledgment within **48 hours**.
+4. We follow a **90-day disclosure timeline**, with extensions
+   negotiated case-by-case for kernel-side defects that require a
+   distro patch chain.
+
+Issues mapped to a numbered threat in the threat model expedite triage
+— include the T-N reference if you can identify one.
 
 ## Supported Versions
 
 | Version | Supported |
 | ------- | --------- |
-| 0.90.x  | Yes       |
-| 0.24.x  | Yes       |
-| < 0.24  | No        |
+| 1.1.x   | Yes       |
+| 1.0.x   | Best-effort (security-only fixes) |
+| 0.9x.x  | No (Rust-era) |
+| < 0.9x  | No (Rust-era) |
 
-## Reporting a Vulnerability
+The Rust-era line (≤ 0.90.0) is preserved in `rust-old/` as a reference
+checkout — it is not maintained. The Cyrius port baseline is v1.0.0.
 
-If you discover a security vulnerability in nein, please report it responsibly:
+## Security Properties (current, v1.1.x)
 
-1. **Email** [security@agnos.dev](mailto:security@agnos.dev) with a description
-   of the issue, steps to reproduce, and any relevant context.
-2. **Do not** open a public issue for security vulnerabilities.
-3. You will receive an acknowledgment within **48 hours**.
-4. We follow a **90-day disclosure timeline**. We will work with you to
-   coordinate public disclosure after a fix is available.
+The properties below are enforced today. Each ties back to a numbered
+threat in the threat model.
 
-## Security Design
+- **Injection-safe rendering** (T-1, T-2). Every string flowing into
+  rendered nftables grammar passes through `validate_*` in
+  `src/lib/validate.cyr`. Dangerous chars `; { } | \n \r \0 \` $ "`
+  rejected. Address-shape, identifier-shape, interface-name-shape, and
+  closed-set validators backstop the character allowlist with semantic
+  checks. As of v1.1.2, all validators carry `(s: cstring): i64` type
+  annotations and the type-check CI gate confirms callers pass the
+  right shape.
+- **No PATH-based execve** (T-3). The `nft` subprocess is invoked via
+  absolute paths only: `/usr/sbin/nft` → `/sbin/nft` → `/usr/bin/nft`.
+  The CI security-scan gate allowlists these three paths in
+  `src/lib/apply.cyr` and fails the build on any new hardcoded
+  `/etc/`, `/bin/`, or un-allowlisted `/sbin/` literal.
+- **Child-process hygiene** (T-4). `_run_nft_stdin` and
+  `_run_nft_capture` always close unused pipe ends, drain stderr, and
+  `sys_waitpid` regardless of stdin-write outcome. Execve failure
+  routes to `sys_exit(127)` in the child; the parent observes that
+  exit and returns `Err(ERR_PERMISSION_DENIED)`.
+- **No `sys_system`** (T-1 / T-3). CI security scan hard-fails on any
+  `\bsys_system\s*\(` match in `src/`. The shell-quoting attack
+  surface is precisely what fork+pipe+execve avoids.
+- **Lockfile-pinned deps** (T-8). `cyrius.lock` records the sha256 of
+  each resolved dep. `cyrius deps --verify` in CI fails on hash
+  mismatch. Cyrius itself is pinned in `cyrius.cyml`
+  (`cyrius = "5.10.34"`). nein's dep set is one entry as of v1.1.1:
+  agnosys 1.2.4 (`dist/agnosys-core.cyr` profile only).
+- **Symbol-collision audit** (T-7). v1.1.1 renamed nein-side fns that
+  collided with agnostik/stdlib (`network_policy_new` →
+  `nein_network_policy_new`, `err_code` → `nein_err_code`). Future
+  collisions surface as `duplicate fn ... (last definition wins)`
+  build warnings — none in the current build.
+- **Buffer review** (T-4). CI security scan flags any fn-scope
+  `var buf[N]` ≥ 4 KB (warn) or ≥ 64 KB (fail). Current 4 KB
+  warnings on `apply.cyr` (stderr/stdout capture) are review-acked;
+  the `str_builder` audit on roadmap v1.3.0 will retire them.
 
-- All user-facing string inputs are validated before rendering into nftables
-  syntax (`validate` module).
-- IP addresses and CIDRs are parsed with `std::net::IpAddr` for semantic
-  validity, not just character filtering.
-- nftables address families are validated against a closed set (`inet`, `ip`,
-  `ip6`, `arp`, `bridge`, `netdev`).
-- `Firewall::apply()` calls `validate()` automatically before executing.
-- No `unsafe` code in the library.
-- No `unwrap()` or `panic!()` in library code.
-- Child processes (`nft`) are always waited on to prevent zombie processes.
-- Fuzz testing (`make fuzz`) targets rule rendering, TOML parsing, and
-  validation paths.
-- `#[non_exhaustive]` on all public enums and structs for forward compatibility.
+## Security-Adjacent Tooling
+
+- **`scripts/api-surface.sh`** — diffs the public-fn surface against a
+  committed snapshot; an unexplained add (e.g. a new validator
+  bypass) shows up in PR review.
+- **`scripts/bench-regression.sh`** — guards against perf regressions
+  that could mask latent issues (e.g. a sudden 100× slowdown in
+  `_has_dangerous_char` would surface here before a release).
+- **Type-check gate** (`CYRIUS_TYPE_CHECK=1`) — catches a wrong-type
+  arg passed to a validator, e.g. a `Str` where `cstring` was
+  expected.
+- **No `unsafe` keyword in Cyrius**. The language has no escape hatch
+  — all syscall surface is mediated by stdlib wrappers, surfaced via
+  the security-scan gate.
 
 ## Standards Compliance
 
-nein generates nftables rulesets compatible with the Linux netfilter subsystem.
-Relevant standards and references:
+- **nftables** — [nftables wiki](https://wiki.nftables.org/);
+  rulesets compatible with Linux netfilter (kernel ≥ 4.18 recommended;
+  flowtables / interval sets need ≥ 4.18).
+- **OWASP injection prevention** — allowlist-based validation,
+  parameterised input via typed enums (closed-set validators for
+  `family`, `ct_state`, `protocol`, etc.).
+- **License** — GPL-3.0-only, compatible with Linux kernel ecosystem.
 
-- **nftables** — [nftables wiki](https://wiki.nftables.org/) (Linux kernel
-  netfilter framework)
-- **OWASP** — input validation follows OWASP injection prevention guidelines:
-  allowlist-based validation, parameterised input via typed enums
-- **CIS Benchmarks** — the `aegis::firewall::hardened_host()` profile aligns
-  with CIS Linux hardening recommendations (default deny inbound, allow
-  established, SSH, ICMP echo)
-- **CVE-free** — no known CVEs. Supply chain audited via `cargo audit` and
-  `cargo deny check` (advisory database, license compliance, source verification)
-- **License** — GPL-3.0-only, compatible with Linux kernel ecosystem
+## Out of Scope
+
+- The `nft` userspace tool's own attack surface.
+- The Linux netfilter subsystem's kernel-side defects.
+- Downstream callers' threat models (stiva, daimon, aegis, sutra —
+  each owns its own SECURITY.md).
+- Privilege-management policy. nein assumes the caller is running with
+  appropriate capabilities; it does not drop, gain, or check privileges.

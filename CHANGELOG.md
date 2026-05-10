@@ -4,6 +4,57 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.4] — 2026-05-10
+
+v1.1 minor closeout pass. Prose-doc currency, dead-code audit, clean
+build verification. No source-level behavior change.
+
+### Changed
+
+- **`docs/guides/testing.md`** — full Rust→Cyrius rewrite. Was
+  entirely cargo-era (cargo test, cargo bench, cargo-tarpaulin,
+  cargo-fuzz, `make` targets). Now documents `cyrius test`,
+  `cyrius bench`, the `scripts/bench-regression.sh` flow with
+  threshold semantics and the `[bench-regression-ack]` bypass,
+  `tests/nein.fcyr` fuzz invocation, and the full CI gate
+  reproduction recipe.
+- **`CONTRIBUTING.md`** — full Rust→Cyrius rewrite. Was Rust 1.89
+  MSRV, cargo-deny, cargo-fuzz, cargo-llvm-cov, Makefile targets,
+  `#[cfg(test)]` conventions. Now documents the Cyrius 5.10.34
+  toolchain install, the reproduce-CI-locally recipe, the new-module
+  workflow including `scripts/api-surface.sh update` and
+  CHANGELOG/roadmap sync, code style (annotations + lint),
+  test/bench/integration policy, and threat-model coupling.
+- **`SECURITY.md`** — refreshed for v1.1.x. Removed Rust-era
+  references (`cargo audit`, `#[non_exhaustive]`,
+  `std::net::IpAddr::parse`, `make fuzz`). Added explicit ties to
+  threat-model T-1…T-8 numbering, the v1.1.1 PATH-injection
+  allowlist for `/sbin/nft` execve, the v1.1.1 symbol-collision
+  audit, the lockfile-pinned dep story, and the type-check arc.
+  Supported-versions table refreshed (v1.1.x maintained, v1.0.x
+  best-effort, Rust-era ≤ 0.90.0 not maintained).
+- **`docs/architecture/overview.md`** — refreshed for v1.1.x.
+  Module map updated to the on-disk `src/lib/` layout (no phantom
+  `mcp`, all 18 modules present). New data-flow diagram including
+  validate → render → apply with the fork/pipe/execve detail. New
+  "Type Boundary" section documenting the cstring / Str / i64
+  conventions from the v1.1.2 / v1.1.3 annotation passes. ADR table
+  cross-referenced to current module surface.
+
+### Verified at closeout
+
+- Full build from clean (`rm -rf build/ lib/` → `cyrius deps` →
+  `cyrius build`) passes
+- All CI gates green: fmt, lint, vet, type-check, x86_64+aarch64
+  build, smoke, 580/580 tests, bench, api-surface snapshot,
+  bench-regression
+- Dead-code audit: all "dead: …" warnings are unused stdlib
+  symbols (Err/None/Some/streq/memeq/atoi/etc), not nein-side
+- Downstream consumers surveyed: stiva/sutra repos absent; daimon
+  on cyrius 5.7.12 with no nein dep; aegis on cyrius 5.10.0 with
+  no nein dep. No breakage downstream because no consumer yet
+  imports nein. Integration tracked per consumer's roadmap.
+
 ## [1.1.3] — 2026-05-10
 
 Surface-tracking gates + annotation pass on the construction surface +

@@ -10,7 +10,7 @@ Pattern lifted from agnosys/agnostik 1.2.x. Refresh policy:
 - 🟠 **Yellow** — refreshed in the previous minor; due for a read-through
 - 🔴 **Red** — multiple minors stale; rewrite candidate
 
-Last refresh of this ledger: **2026-05-10** (post v1.1.3 — README + CLAUDE.md refreshed; doc-health and threat-model ✅).
+Last refresh of this ledger: **2026-05-10** (post v1.1.4 — closeout pass, all 🟠 docs refreshed to ✅).
 
 ## Top-level docs
 
@@ -19,15 +19,15 @@ Last refresh of this ledger: **2026-05-10** (post v1.1.3 — README + CLAUDE.md 
 | `README.md` | 2026-05-10 | ✅ | Refreshed in v1.1.3: bumped test/bench counts (541→580, 30→31), removed Rust-syntax `Match::Raw`, added `cyrius deps` + aarch64 build commands, linked the Cyrius-era threat model. |
 | `CHANGELOG.md` | 2026-05-10 | ✅ | Updated each release. |
 | `CLAUDE.md` | 2026-05-10 | ✅ | Refreshed in v1.1.3: cc3→cc5, pinned cyrius=5.10.34, removed phantom `mcp.cyr` from architecture tree, CI-gate inventory in status line. |
-| `CONTRIBUTING.md` | 2026-03-22 | 🟠 | Pre-toolchain-migration. Build/test/bench commands need refresh against `cyrius build` / `cyrius test` shapes. |
-| `SECURITY.md` | 2026-04-02 | 🟠 | Disclosure process current; CVE-pattern audit list could fold in v1.1.1 findings (rename collisions, aarch64 pipe). |
+| `CONTRIBUTING.md` | 2026-05-10 | ✅ | Refreshed in v1.1.4: cargo/Makefile/clippy → cyrius CI reproduction recipe, new-module workflow with api-surface update, threat-model coupling. |
+| `SECURITY.md` | 2026-05-10 | ✅ | Refreshed in v1.1.4: ties to T-1…T-8, PATH-injection allowlist, symbol-collision audit, lockfile-pinned deps. Supported-versions table updated for v1.1.x baseline. |
 | `VERSION` | 2026-05-10 | ✅ | Mechanical. |
 
 ## Architecture
 
 | Doc | Last refresh | Status | Notes |
 |-----|--------------|--------|-------|
-| `docs/architecture/overview.md` | 2026-03-22 | 🟠 | Predates v1.1.x. Design-philosophy section is durable; module list lags (no mention of the agnostik drop or v1.1.1 fn renames). |
+| `docs/architecture/overview.md` | 2026-05-10 | ✅ | Refreshed in v1.1.4: on-disk module map, validate→render→apply data flow, cstring/Str/i64 type-boundary doc, ADR cross-reference. |
 
 ## Decisions (ADRs)
 
@@ -55,8 +55,13 @@ Each ADR is dated at write-time; superseding ADRs reference the originals.
 
 ## Guides
 
-`docs/guides/` is currently empty — populated lazily as integration
-patterns stabilize (sutra playbooks, daimon MCP tools — both v1.4.0+).
+| Doc | Last refresh | Status | Notes |
+|-----|--------------|--------|-------|
+| `docs/guides/testing.md` | 2026-05-10 | ✅ | Refreshed in v1.1.4: full cargo→cyrius rewrite. Now documents `cyrius test`, the bench-regression flow with threshold semantics, fuzz invocation, and the full CI-reproduction recipe. |
+
+Other integration guides (sutra playbooks, daimon MCP tools) will be
+added lazily as those consumers wire nein in — both queued for
+v1.4.0+ work.
 
 ## Sources
 

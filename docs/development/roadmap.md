@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-05-10 (post v1.1.3).
+Last refresh: 2026-05-10 (post v1.1.4 — v1.1 minor closeout).
 
 The arc since v1.0.0 has been catch-up — toolchain 4.5.0 → 5.10.34, agnosys
 0.97.2 → 1.2.4, agnostik 0.97.1 → 1.2.1. v1.1.x is the housekeeping shoulder
@@ -61,24 +61,22 @@ refresh.
 
 ---
 
-## v1.1.x — CI / housekeeping (patches, no API change)
+### v1.1.4 — 2026-05-10
+v1.1 minor closeout pass. Prose-doc currency, dead-code audit, clean
+build verification — no source-level behavior change.
 
-v1.1 minor closeout is one or two patches away. Remaining items batched
-toward v1.2.0:
-
-### Optional v1.1.4 — closeout sweep
-- [ ] Fmt/lint/vet pass on tests/ files (currently informational)
-- [ ] `docs/architecture/overview.md` refresh (🟠 — predates v1.1.x)
-- [ ] `CONTRIBUTING.md` refresh (🟠 — Rust-era cargo commands)
-- [ ] `SECURITY.md` refresh (🟠 — fold v1.1.x findings)
-- [ ] Annotation pass on the remaining `src/lib/` modules (chain, table,
-      set, nat, firewall, builder, policy, geoip, mesh, bridge, engine,
-      config, netns, inspect) — purely mechanical now that the
-      cstring/Str/i64 patterns are settled
+- `docs/guides/testing.md` rewritten Rust→Cyrius (cargo → cyrius)
+- `CONTRIBUTING.md` rewritten Rust→Cyrius (Makefile/clippy → cyrius CI)
+- `SECURITY.md` refreshed for v1.1.x (folded T-1…T-8 references)
+- `docs/architecture/overview.md` refreshed (module surface + data flow
+  + cstring/Str/i64 boundary convention)
+- Closeout: dead-code audit (all "dead" warnings are unused stdlib —
+  not nein's fault), full build from clean, downstream consumers
+  surveyed (none actually depend on nein yet)
 
 ---
 
-## v1.2.0 — Profile-aware deps + audit emit (minor)
+## v1.2.0 — Profile-aware deps + audit emit (next, feature minor)
 
 The first feature minor since the port. Adopts patterns the broader AGNOS
 ecosystem stabilized on between agnosys 1.0.0 and 1.2.x.
@@ -102,6 +100,10 @@ ecosystem stabilized on between agnosys 1.0.0 and 1.2.x.
 - [ ] **`cyrius distlib` bundle.** Ship `dist/nein.cyr` as the canonical
       single-file consumption form for stiva / aegis / sutra (matches
       agnosys / agnostik / darshana convention). Bundle-staleness CI gate
+- [ ] **Annotation pass on remaining `src/lib/` modules** (chain, table,
+      set, nat, firewall, builder, policy, geoip, mesh, bridge, engine,
+      config, netns, inspect) — purely mechanical now that the
+      cstring/Str/i64 patterns are settled from v1.1.2 / v1.1.3
 
 ---
 
