@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-05-10 (post v1.2.1 — annotation closeout).
+Last refresh: 2026-05-10 (post v1.3.0 — validation-depth minor).
 
 The arc since v1.0.0 has been catch-up — toolchain 4.5.0 → 5.10.34, agnosys
 0.97.2 → 1.2.4, agnostik 0.97.1 → 1.2.1. v1.1.x is the housekeeping shoulder
@@ -103,27 +103,30 @@ unchanged.
 
 ---
 
-## v1.3.0 — Validation depth + idiom adoption (minor)
+## v1.3.0 — 2026-05-10
+Validation-depth minor. Fuzz harness split per-target; idiom audit
+documented.
 
-- [ ] **Fuzz harness expansion.** Today `tests/nein.fcyr` is a single
-      file. Split per-validator (`fuzz/validate_addr.fcyr`,
-      `fuzz/validate_iface.fcyr`, `fuzz/validate_ct_state.fcyr`,
-      `fuzz/rule_render.fcyr`, `fuzz/nat_dnat.fcyr`, `fuzz/config_parse.fcyr`)
-      so CI can name-tag crashes and the per-harness iteration count can
-      scale to the surface size
-- [ ] **Packed Result on hot paths.** `error.cyr` returns `i64` with
-      bit-63 flag for hot-path fns (validate_*, rule_render, nat_render).
-      Heap-allocated `NeinError` stays for cold paths. CLAUDE.md mandates
-      this for fallible ops; today only some sites comply
-- [ ] **`str_builder` audit.** Manual offset-tracked buffer writes in
-      rule.cyr / table.cyr / chain.cyr / nat.cyr replaced with
-      `str_builder` per CLAUDE.md — closes a class of off-by-one bugs
-      around comment / log-prefix rendering
-- [ ] **Vec-of-pointers over hashmap** where indices are known (CLAUDE.md
-      idiom). engine.cyr's `_pe_find_index` / `_pe_insert_sorted` are
-      already linear-scan; document that as the chosen design
-- [ ] **Doctest pass** (`cyrius doctest src/*.cyr`) — public-fn doc
-      examples become CI-verified
+- 5 per-target fuzz drivers under `fuzz/` (validate, config_parse,
+  rule, nat, firewall) — replaces `tests/nein.fcyr` smoke harness
+- CI `Fuzz` step uses `cyrius fuzz` auto-discovery
+- `docs/architecture/overview.md` "Rendering Idioms" section —
+  per-module `str_builder` call audit, three legitimate `var buf[N]`
+  exceptions, vec-of-pointers pattern documented
+- Deferred: packed Result on hot paths (needs measured win to pay for
+  caller migration; revisit in v1.4.0); doctest pass (no `///`
+  comments yet; v1.3.1 if patching continues)
+
+## v1.3.x — Optional patches
+
+### v1.3.1 — Doctest pass (next, if patching)
+- [ ] Add `///` doc-comment examples to public-fn surface where
+      non-obvious from the type signature (validate.cyr's 8 validators
+      are good starting candidates — they all have well-defined
+      input/output examples)
+- [ ] CI `cyrius doctest` gate
+
+---
 
 ---
 

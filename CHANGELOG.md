@@ -4,6 +4,70 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.0] — 2026-05-10
+
+Validation-depth minor. Fuzz harness expanded from one monolithic file
+to five per-target drivers under `fuzz/`. Idiom adoption audited and
+documented. 580/580 tests pass on both arches; all five fuzz drivers
+exit clean; zero CI gate regressions.
+
+### Added
+
+- **Per-target fuzz drivers under `fuzz/`** (split from
+  `tests/nein.fcyr`):
+  - `fuzz/validate.fcyr` — 8 validators against ~30 inputs (valid, empty,
+    injection-bearing, length-boundary, high-bit bytes, embedded NULs,
+    256-byte fills with varied content)
+  - `fuzz/config_parse.fcyr` — 16 enum dispatchers against ~50 inputs
+    (valid for each closed set + invalid + adversarial + length-boundary)
+  - `fuzz/rule.fcyr` — match constructors + `rule_render` +
+    `rule_validate` with fuzzed strings in addr/iface/comment/raw/jump
+    positions, plus stacked-match composition
+  - `fuzz/nat.fcyr` — DNAT/SNAT/masquerade/redirect/DnatRange across
+    addr + comment + iface positions, plus the convenience constructors
+  - `fuzz/firewall.fcyr` — full firewall composition (table→chain→rule),
+    plus PolicyEngine, GeoIP blocklist, BridgeFirewall, and
+    NamespaceFirewall flows
+- **CI `Fuzz` step** uses `cyrius fuzz` for auto-discovery — adding a
+  new `fuzz/*.fcyr` file picks it up automatically; crash attribution
+  is by harness name; CI summary line surfaces pass/fail counts.
+
+### Changed
+
+- **CI fmt/lint loops** now scan `fuzz/*.fcyr` instead of
+  `tests/*.fcyr`. fmt is gated; lint is gated on `src/` + `fuzz/`,
+  informational on `tests/` (test fixtures legitimately have long
+  lines).
+- **`docs/architecture/overview.md`** — new "Rendering Idioms" section
+  documenting `str_builder`-over-manual-buffer and vec-of-pointers
+  patterns. Includes the per-module `str_builder_*` call-count audit
+  and the three legitimate `var buf[N]` exceptions in apply.cyr +
+  rule.cyr.
+
+### Removed
+
+- `tests/nein.fcyr` (monolithic smoke harness) — replaced by the five
+  per-target drivers under `fuzz/`.
+
+### Deferred (with rationale)
+
+- **Packed Result on hot paths.** The current `Result` shape is a
+  16-byte heap-allocated tagged value (`Ok(v)` / `Err(e)` from stdlib
+  `tagged.cyr`). Switching validators to a packed `i64` (high bit =
+  err flag, low 63 bits = code) would eliminate the per-call alloc but
+  breaks every caller's `is_err_result(res)` / `payload(res)` shape
+  (both load through the heap pointer). Without a measured win on the
+  validator bench bracket (~1µs today, dominated by string scanning
+  not alloc), the migration cost isn't paid for yet. Revisit in v1.4.0
+  when the apply-layer integration tests give concrete heap-alloc
+  pressure to measure against.
+- **Doctest pass.** `cyrius doctest tests/nein.tcyr` runs cleanly
+  (`0 passed, 0 failed`) — nein currently ships zero `///` doc-comment
+  examples. Adding examples module-by-module is real work and doesn't
+  fit v1.3.0's "validation depth" theme. Queued for v1.3.1 if we keep
+  patching, otherwise folds into v1.4.0's apply-layer documentation
+  pass.
+
 ## [1.2.1] — 2026-05-10
 
 Annotation closeout. Type-check coverage extended to every public fn

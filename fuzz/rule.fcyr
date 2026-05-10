@@ -1,0 +1,92 @@
+# Fuzz: rule.cyr — match constructors + rule_render + rule_validate
+#
+# Builds rules with adversarial strings in addr/iface/comment/raw
+# positions, renders them, validates them. Render must never crash;
+# validate must return Ok or Err.
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
+include "src/lib/policy.cyr"
+include "src/lib/geoip.cyr"
+include "src/lib/mesh.cyr"
+include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
+
+alloc_init();
+
+fn _exercise(s) {
+    # Mix-in: build a rule with fuzzed strings at multiple positions
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_source_addr(s));
+    rule_add_match(r, match_protocol(PROTO_TCP));
+    rule_add_match(r, match_dport(80));
+    rule_add_match(r, match_iif(s));
+    rule_set_comment(r, s);
+    rule_render(r);
+    rule_validate(r);
+
+    # Raw match — explicit injection bypass
+    r = rule_new(verdict_drop());
+    rule_add_match(r, match_raw(s));
+    rule_render(r);
+    rule_validate(r);
+
+    # Verdict carrying user-string (jump target)
+    r = rule_new(verdict_jump(s));
+    rule_render(r);
+    rule_validate(r);
+
+    # Verdict with log prefix
+    r = rule_new(verdict_log(s));
+    rule_render(r);
+    rule_validate(r);
+    return 0;
+}
+
+# --- Corpus ---
+_exercise("10.0.0.1");
+_exercise("2001:db8::1");
+_exercise("eth0");
+_exercise("");
+_exercise("evil;drop");
+_exercise("a{b}c|d`e$f");
+_exercise("rule\nrule");
+_exercise("name with spaces");
+
+# --- High-arity verdicts ---
+var r = rule_new(verdict_log_advanced("LOGPREFIX", NFT_LOG_INFO, 0, 0));
+rule_render(r);
+r = rule_new(verdict_log_advanced(";drop;", NFT_LOG_DEBUG, 1, 1024));
+rule_render(r);
+rule_validate(r);
+
+# --- Long inputs ---
+var big[256];
+var i = 0;
+while (i < 255) {
+    store8(&big + i, 97);
+    i = i + 1;
+}
+store8(&big + 255, 0);
+_exercise(&big);
+
+# --- Multiple matches stacked ---
+r = rule_new(verdict_accept());
+rule_add_match(r, match_protocol(PROTO_TCP));
+rule_add_match(r, match_dport_range(1, 65535));
+rule_add_match(r, match_ct_state("new, established"));
+rule_add_match(r, match_limit(100, RATE_SECOND, 200));
+rule_render(r);
+rule_validate(r);
+
+println("fuzz/rule: ok");
+syscall(SYS_EXIT, 0);

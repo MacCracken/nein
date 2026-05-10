@@ -58,7 +58,7 @@ jobs:
         # spurious drift — same workaround as agnosys/agnostik.
         run: |
           fail=0
-          for f in src/main.cyr src/lib/*.cyr tests/*.tcyr tests/*.bcyr tests/*.fcyr; do
+          for f in src/main.cyr src/lib/*.cyr tests/*.tcyr tests/*.bcyr fuzz/*.fcyr; do
             [ -f "$f" ] || continue
             if ! diff -q <(cyrius fmt "$f" 2>/dev/null) "$f" > /dev/null; then
               echo "needs fmt: $f"
@@ -68,13 +68,13 @@ jobs:
           [ $fail -eq 0 ] || { echo "fmt: drift detected"; exit 1; }
 
       - name: Lint
-        # Auto-discover src/ modules. Treat any `warn ` line as a failure.
-        # Test fixtures (tests/*.tcyr / *.bcyr / *.fcyr) are linted
-        # informationally — long-line warnings on verbatim nftables-grammar
-        # fixtures are noise, not bugs.
+        # Auto-discover src/ + fuzz/ modules. Treat any `warn ` line as a
+        # failure on those. Test fixtures (tests/*.tcyr / *.bcyr) are
+        # linted informationally — long-line warnings on verbatim
+        # nftables-grammar fixtures are noise, not bugs.
         run: |
           fail=0
-          for f in src/main.cyr src/lib/*.cyr; do
+          for f in src/main.cyr src/lib/*.cyr fuzz/*.fcyr; do
             [ -f "$f" ] || continue
             out=$(cyrius lint "$f" 2>&1)
             echo "$out"
@@ -82,9 +82,9 @@ jobs:
               fail=1
             fi
           done
-          [ $fail -eq 0 ] || { echo "lint: warnings present in src/"; exit 1; }
+          [ $fail -eq 0 ] || { echo "lint: warnings present in src/ or fuzz/"; exit 1; }
           echo "--- tests/ (informational) ---"
-          for f in tests/*.tcyr tests/*.bcyr tests/*.fcyr; do
+          for f in tests/*.tcyr tests/*.bcyr; do
             [ -f "$f" ] || continue
             cyrius lint "$f" 2>&1 | tail -3
           done
@@ -173,6 +173,14 @@ jobs:
             [ -f "$b" ] || continue
             cyrius bench "$b"
           done
+
+      - name: Fuzz
+        # `cyrius fuzz` auto-discovers fuzz/*.fcyr harnesses, builds each,
+        # and exits 0 only if every harness exits 0. Each harness is a
+        # per-target driver: validate, config_parse, rule, nat, firewall.
+        # Crash attribution is by harness name; CI surfaces failures via
+        # the "X passed, Y failed" summary line.
+        run: cyrius fuzz
 
       - name: API surface snapshot gate
         # Diffs docs/api-surface.snapshot against the current nein public-fn

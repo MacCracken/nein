@@ -1,0 +1,122 @@
+# Fuzz: full firewall composition path
+#
+# Build a firewall with fuzzed strings flowing through table/chain/rule
+# layers, then render + validate. Exercises the full integration surface.
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
+include "src/lib/policy.cyr"
+include "src/lib/geoip.cyr"
+include "src/lib/mesh.cyr"
+include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
+
+alloc_init();
+
+fn _exercise(s) {
+    var fw = firewall_new();
+    var t = table_new(s, FAMILY_INET);
+    var c = chain_base(s, CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+
+    var r1 = rule_new(verdict_accept());
+    rule_add_match(r1, match_source_addr(s));
+    rule_set_comment(r1, s);
+    chain_add_rule(c, r1);
+
+    var r2 = rule_new(verdict_drop());
+    rule_add_match(r2, match_iif(s));
+    chain_add_rule(c, r2);
+
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+
+    firewall_render(fw);
+    firewall_validate(fw);
+    return 0;
+}
+
+# --- Corpus ---
+_exercise("ok_name");
+_exercise("");
+_exercise(";drop");
+_exercise("name with {braces}");
+_exercise("a|b|c");
+
+# --- Pre-built configurations with fuzzed inputs ---
+basic_host_firewall();   # no user input — sanity smoke
+container_bridge("br0", "172.17.0.0/16", "eth0");
+container_bridge(";evil", ";evil", ";evil");   # invalid → validate catches
+container_bridge("", "", "");
+
+# --- Engine with fuzzed agent ID ---
+fn _exercise_engine(aid, addr) {
+    var e = policy_engine_new();
+    var ap = agent_policy_new(aid, addr);
+    ap_allow_inbound(ap, ps_tcp(80));
+    ap_allow_outbound(ap, ps_quic(443));
+    pe_add_agent(e, ap);
+    var fw = pe_to_firewall(e);
+    firewall_render(fw);
+    firewall_validate(fw);
+    return 0;
+}
+_exercise_engine("web", "10.0.0.1");
+_exercise_engine("evil;name", "10.0.0.2");
+_exercise_engine("", "10.0.0.3");
+
+# --- Geoip with fuzzed country code + CIDR ---
+fn _exercise_geoip(code, cidr) {
+    var bl = geoip_new();
+    var v4 = vec_new();
+    vec_push(v4, cidr);
+    geoip_block_country(bl, country_block_v4(code, v4));
+    var fw = geoip_to_firewall(bl);
+    firewall_render(fw);
+    geoip_validate(bl);
+    return 0;
+}
+_exercise_geoip("CN", "1.2.3.0/24");
+_exercise_geoip("XX", "1.2.3.0/24");
+_exercise_geoip(";A", "1.2.3.0/24");
+_exercise_geoip("CN", ";evil");
+
+# --- Bridge with isolation groups ---
+fn _exercise_bridge(name, subnet) {
+    var cfg = bridge_config_new(name, subnet, "eth0");
+    var bf = bridge_firewall_new(cfg);
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
+    var grp_cidrs = vec_new();
+    vec_push(grp_cidrs, "172.17.0.0/24");
+    bf_add_isolation_group(bf, isolation_group_new("group1", grp_cidrs));
+    var fw = bf_to_firewall(bf);
+    firewall_render(fw);
+    bf_validate(bf);
+    return 0;
+}
+_exercise_bridge("br0", "172.17.0.0/16");
+_exercise_bridge(";evil", "172.17.0.0/16");
+
+# --- Namespace firewall ---
+fn _exercise_netns(name) {
+    var nsf = namespace_firewall_new(name);
+    nsf_allow_inbound(nsf, ps_tcp(8090));
+    nsf_allow_outbound(nsf, ps_quic(443));
+    nsf_allow_outbound_host(nsf, "10.0.0.0/24");
+    firewall_render(nsf_build(nsf));
+    return 0;
+}
+_exercise_netns("agent");
+_exercise_netns("");
+_exercise_netns(";evil");
+
+println("fuzz/firewall: ok");
+syscall(SYS_EXIT, 0);

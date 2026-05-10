@@ -107,6 +107,62 @@ Conventions:
 
 The cstring boundary is the security surface — see threat model T-1.
 
+## Rendering Idioms
+
+Three CLAUDE.md-mandated idioms structure nein's internal code. v1.3.0
+audited and confirmed adoption across the library.
+
+### `str_builder` over manual offset-tracked writes
+
+Every module that renders nftables grammar uses `str_builder_*` from
+the stdlib for accumulation, not manual `var buf[N]` + offset
+arithmetic. Call counts as of v1.3.0:
+
+| Module | `str_builder_*` calls | Module | `str_builder_*` calls |
+|--------|----------------------|--------|----------------------|
+| table | 54 | netns | 26 |
+| apply | 41 | bridge | 28 |
+| engine | 39 | chain | 18 |
+| policy | 10 |  | |
+
+Modules with zero `str_builder` usage — `validate`, `config`, `builder`
+— don't render strings: validate scans bytes, config dispatches enums,
+builder composes pre-built values. The match holds.
+
+Three legitimate `var buf[N]` patterns remain:
+- `pipe_in/err/out[16]` in `apply.cyr` — fd pairs returned by
+  `sys_pipe` (4 bytes × 2 fds; required syscall ABI shape)
+- `errbuf/buf[4096]` in `apply.cyr` — `sys_read` capture targets for
+  stderr/stdout draining (required for pipe semantics)
+- `buf[20]` in `_sb_add_hex` (`rule.cyr`) — reverse-write scratch for
+  hex digits, copied into a str_builder at the end (correct usage)
+
+The CI security-scan gate flags any new `var buf[≥4096]` for review;
+≥ 65536 fails the build.
+
+### Vec-of-pointers over hashmap for known-bounded sets
+
+When the consumer-facing API exposes indexed iteration over a small,
+bounded collection (e.g. agents in a `PolicyEngine`, isolation groups
+in a `BridgeFirewall`), nein uses a Vec of pointer-sized handles with
+a linear `_find_index` lookup, not a hashmap. Hashing is justified
+only when the collection grows unbounded or lookups dominate.
+
+Concrete instances:
+
+- `engine.cyr` — `_pe_find_index(pe, agent_id)` walks the agent vec
+  linearly. PolicyEngine instances typically carry < 100 agents; the
+  vec stays warm in L1 cache and the dispatch chains generated downstream
+  are also vec-ordered, so iteration locality matches.
+- `bridge.cyr` — `bf_add_port_mapping(bf, pm)` linear-scans for
+  duplicate `(host_port, protocol)` pairs. Same reasoning: small,
+  bounded, lookup-rare relative to iteration.
+
+This is ADR-0008-adjacent (typed enums over strings — same theme of
+"prefer concrete over indexed") and is consistent with the CLAUDE.md
+rule. It is not promoted to its own ADR because the pattern is
+self-documenting at the call sites.
+
 ## Consumer Integration
 
 The library has four declared downstream consumers in the AGNOS

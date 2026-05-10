@@ -1,0 +1,128 @@
+# Fuzz: validate.cyr — 8 public validators
+#
+# Iterates a corpus of adversarial + edge-case inputs through every
+# validator. The contract: validators must NEVER crash on any input,
+# only return Ok or Err. We don't assert outcomes — we only confirm
+# the harness runs to completion without segfaulting or hanging.
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
+include "src/lib/policy.cyr"
+include "src/lib/geoip.cyr"
+include "src/lib/mesh.cyr"
+include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
+
+alloc_init();
+
+# Each entry hits all 8 validators. No input should crash; only Ok / Err.
+fn _hit_all(s) {
+    validate_identifier(s);
+    validate_addr(s);
+    validate_iface(s);
+    validate_ct_state(s);
+    validate_comment(s);
+    validate_log_prefix(s);
+    validate_nft_element(s);
+    validate_family(s);
+    return 0;
+}
+
+# --- Corpus: known-good ---
+_hit_all("eth0");
+_hit_all("10.0.0.1");
+_hit_all("2001:db8::1");
+_hit_all("inet");
+_hit_all("established");
+_hit_all("table-1_foo");
+_hit_all("a");
+
+# --- Corpus: empty / short ---
+_hit_all("");
+_hit_all("a");
+_hit_all("0");
+_hit_all(".");
+_hit_all(":");
+
+# --- Corpus: injection / dangerous chars ---
+_hit_all("evil;drop");
+_hit_all("a{b}c");
+_hit_all("a|b");
+_hit_all("a\nb");
+_hit_all("a`b");
+_hit_all("a$b");
+_hit_all("a\"b");
+_hit_all("\\");
+_hit_all(";;;;");
+_hit_all("{");
+_hit_all("|;`$");
+
+# --- Corpus: length boundaries ---
+# 64-char identifier (max valid)
+_hit_all("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+# 65-char (just over)
+_hit_all("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+# 15-char iface (max valid)
+_hit_all("aaaaaaaaaaaaaaa");
+# 16-char iface (over)
+_hit_all("aaaaaaaaaaaaaaaa");
+# 128/129-char comment boundary — built via memset into a fixed buffer
+# to avoid 120-char literal lines that fail the lint gate.
+var c128[130];
+var ci = 0;
+while (ci < 128) { store8(&c128 + ci, 97); ci = ci + 1; }
+store8(&c128 + 128, 0);
+_hit_all(&c128);                     # 128-char (max valid for validate_comment)
+store8(&c128 + 128, 97);
+store8(&c128 + 129, 0);
+_hit_all(&c128);                     # 129-char (one over)
+
+# --- Corpus: mixed valid + dangerous ---
+_hit_all("10.0.0.1;DROP");
+_hit_all("eth0\nDROP");
+_hit_all("good_table_name_with_;injection");
+
+# --- Corpus: high-bit bytes (non-ASCII) ---
+_hit_all("\xff\xfe\xfd");
+_hit_all("\xc3\xa9\xc3\xa8");   # é è in UTF-8
+
+# --- 256-byte fill test (loop-driven boundary) ---
+var big[256];
+var i = 0;
+while (i < 255) {
+    store8(&big + i, 97);   # 'a'
+    i = i + 1;
+}
+store8(&big + 255, 0);
+_hit_all(&big);
+
+# Also fill with potentially-dangerous bytes
+i = 0;
+while (i < 255) {
+    store8(&big + i, 33 + (i % 90));   # ASCII printable range
+    i = i + 1;
+}
+store8(&big + 255, 0);
+_hit_all(&big);
+
+# Fill with NUL-adjacent embedded zeros — validators must not over-read
+i = 0;
+while (i < 255) {
+    if (i == 100) { store8(&big + i, 0); }
+    else { store8(&big + i, 97); }
+    i = i + 1;
+}
+store8(&big + 255, 0);
+_hit_all(&big);
+
+println("fuzz/validate: ok");
+syscall(SYS_EXIT, 0);

@@ -1,0 +1,87 @@
+# Fuzz: config.cyr — 16 enum dispatchers
+#
+# All cfg_parse_* functions take a cstring and return an enum value
+# (i64 >= 1) or -1 (unknown). Contract: never crash.
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
+include "src/lib/policy.cyr"
+include "src/lib/geoip.cyr"
+include "src/lib/mesh.cyr"
+include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
+
+alloc_init();
+
+fn _hit_all(s) {
+    cfg_parse_family(s);
+    cfg_parse_chain_type(s);
+    cfg_parse_hook(s);
+    cfg_parse_policy(s);
+    cfg_parse_protocol(s);
+    cfg_parse_rate_unit(s);
+    cfg_parse_quota_mode(s);
+    cfg_parse_quota_unit(s);
+    cfg_parse_pkt_type(s);
+    cfg_parse_ipv6_ext_hdr(s);
+    cfg_parse_cmp_op(s);
+    cfg_parse_log_level(s);
+    cfg_parse_reject_reason(s);
+    cfg_parse_set_type(s);
+    cfg_parse_set_flag(s);
+    cfg_parse_transport(s);
+    return 0;
+}
+
+# --- Valid values per dispatcher (at least one each) ---
+_hit_all("inet"); _hit_all("ip"); _hit_all("ip6");
+_hit_all("filter"); _hit_all("nat"); _hit_all("route");
+_hit_all("prerouting"); _hit_all("input"); _hit_all("output");
+_hit_all("accept"); _hit_all("drop");
+_hit_all("tcp"); _hit_all("udp"); _hit_all("icmp"); _hit_all("quic");
+_hit_all("second"); _hit_all("minute"); _hit_all("hour");
+_hit_all("over"); _hit_all("until");
+_hit_all("bytes"); _hit_all("kbytes"); _hit_all("mbytes");
+_hit_all("unicast"); _hit_all("broadcast");
+_hit_all("hbh"); _hit_all("frag"); _hit_all("auth");
+_hit_all("=="); _hit_all("!="); _hit_all("<="); _hit_all(">=");
+_hit_all("emerg"); _hit_all("crit"); _hit_all("info"); _hit_all("debug");
+_hit_all("icmp-port-unreachable"); _hit_all("tcp-reset");
+_hit_all("ipv4_addr"); _hit_all("inet_service"); _hit_all("ifname");
+_hit_all("constant"); _hit_all("interval"); _hit_all("timeout");
+
+# --- Invalid / unknown values ---
+_hit_all("");
+_hit_all("nonsense");
+_hit_all("INET");          # case-sensitive
+_hit_all("inet  ");        # trailing whitespace
+_hit_all(" inet");         # leading whitespace
+_hit_all("inet,ip");       # ambiguous
+
+# --- Adversarial ---
+_hit_all(";drop");
+_hit_all("{accept}");
+_hit_all("a\nb");
+_hit_all("a\x00b");        # embedded NUL — strlen stops early
+
+# --- Length boundary ---
+var big[256];
+var i = 0;
+while (i < 255) {
+    store8(&big + i, 97);
+    i = i + 1;
+}
+store8(&big + 255, 0);
+_hit_all(&big);
+
+println("fuzz/config_parse: ok");
+syscall(SYS_EXIT, 0);
