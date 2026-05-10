@@ -10,32 +10,32 @@ enum PolicyActionEnum {
 # Layout: [protocol:8][port:8] = 16 bytes
 # ================================================================
 
-fn policy_port_new(protocol, port) {
+fn policy_port_new(protocol: i64, port: i64): i64 {
     var p = alloc(16);
     store64(p, protocol);
     store64(p + 8, port);
     return p;
 }
 
-fn policy_port_protocol(p) { return load64(p); }
-fn policy_port_port(p) { return load64(p + 8); }
+fn policy_port_protocol(p: i64): i64 { return load64(p); }
+fn policy_port_port(p: i64): i64 { return load64(p + 8); }
 
 # ================================================================
 # PolicyRule — { peer(str), ports(vec of PolicyPort) }
 # Layout: [peer:8][ports:8] = 16 bytes
 # ================================================================
 
-fn policy_rule_new(peer) {
+fn policy_rule_new(peer: cstring): i64 {
     var pr = alloc(16);
     store64(pr, peer);
     store64(pr + 8, vec_new());
     return pr;
 }
 
-fn policy_rule_peer(pr) { return load64(pr); }
-fn policy_rule_ports(pr) { return load64(pr + 8); }
+fn policy_rule_peer(pr: i64): i64 { return load64(pr); }
+fn policy_rule_ports(pr: i64): i64 { return load64(pr + 8); }
 
-fn policy_rule_add_port(pr, protocol, port) {
+fn policy_rule_add_port(pr: i64, protocol: i64, port: i64): i64 {
     vec_push(load64(pr + 8), policy_port_new(protocol, port));
     return pr;
 }
@@ -45,7 +45,7 @@ fn policy_rule_add_port(pr, protocol, port) {
 # Layout: [name:8][target:8][ingress:8][egress:8][default_action:8] = 40 bytes
 # ================================================================
 
-fn nein_network_policy_new(name, target, default_action) {
+fn nein_network_policy_new(name: cstring, target: cstring, default_action: i64): i64 {
     var np = alloc(40);
     store64(np, name);
     store64(np + 8, target);
@@ -55,18 +55,18 @@ fn nein_network_policy_new(name, target, default_action) {
     return np;
 }
 
-fn policy_name(np) { return load64(np); }
-fn policy_target(np) { return load64(np + 8); }
-fn policy_ingress(np) { return load64(np + 16); }
-fn policy_egress(np) { return load64(np + 24); }
-fn policy_default_action(np) { return load64(np + 32); }
+fn policy_name(np: i64): i64 { return load64(np); }
+fn policy_target(np: i64): i64 { return load64(np + 8); }
+fn policy_ingress(np: i64): i64 { return load64(np + 16); }
+fn policy_egress(np: i64): i64 { return load64(np + 24); }
+fn policy_default_action(np: i64): i64 { return load64(np + 32); }
 
-fn policy_add_ingress(np, pr) {
+fn policy_add_ingress(np: i64, pr: i64): i64 {
     vec_push(load64(np + 16), pr);
     return np;
 }
 
-fn policy_add_egress(np, pr) {
+fn policy_add_egress(np: i64, pr: i64): i64 {
     vec_push(load64(np + 24), pr);
     return np;
 }
@@ -75,7 +75,7 @@ fn policy_add_egress(np, pr) {
 # Validate
 # ================================================================
 
-fn _validate_policy_rules(rules) {
+fn _validate_policy_rules(rules: i64): i64 {
     var rlen = vec_len(rules);
     var i = 0;
     var vr = 0;
@@ -92,7 +92,7 @@ fn _validate_policy_rules(rules) {
     return nein_ok();
 }
 
-fn policy_validate(np) {
+fn policy_validate(np: i64): i64 {
     var vr = validate_identifier(policy_name(np));
     if (is_err_result(vr) == 1) { return vr; }
 
@@ -110,7 +110,7 @@ fn policy_validate(np) {
 # ================================================================
 
 # Build the comment string "policy:NAME direction from/to PEER"
-fn _policy_comment(name, direction, preposition, peer) {
+fn _policy_comment(name: cstring, direction: cstring, preposition: cstring, peer: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "policy:");
     str_builder_add_cstr(sb, name);
@@ -128,7 +128,7 @@ fn _policy_comment(name, direction, preposition, peer) {
     return out;
 }
 
-fn policy_to_rules(np) {
+fn policy_to_rules(np: i64): i64 {
     var rules = vec_new();
     var name = policy_name(np);
 
@@ -189,7 +189,7 @@ fn policy_to_rules(np) {
 # Convenience: agent-to-agent policy
 # ================================================================
 
-fn agent_to_agent(name, source, dest, protocol, port) {
+fn agent_to_agent(name: cstring, source: cstring, dest: cstring, protocol: i64, port: i64): i64 {
     var np = nein_network_policy_new(name, dest, PACT_DENY);
     var pr = policy_rule_new(source);
     policy_rule_add_port(pr, protocol, port);

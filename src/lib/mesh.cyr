@@ -6,7 +6,7 @@
 # Layout: 7 fields * 8 = 56 bytes
 # ================================================================
 
-fn mesh_envoy() {
+fn mesh_envoy(): i64 {
     var m = alloc(56);
     store64(m, 15006);                           # inbound_port
     store64(m + 8, 15001);                       # outbound_port
@@ -19,24 +19,24 @@ fn mesh_envoy() {
     return m;
 }
 
-fn mesh_inbound_port(m) { return load64(m); }
-fn mesh_outbound_port(m) { return load64(m + 8); }
-fn mesh_proxy_uid(m) { return load64(m + 16); }
-fn mesh_excl_out_cidrs(m) { return load64(m + 24); }
-fn mesh_excl_out_ports(m) { return load64(m + 32); }
-fn mesh_excl_in_ports(m) { return load64(m + 40); }
-fn mesh_table_name(m) { return load64(m + 48); }
+fn mesh_inbound_port(m: i64): i64 { return load64(m); }
+fn mesh_outbound_port(m: i64): i64 { return load64(m + 8); }
+fn mesh_proxy_uid(m: i64): i64 { return load64(m + 16); }
+fn mesh_excl_out_cidrs(m: i64): i64 { return load64(m + 24); }
+fn mesh_excl_out_ports(m: i64): i64 { return load64(m + 32); }
+fn mesh_excl_in_ports(m: i64): i64 { return load64(m + 40); }
+fn mesh_table_name(m: i64): i64 { return load64(m + 48); }
 
-fn mesh_set_inbound_port(m, p) { store64(m, p); return m; }
-fn mesh_set_outbound_port(m, p) { store64(m + 8, p); return m; }
-fn mesh_set_proxy_uid(m, uid) { store64(m + 16, uid); return m; }
-fn mesh_set_table_name(m, name) { store64(m + 48, name); return m; }
+fn mesh_set_inbound_port(m: i64, p: i64): i64 { store64(m, p); return m; }
+fn mesh_set_outbound_port(m: i64, p: i64): i64 { store64(m + 8, p); return m; }
+fn mesh_set_proxy_uid(m: i64, uid: i64): i64 { store64(m + 16, uid); return m; }
+fn mesh_set_table_name(m: i64, name: cstring): i64 { store64(m + 48, name); return m; }
 
-fn mesh_exclude_outbound_cidr(m, cidr) { vec_push(load64(m + 24), cidr); return m; }
-fn mesh_exclude_outbound_port(m, port) { vec_push(load64(m + 32), port); return m; }
-fn mesh_exclude_inbound_port(m, port) { vec_push(load64(m + 40), port); return m; }
+fn mesh_exclude_outbound_cidr(m: i64, cidr: cstring): i64 { vec_push(load64(m + 24), cidr); return m; }
+fn mesh_exclude_outbound_port(m: i64, port: i64): i64 { vec_push(load64(m + 32), port); return m; }
+fn mesh_exclude_inbound_port(m: i64, port: i64): i64 { vec_push(load64(m + 40), port); return m; }
 
-fn mesh_clear_excl_out_cidrs(m) {
+fn mesh_clear_excl_out_cidrs(m: i64): i64 {
     store64(m + 24, vec_new());
     return m;
 }
@@ -45,7 +45,7 @@ fn mesh_clear_excl_out_cidrs(m) {
 # Validate
 # ================================================================
 
-fn mesh_validate(m) {
+fn mesh_validate(m: i64): i64 {
     var vr = validate_identifier(mesh_table_name(m));
     if (is_err_result(vr) == 1) { return vr; }
     var cidrs = mesh_excl_out_cidrs(m);
@@ -63,7 +63,7 @@ fn mesh_validate(m) {
 # Render helpers — build comment strings
 # ================================================================
 
-fn _mesh_cstr_concat(a, b) {
+fn _mesh_cstr_concat(a: cstring, b: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, a);
     str_builder_add_cstr(sb, b);
@@ -74,7 +74,7 @@ fn _mesh_cstr_concat(a, b) {
     return out;
 }
 
-fn _mesh_cstr_concat3(a, b, c) {
+fn _mesh_cstr_concat3(a: cstring, b: cstring, c: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, a);
     str_builder_add_cstr(sb, b);
@@ -87,7 +87,7 @@ fn _mesh_cstr_concat3(a, b, c) {
 }
 
 # Build "meta skuid N" raw match string
-fn _raw_meta_skuid(uid) {
+fn _raw_meta_skuid(uid: i64): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "meta skuid ");
     str_builder_add_int(sb, uid);
@@ -99,7 +99,7 @@ fn _raw_meta_skuid(uid) {
 }
 
 # Build "tcp dport != PORT redirect to :PORT" raw match string
-fn _raw_redirect(port) {
+fn _raw_redirect(port: i64): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "tcp dport != ");
     str_builder_add_int(sb, port);
@@ -113,7 +113,7 @@ fn _raw_redirect(port) {
 }
 
 # Build "skip outbound port N" or "skip inbound port N"
-fn _skip_port_comment(direction, port) {
+fn _skip_port_comment(direction: cstring, port: i64): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "skip ");
     str_builder_add_cstr(sb, direction);
@@ -130,7 +130,7 @@ fn _skip_port_comment(direction, port) {
 # Build chains
 # ================================================================
 
-fn _mesh_outbound_chain(m) {
+fn _mesh_outbound_chain(m: i64): i64 {
     var c = chain_base("mesh_outbound", CHAIN_NAT, HOOK_OUTPUT, 0 - 100, POLICY_ACCEPT);
 
     # Skip proxy's own traffic
@@ -175,7 +175,7 @@ fn _mesh_outbound_chain(m) {
     return c;
 }
 
-fn _mesh_inbound_chain(m) {
+fn _mesh_inbound_chain(m: i64): i64 {
     var c = chain_base("mesh_inbound", CHAIN_NAT, HOOK_PREROUTING, 0 - 100, POLICY_ACCEPT);
 
     var ports = mesh_excl_in_ports(m);
@@ -199,7 +199,7 @@ fn _mesh_inbound_chain(m) {
     return c;
 }
 
-fn mesh_to_firewall(m) {
+fn mesh_to_firewall(m: i64): i64 {
     var fw = firewall_new();
     var t = table_new(mesh_table_name(m), FAMILY_IP);
     table_add_chain(t, _mesh_outbound_chain(m));

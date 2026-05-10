@@ -4,6 +4,42 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.1] — 2026-05-10
+
+Annotation closeout. Type-check coverage extended to every public fn
+across all 18 modules. Bundle regenerated; 580/580 tests pass on both
+arches; zero type-check warnings; no API surface drift.
+
+### Added
+
+- **Type annotations on the remaining 14 `src/lib/` modules** —
+  ~250 fn signatures across chain, table, set, nat, firewall, builder,
+  policy, geoip, mesh, bridge, engine, config, netns, inspect. Joins
+  the v1.1.2 (validate, error), v1.1.3 (rule, apply) annotation work
+  for full coverage. Pattern:
+  - `cstring` — names, addresses, interface names, comments, raw
+    nftables fragments, set-element strings, country codes
+  - `i64` — port numbers, handles, struct/vec pointers (Cyrius
+    doesn't distinguish pointer types from integers), enum
+    discriminants, flags
+  - `Str` — Cyrius value-typed strings (only consumer-facing apply
+    fns took this; internally most renders also return `Str`, now
+    annotated)
+- `nat_dnat_range` signature wrapped to fit the 120-char lint limit
+  (only line that needed splitting after annotation expansion)
+
+### Verified
+
+- All 14 modules build clean with `CYRIUS_TYPE_CHECK=1` (zero
+  nein-side warnings, filtered against stdlib self-flags and the
+  known-tracked `large static data` warning)
+- aarch64 cross-build OK
+- API-surface snapshot unchanged: 348 public fns, same names + arities
+  (annotations don't change either)
+- Bench-regression gate: 0 regressions vs v1.1.2 baseline
+- `dist/nein.cyr` regenerated (4564 lines; +2 from the wrapped
+  signature)
+
 ## [1.2.0] — 2026-05-10
 
 First feature minor since the port. Adds the consumer-bundle shape,

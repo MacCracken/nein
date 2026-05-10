@@ -6,7 +6,7 @@
 # ================================================================
 
 # Uppercase a C string (in-place on a new copy)
-fn _upper_copy(s) {
+fn _upper_copy(s: cstring): cstring {
     var len = strlen(s);
     var out = alloc(len + 1);
     var i = 0;
@@ -20,7 +20,7 @@ fn _upper_copy(s) {
     return out;
 }
 
-fn country_block_v4(code, cidrs) {
+fn country_block_v4(code: cstring, cidrs: i64): i64 {
     var cb = alloc(24);
     store64(cb, _upper_copy(code));
     store64(cb + 8, cidrs);
@@ -28,7 +28,7 @@ fn country_block_v4(code, cidrs) {
     return cb;
 }
 
-fn country_block_dual(code, cidrs_v4, cidrs_v6) {
+fn country_block_dual(code: cstring, cidrs_v4: i64, cidrs_v6: i64): i64 {
     var cb = alloc(24);
     store64(cb, _upper_copy(code));
     store64(cb + 8, cidrs_v4);
@@ -36,16 +36,16 @@ fn country_block_dual(code, cidrs_v4, cidrs_v6) {
     return cb;
 }
 
-fn country_code(cb) { return load64(cb); }
-fn country_cidrs_v4(cb) { return load64(cb + 8); }
-fn country_cidrs_v6(cb) { return load64(cb + 16); }
+fn country_code(cb: i64): i64 { return load64(cb); }
+fn country_cidrs_v4(cb: i64): i64 { return load64(cb + 8); }
+fn country_cidrs_v6(cb: i64): i64 { return load64(cb + 16); }
 
 # ================================================================
 # GeoIpBlocklist — { countries(vec), table_name, hook }
 # Layout: [countries:8][table_name:8][hook:8] = 24 bytes
 # ================================================================
 
-fn geoip_new() {
+fn geoip_new(): i64 {
     var bl = alloc(24);
     store64(bl, vec_new());
     store64(bl + 8, "nein_geoip");
@@ -53,14 +53,14 @@ fn geoip_new() {
     return bl;
 }
 
-fn geoip_countries(bl) { return load64(bl); }
-fn geoip_table_name(bl) { return load64(bl + 8); }
-fn geoip_hook(bl) { return load64(bl + 16); }
+fn geoip_countries(bl: i64): i64 { return load64(bl); }
+fn geoip_table_name(bl: i64): i64 { return load64(bl + 8); }
+fn geoip_hook(bl: i64): i64 { return load64(bl + 16); }
 
-fn geoip_set_table_name(bl, name) { store64(bl + 8, name); return bl; }
-fn geoip_set_hook(bl, hook) { store64(bl + 16, hook); return bl; }
+fn geoip_set_table_name(bl: i64, name: cstring): i64 { store64(bl + 8, name); return bl; }
+fn geoip_set_hook(bl: i64, hook: i64): i64 { store64(bl + 16, hook); return bl; }
 
-fn geoip_block_country(bl, cb) {
+fn geoip_block_country(bl: i64, cb: i64): i64 {
     vec_push(load64(bl), cb);
     return bl;
 }
@@ -70,7 +70,7 @@ fn geoip_block_country(bl, cb) {
 # ================================================================
 
 # Check country code: exactly 2 ASCII uppercase letters
-fn _is_valid_country_code(code) {
+fn _is_valid_country_code(code: cstring): i64 {
     if (strlen(code) != 2) { return 0; }
     var c0 = load8(code);
     var c1 = load8(code + 1);
@@ -79,7 +79,7 @@ fn _is_valid_country_code(code) {
     return 1;
 }
 
-fn _validate_cidr_list(cidrs) {
+fn _validate_cidr_list(cidrs: i64): i64 {
     var clen = vec_len(cidrs);
     var i = 0;
     var vr = 0;
@@ -91,7 +91,7 @@ fn _validate_cidr_list(cidrs) {
     return nein_ok();
 }
 
-fn geoip_validate(bl) {
+fn geoip_validate(bl: i64): i64 {
     var vr = validate_identifier(geoip_table_name(bl));
     if (is_err_result(vr) == 1) { return vr; }
 
@@ -118,7 +118,7 @@ fn geoip_validate(bl) {
 # ================================================================
 
 # Lowercase copy
-fn _lower_copy(s) {
+fn _lower_copy(s: cstring): cstring {
     var len = strlen(s);
     var out = alloc(len + 1);
     var i = 0;
@@ -133,7 +133,7 @@ fn _lower_copy(s) {
 }
 
 # Concat "geo_" + lowercase(code)
-fn _geo_set_name(code) {
+fn _geo_set_name(code: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "geo_");
     str_builder_add_cstr(sb, _lower_copy(code));
@@ -145,7 +145,7 @@ fn _geo_set_name(code) {
 }
 
 # Concat "table_name" + optional suffix
-fn _table_name_with_suffix(base, suffix) {
+fn _table_name_with_suffix(base: cstring, suffix: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, base);
     str_builder_add_cstr(sb, suffix);
@@ -157,7 +157,7 @@ fn _table_name_with_suffix(base, suffix) {
 }
 
 # Concat "geoblock CODE"
-fn _geoblock_comment(code) {
+fn _geoblock_comment(code: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "geoblock ");
     str_builder_add_cstr(sb, code);
@@ -169,7 +169,7 @@ fn _geoblock_comment(code) {
 }
 
 # Check if any country has non-empty cidrs in the given family
-fn _any_has_cidrs(countries, v6) {
+fn _any_has_cidrs(countries: i64, v6: i64): i64 {
     var clen = vec_len(countries);
     var i = 0;
     while (i < clen) {
@@ -182,7 +182,7 @@ fn _any_has_cidrs(countries, v6) {
     return 0;
 }
 
-fn _build_table(bl, family, v6) {
+fn _build_table(bl: i64, family: i64, v6: i64): i64 {
     var suffix = "";
     if (v6 == 1) { suffix = "_v6"; }
     var tname = _table_name_with_suffix(geoip_table_name(bl), suffix);
@@ -227,7 +227,7 @@ fn _build_table(bl, family, v6) {
     return table;
 }
 
-fn geoip_to_firewall(bl) {
+fn geoip_to_firewall(bl: i64): i64 {
     var fw = firewall_new();
     var countries = geoip_countries(bl);
     if (vec_len(countries) == 0) { return fw; }

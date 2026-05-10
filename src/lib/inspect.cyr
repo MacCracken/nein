@@ -7,7 +7,7 @@
 # Layout: [tables:8][total_rules:8][raw:8] = 24 bytes
 # ================================================================
 
-fn firewall_status_new(tables, total_rules, raw) {
+fn firewall_status_new(tables: i64, total_rules: i64, raw: Str): i64 {
     var s = alloc(24);
     store64(s, tables);
     store64(s + 8, total_rules);
@@ -15,16 +15,16 @@ fn firewall_status_new(tables, total_rules, raw) {
     return s;
 }
 
-fn status_tables(s) { return load64(s); }
-fn status_total_rules(s) { return load64(s + 8); }
-fn status_raw_ruleset(s) { return load64(s + 16); }
+fn status_tables(s: i64): i64 { return load64(s); }
+fn status_total_rules(s: i64): i64 { return load64(s + 8); }
+fn status_raw_ruleset(s: i64): i64 { return load64(s + 16); }
 
 # ================================================================
 # Parse a raw ruleset into tables + rule count
 # ================================================================
 
 # Check if a cstr starts with a prefix
-fn _cstr_starts_with(s, prefix) {
+fn _cstr_starts_with(s: cstring, prefix: cstring): i64 {
     var plen = strlen(prefix);
     if (strlen(s) < plen) { return 0; }
     var i = 0;
@@ -36,7 +36,7 @@ fn _cstr_starts_with(s, prefix) {
 }
 
 # Trim leading/trailing whitespace; returns a fresh cstr
-fn _trim_line(s, len) {
+fn _trim_line(s: i64, len: i64): cstring {
     var start = 0;
     while (start < len) {
         var c = load8(s + start);
@@ -57,7 +57,7 @@ fn _trim_line(s, len) {
 }
 
 # Strip trailing " {" if present
-fn _strip_open_brace(s) {
+fn _strip_open_brace(s: cstring): cstring {
     var len = strlen(s);
     if (len >= 2) {
         if (load8(s + len - 1) == 123) {   # '{'
@@ -75,7 +75,7 @@ fn _strip_open_brace(s) {
 # Parse the raw ruleset Str, populating:
 #   tables_vec: pushed with each "table FAM NAME" line
 #   Returns rule count (lines that aren't table/chain/type/closing-brace/empty)
-fn _parse_ruleset(raw_str, tables_vec) {
+fn _parse_ruleset(raw_str: Str, tables_vec: i64): i64 {
     var data = str_data(raw_str);
     var len = str_len(raw_str);
     var rule_count = 0;
@@ -118,7 +118,7 @@ fn _parse_ruleset(raw_str, tables_vec) {
 
 # status() — query live firewall state.
 # Returns Ok(FirewallStatus) or Err on nft failure.
-fn status() {
+fn status(): i64 {
     var res = list_ruleset();
     if (is_err_result(res) == 1) { return res; }
     var raw = payload(res);

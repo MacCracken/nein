@@ -5,7 +5,7 @@
 # Layout: 4 fields * 8 = 32 bytes
 # ================================================================
 
-fn bridge_config_new(bridge_name, subnet, outbound_iface) {
+fn bridge_config_new(bridge_name: cstring, subnet: cstring, outbound_iface: cstring): i64 {
     var cfg = alloc(32);
     store64(cfg, bridge_name);
     store64(cfg + 8, subnet);
@@ -14,17 +14,17 @@ fn bridge_config_new(bridge_name, subnet, outbound_iface) {
     return cfg;
 }
 
-fn bridge_name(cfg) { return load64(cfg); }
-fn bridge_subnet(cfg) { return load64(cfg + 8); }
-fn bridge_outbound_iface(cfg) { return load64(cfg + 16); }
-fn bridge_table_prefix(cfg) { return load64(cfg + 24); }
+fn bridge_name(cfg: i64): i64 { return load64(cfg); }
+fn bridge_subnet(cfg: i64): i64 { return load64(cfg + 8); }
+fn bridge_outbound_iface(cfg: i64): i64 { return load64(cfg + 16); }
+fn bridge_table_prefix(cfg: i64): i64 { return load64(cfg + 24); }
 
-fn bridge_set_table_prefix(cfg, prefix) {
+fn bridge_set_table_prefix(cfg: i64, prefix: cstring): i64 {
     store64(cfg + 24, prefix);
     return cfg;
 }
 
-fn bridge_config_validate(cfg) {
+fn bridge_config_validate(cfg: i64): i64 {
     var vr = validate_iface(bridge_name(cfg));
     if (is_err_result(vr) == 1) { return vr; }
     vr = validate_addr(bridge_subnet(cfg));
@@ -41,7 +41,7 @@ fn bridge_config_validate(cfg) {
 # Layout: 4 * 8 = 32 bytes
 # ================================================================
 
-fn port_mapping_new(host_port, container_addr, container_port, protocol) {
+fn port_mapping_new(host_port: i64, container_addr: cstring, container_port: i64, protocol: i64): i64 {
     var pm = alloc(32);
     store64(pm, host_port);
     store64(pm + 8, container_addr);
@@ -50,25 +50,25 @@ fn port_mapping_new(host_port, container_addr, container_port, protocol) {
     return pm;
 }
 
-fn pm_tcp(host_port, container_addr, container_port) {
+fn pm_tcp(host_port: i64, container_addr: cstring, container_port: i64): i64 {
     return port_mapping_new(host_port, container_addr, container_port, PROTO_TCP);
 }
 
-fn pm_udp(host_port, container_addr, container_port) {
+fn pm_udp(host_port: i64, container_addr: cstring, container_port: i64): i64 {
     return port_mapping_new(host_port, container_addr, container_port, PROTO_UDP);
 }
 
-fn pm_host_port(pm) { return load64(pm); }
-fn pm_container_addr(pm) { return load64(pm + 8); }
-fn pm_container_port(pm) { return load64(pm + 16); }
-fn pm_protocol(pm) { return load64(pm + 24); }
+fn pm_host_port(pm: i64): i64 { return load64(pm); }
+fn pm_container_addr(pm: i64): i64 { return load64(pm + 8); }
+fn pm_container_port(pm: i64): i64 { return load64(pm + 16); }
+fn pm_protocol(pm: i64): i64 { return load64(pm + 24); }
 
-fn pm_validate(pm) {
+fn pm_validate(pm: i64): i64 {
     return validate_addr(pm_container_addr(pm));
 }
 
 # Build "portmap PROTO:HPORT -> ADDR:CPORT"
-fn _pm_comment(pm) {
+fn _pm_comment(pm: i64): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "portmap ");
     str_builder_add_cstr(sb, _proto_str(pm_protocol(pm)));
@@ -86,7 +86,7 @@ fn _pm_comment(pm) {
 }
 
 # Build "allow portmap -> ADDR:CPORT"
-fn _pm_forward_comment(pm) {
+fn _pm_forward_comment(pm: i64): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "allow portmap -> ");
     str_builder_add_cstr(sb, pm_container_addr(pm));
@@ -99,12 +99,12 @@ fn _pm_forward_comment(pm) {
     return out;
 }
 
-fn _pm_to_nat_rule(pm) {
+fn _pm_to_nat_rule(pm: i64): i64 {
     return nat_dnat(pm_protocol(pm), pm_host_port(pm), pm_container_addr(pm),
     pm_container_port(pm), _pm_comment(pm));
 }
 
-fn _pm_to_forward_rule(pm) {
+fn _pm_to_forward_rule(pm: i64): i64 {
     var r = rule_new(verdict_accept());
     rule_add_match(r, match_dest_addr(pm_container_addr(pm)));
     rule_add_match(r, match_protocol(pm_protocol(pm)));
@@ -118,17 +118,17 @@ fn _pm_to_forward_rule(pm) {
 # Layout: [name:8][cidrs:8] = 16 bytes
 # ================================================================
 
-fn isolation_group_new(name, cidrs) {
+fn isolation_group_new(name: cstring, cidrs: i64): i64 {
     var g = alloc(16);
     store64(g, name);
     store64(g + 8, cidrs);
     return g;
 }
 
-fn iso_name(g) { return load64(g); }
-fn iso_cidrs(g) { return load64(g + 8); }
+fn iso_name(g: i64): i64 { return load64(g); }
+fn iso_cidrs(g: i64): i64 { return load64(g + 8); }
 
-fn iso_validate(g) {
+fn iso_validate(g: i64): i64 {
     var vr = validate_identifier(iso_name(g));
     if (is_err_result(vr) == 1) { return vr; }
     var cidrs = iso_cidrs(g);
@@ -147,7 +147,7 @@ fn iso_validate(g) {
 # Layout: [config:8][pms:8][groups:8] = 24 bytes
 # ================================================================
 
-fn bridge_firewall_new(cfg) {
+fn bridge_firewall_new(cfg: i64): i64 {
     var bf = alloc(24);
     store64(bf, cfg);
     store64(bf + 8, vec_new());
@@ -155,12 +155,12 @@ fn bridge_firewall_new(cfg) {
     return bf;
 }
 
-fn bf_config(bf) { return load64(bf); }
-fn bf_port_mappings(bf) { return load64(bf + 8); }
-fn bf_isolation_groups(bf) { return load64(bf + 16); }
+fn bf_config(bf: i64): i64 { return load64(bf); }
+fn bf_port_mappings(bf: i64): i64 { return load64(bf + 8); }
+fn bf_isolation_groups(bf: i64): i64 { return load64(bf + 16); }
 
 # Returns the index of the new mapping, or Err on duplicate
-fn bf_add_port_mapping(bf, pm) {
+fn bf_add_port_mapping(bf: i64, pm: i64): i64 {
     var pms = load64(bf + 8);
     var plen = vec_len(pms);
     var i = 0;
@@ -178,7 +178,7 @@ fn bf_add_port_mapping(bf, pm) {
 }
 
 # Remove by host port + protocol; returns Some(pm) or None()
-fn bf_remove_port_mapping(bf, host_port, protocol) {
+fn bf_remove_port_mapping(bf: i64, host_port: i64, protocol: i64): i64 {
     var pms = load64(bf + 8);
     var plen = vec_len(pms);
     var i = 0;
@@ -202,12 +202,12 @@ fn bf_remove_port_mapping(bf, host_port, protocol) {
     return None();
 }
 
-fn bf_add_isolation_group(bf, g) {
+fn bf_add_isolation_group(bf: i64, g: i64): i64 {
     vec_push(load64(bf + 16), g);
     return bf;
 }
 
-fn bf_validate(bf) {
+fn bf_validate(bf: i64): i64 {
     var vr = bridge_config_validate(bf_config(bf));
     if (is_err_result(vr) == 1) { return vr; }
 
@@ -235,7 +235,7 @@ fn bf_validate(bf) {
 # --- Build helpers ---
 
 # "PREFIX_SUFFIX" table name
-fn _bf_table_name(prefix, suffix) {
+fn _bf_table_name(prefix: cstring, suffix: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, prefix);
     str_builder_add_cstr(sb, suffix);
@@ -247,7 +247,7 @@ fn _bf_table_name(prefix, suffix) {
 }
 
 # "iso_NAME" set name
-fn _iso_set_name(name) {
+fn _iso_set_name(name: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "iso_");
     str_builder_add_cstr(sb, name);
@@ -259,7 +259,7 @@ fn _iso_set_name(name) {
 }
 
 # "intra-group: NAME"
-fn _iso_comment(name) {
+fn _iso_comment(name: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "intra-group: ");
     str_builder_add_cstr(sb, name);
@@ -270,7 +270,7 @@ fn _iso_comment(name) {
     return out;
 }
 
-fn _bf_build_filter(bf) {
+fn _bf_build_filter(bf: i64): i64 {
     var cfg = bf_config(bf);
     var t = table_new(_bf_table_name(bridge_table_prefix(cfg), "_filter"), FAMILY_INET);
 
@@ -342,7 +342,7 @@ fn _bf_build_filter(bf) {
     return t;
 }
 
-fn _bf_build_nat(bf) {
+fn _bf_build_nat(bf: i64): i64 {
     var cfg = bf_config(bf);
     var t = table_new(_bf_table_name(bridge_table_prefix(cfg), "_nat"), FAMILY_IP);
 
@@ -368,7 +368,7 @@ fn _bf_build_nat(bf) {
     return t;
 }
 
-fn bf_to_firewall(bf) {
+fn bf_to_firewall(bf: i64): i64 {
     var fw = firewall_new();
     firewall_add_table(fw, _bf_build_filter(bf));
     firewall_add_table(fw, _bf_build_nat(bf));

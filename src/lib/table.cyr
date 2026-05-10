@@ -13,7 +13,7 @@ enum FamilyEnum {
     FAMILY_NETDEV = 6;
 }
 
-fn _family_str(f) {
+fn _family_str(f: i64): cstring {
     if (f == FAMILY_INET) { return "inet"; }
     if (f == FAMILY_IP) { return "ip"; }
     if (f == FAMILY_IP6) { return "ip6"; }
@@ -28,17 +28,17 @@ fn _family_str(f) {
 # Layout: [name:8][value:8] = 16 bytes
 # ================================================================
 
-fn define_new(name, value) {
+fn define_new(name: cstring, value: cstring): i64 {
     var d = alloc(16);
     store64(d, name);
     store64(d + 8, value);
     return d;
 }
 
-fn define_name(d) { return load64(d); }
-fn define_value(d) { return load64(d + 8); }
+fn define_name(d: i64): i64 { return load64(d); }
+fn define_value(d: i64): i64 { return load64(d + 8); }
 
-fn define_validate(d) {
+fn define_validate(d: i64): i64 {
     var vr = validate_identifier(define_name(d));
     if (is_err_result(vr) == 1) { return vr; }
     vr = validate_nft_element(define_value(d));
@@ -46,7 +46,7 @@ fn define_validate(d) {
     return nein_ok();
 }
 
-fn define_render(d) {
+fn define_render(d: i64): Str {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "  define $");
     str_builder_add_cstr(sb, define_name(d));
@@ -61,7 +61,7 @@ fn define_render(d) {
 # Layout: [name:8][hook:8][priority:8][devices:8] = 32 bytes
 # ================================================================
 
-fn flowtable_new(name, priority, devices) {
+fn flowtable_new(name: cstring, priority: i64, devices: i64): i64 {
     var ft = alloc(32);
     store64(ft, name);
     store64(ft + 8, HOOK_INGRESS);
@@ -70,12 +70,12 @@ fn flowtable_new(name, priority, devices) {
     return ft;
 }
 
-fn flowtable_name(ft) { return load64(ft); }
-fn flowtable_hook(ft) { return load64(ft + 8); }
-fn flowtable_priority(ft) { return load64(ft + 16); }
-fn flowtable_devices(ft) { return load64(ft + 24); }
+fn flowtable_name(ft: i64): i64 { return load64(ft); }
+fn flowtable_hook(ft: i64): i64 { return load64(ft + 8); }
+fn flowtable_priority(ft: i64): i64 { return load64(ft + 16); }
+fn flowtable_devices(ft: i64): i64 { return load64(ft + 24); }
 
-fn flowtable_validate(ft) {
+fn flowtable_validate(ft: i64): i64 {
     var vr = validate_identifier(flowtable_name(ft));
     if (is_err_result(vr) == 1) { return vr; }
     if (flowtable_hook(ft) != HOOK_INGRESS) {
@@ -93,7 +93,7 @@ fn flowtable_validate(ft) {
     return nein_ok();
 }
 
-fn flowtable_render(ft) {
+fn flowtable_render(ft: i64): Str {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "  flowtable ");
     str_builder_add_cstr(sb, flowtable_name(ft));
@@ -127,7 +127,7 @@ fn flowtable_render(ft) {
 # Policy entries: [state_name:8][seconds:8] = 16 bytes each
 # ================================================================
 
-fn ct_timeout_new(name, protocol) {
+fn ct_timeout_new(name: cstring, protocol: i64): i64 {
     var ct = alloc(32);
     store64(ct, name);
     store64(ct + 8, protocol);
@@ -136,17 +136,17 @@ fn ct_timeout_new(name, protocol) {
     return ct;
 }
 
-fn ct_timeout_name(ct) { return load64(ct); }
-fn ct_timeout_protocol(ct) { return load64(ct + 8); }
-fn ct_timeout_l3proto(ct) { return load64(ct + 16); }
-fn ct_timeout_policy(ct) { return load64(ct + 24); }
+fn ct_timeout_name(ct: i64): i64 { return load64(ct); }
+fn ct_timeout_protocol(ct: i64): i64 { return load64(ct + 8); }
+fn ct_timeout_l3proto(ct: i64): i64 { return load64(ct + 16); }
+fn ct_timeout_policy(ct: i64): i64 { return load64(ct + 24); }
 
-fn ct_timeout_set_l3proto(ct, family) {
+fn ct_timeout_set_l3proto(ct: i64, family: i64): i64 {
     store64(ct + 16, family);
     return ct;
 }
 
-fn ct_timeout_add_timeout(ct, state, seconds) {
+fn ct_timeout_add_timeout(ct: i64, state: cstring, seconds: i64): i64 {
     var e = alloc(16);
     store64(e, state);
     store64(e + 8, seconds);
@@ -154,7 +154,7 @@ fn ct_timeout_add_timeout(ct, state, seconds) {
     return ct;
 }
 
-fn ct_timeout_validate(ct) {
+fn ct_timeout_validate(ct: i64): i64 {
     var vr = validate_identifier(ct_timeout_name(ct));
     if (is_err_result(vr) == 1) { return vr; }
     var proto = ct_timeout_protocol(ct);
@@ -177,7 +177,7 @@ fn ct_timeout_validate(ct) {
     return nein_ok();
 }
 
-fn ct_timeout_render(ct) {
+fn ct_timeout_render(ct: i64): Str {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "  ct timeout ");
     str_builder_add_cstr(sb, ct_timeout_name(ct));
@@ -219,7 +219,7 @@ fn ct_timeout_render(ct) {
 #         [sets:8][maps:8][chains:8] = 64 bytes
 # ================================================================
 
-fn table_new(name, family) {
+fn table_new(name: cstring, family: i64): i64 {
     var t = alloc(64);
     store64(t, name);
     store64(t + 8, family);
@@ -232,23 +232,23 @@ fn table_new(name, family) {
     return t;
 }
 
-fn table_name(t) { return load64(t); }
-fn table_family(t) { return load64(t + 8); }
-fn table_defines(t) { return load64(t + 16); }
-fn table_flowtables(t) { return load64(t + 24); }
-fn table_ct_timeouts(t) { return load64(t + 32); }
-fn table_sets(t) { return load64(t + 40); }
-fn table_maps(t) { return load64(t + 48); }
-fn table_chains(t) { return load64(t + 56); }
+fn table_name(t: i64): i64 { return load64(t); }
+fn table_family(t: i64): i64 { return load64(t + 8); }
+fn table_defines(t: i64): i64 { return load64(t + 16); }
+fn table_flowtables(t: i64): i64 { return load64(t + 24); }
+fn table_ct_timeouts(t: i64): i64 { return load64(t + 32); }
+fn table_sets(t: i64): i64 { return load64(t + 40); }
+fn table_maps(t: i64): i64 { return load64(t + 48); }
+fn table_chains(t: i64): i64 { return load64(t + 56); }
 
-fn table_add_define(t, d) { vec_push(load64(t + 16), d); return t; }
-fn table_add_flowtable(t, ft) { vec_push(load64(t + 24), ft); return t; }
-fn table_add_ct_timeout(t, ct) { vec_push(load64(t + 32), ct); return t; }
-fn table_add_set(t, s) { vec_push(load64(t + 40), s); return t; }
-fn table_add_map(t, m) { vec_push(load64(t + 48), m); return t; }
-fn table_add_chain(t, c) { vec_push(load64(t + 56), c); return t; }
+fn table_add_define(t: i64, d: i64): i64 { vec_push(load64(t + 16), d); return t; }
+fn table_add_flowtable(t: i64, ft: i64): i64 { vec_push(load64(t + 24), ft); return t; }
+fn table_add_ct_timeout(t: i64, ct: i64): i64 { vec_push(load64(t + 32), ct); return t; }
+fn table_add_set(t: i64, s: i64): i64 { vec_push(load64(t + 40), s); return t; }
+fn table_add_map(t: i64, m: i64): i64 { vec_push(load64(t + 48), m); return t; }
+fn table_add_chain(t: i64, c: i64): i64 { vec_push(load64(t + 56), c); return t; }
 
-fn table_render(t) {
+fn table_render(t: i64): Str {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "table ");
     str_builder_add_cstr(sb, _family_str(table_family(t)));

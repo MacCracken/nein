@@ -18,7 +18,7 @@
 # = 9 * 8 = 72 bytes
 # ================================================================
 
-fn namespace_firewall_new(agent_name) {
+fn namespace_firewall_new(agent_name: cstring): i64 {
     var nsf = alloc(72);
     store64(nsf, agent_name);
     store64(nsf + 8, vec_new());      # allowed_inbound
@@ -32,30 +32,30 @@ fn namespace_firewall_new(agent_name) {
     return nsf;
 }
 
-fn nsf_agent_name(nsf) { return load64(nsf); }
-fn nsf_inbound(nsf) { return load64(nsf + 8); }
-fn nsf_outbound(nsf) { return load64(nsf + 16); }
-fn nsf_outbound_hosts(nsf) { return load64(nsf + 24); }
-fn nsf_allow_established(nsf) { return load64(nsf + 32); }
-fn nsf_allow_loopback(nsf) { return load64(nsf + 40); }
-fn nsf_allow_dns(nsf) { return load64(nsf + 48); }
-fn nsf_inbound_policy(nsf) { return load64(nsf + 56); }
-fn nsf_outbound_policy(nsf) { return load64(nsf + 64); }
+fn nsf_agent_name(nsf: i64): i64 { return load64(nsf); }
+fn nsf_inbound(nsf: i64): i64 { return load64(nsf + 8); }
+fn nsf_outbound(nsf: i64): i64 { return load64(nsf + 16); }
+fn nsf_outbound_hosts(nsf: i64): i64 { return load64(nsf + 24); }
+fn nsf_allow_established(nsf: i64): i64 { return load64(nsf + 32); }
+fn nsf_allow_loopback(nsf: i64): i64 { return load64(nsf + 40); }
+fn nsf_allow_dns(nsf: i64): i64 { return load64(nsf + 48); }
+fn nsf_inbound_policy(nsf: i64): i64 { return load64(nsf + 56); }
+fn nsf_outbound_policy(nsf: i64): i64 { return load64(nsf + 64); }
 
-fn nsf_allow_inbound(nsf, ps) { vec_push(load64(nsf + 8), ps); return nsf; }
-fn nsf_allow_outbound(nsf, ps) { vec_push(load64(nsf + 16), ps); return nsf; }
-fn nsf_allow_outbound_host(nsf, cidr) { vec_push(load64(nsf + 24), cidr); return nsf; }
-fn nsf_set_inbound_policy(nsf, p) { store64(nsf + 56, p); return nsf; }
-fn nsf_set_outbound_policy(nsf, p) { store64(nsf + 64, p); return nsf; }
-fn nsf_no_established(nsf) { store64(nsf + 32, 0); return nsf; }
-fn nsf_no_loopback(nsf) { store64(nsf + 40, 0); return nsf; }
-fn nsf_no_dns(nsf) { store64(nsf + 48, 0); return nsf; }
+fn nsf_allow_inbound(nsf: i64, ps: i64): i64 { vec_push(load64(nsf + 8), ps); return nsf; }
+fn nsf_allow_outbound(nsf: i64, ps: i64): i64 { vec_push(load64(nsf + 16), ps); return nsf; }
+fn nsf_allow_outbound_host(nsf: i64, cidr: cstring): i64 { vec_push(load64(nsf + 24), cidr); return nsf; }
+fn nsf_set_inbound_policy(nsf: i64, p: i64): i64 { store64(nsf + 56, p); return nsf; }
+fn nsf_set_outbound_policy(nsf: i64, p: i64): i64 { store64(nsf + 64, p); return nsf; }
+fn nsf_no_established(nsf: i64): i64 { store64(nsf + 32, 0); return nsf; }
+fn nsf_no_loopback(nsf: i64): i64 { store64(nsf + 40, 0); return nsf; }
+fn nsf_no_dns(nsf: i64): i64 { store64(nsf + 48, 0); return nsf; }
 
 # ================================================================
 # Comment builders
 # ================================================================
 
-fn _nsf_cstr_from_sb(sb) {
+fn _nsf_cstr_from_sb(sb: i64): cstring {
     var s = str_builder_build(sb);
     var out = alloc(str_len(s) + 1);
     memcpy(out, str_data(s), str_len(s));
@@ -64,7 +64,7 @@ fn _nsf_cstr_from_sb(sb) {
 }
 
 # "AGENT loopback"
-fn _nsf_loopback_comment(agent_name) {
+fn _nsf_loopback_comment(agent_name: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, agent_name);
     str_builder_add_cstr(sb, " loopback");
@@ -72,7 +72,7 @@ fn _nsf_loopback_comment(agent_name) {
 }
 
 # "AGENT loopback out"
-fn _nsf_loopback_out_comment(agent_name) {
+fn _nsf_loopback_out_comment(agent_name: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, agent_name);
     str_builder_add_cstr(sb, " loopback out");
@@ -80,7 +80,7 @@ fn _nsf_loopback_out_comment(agent_name) {
 }
 
 # "AGENT dns"
-fn _nsf_dns_comment(agent_name) {
+fn _nsf_dns_comment(agent_name: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, agent_name);
     str_builder_add_cstr(sb, " dns");
@@ -88,7 +88,7 @@ fn _nsf_dns_comment(agent_name) {
 }
 
 # "AGENT DIR PROTO:PORT"
-fn _nsf_port_comment(agent_name, direction, protocol, port) {
+fn _nsf_port_comment(agent_name: cstring, direction: cstring, protocol: i64, port: i64): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, agent_name);
     str_builder_add_cstr(sb, " ");
@@ -101,7 +101,7 @@ fn _nsf_port_comment(agent_name, direction, protocol, port) {
 }
 
 # "AGENT outbound PROTO:PORT -> HOST"
-fn _nsf_outbound_host_comment(agent_name, protocol, port, host) {
+fn _nsf_outbound_host_comment(agent_name: cstring, protocol: i64, port: i64, host: cstring): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, agent_name);
     str_builder_add_cstr(sb, " outbound ");
@@ -117,7 +117,7 @@ fn _nsf_outbound_host_comment(agent_name, protocol, port, host) {
 # Build the Firewall
 # ================================================================
 
-fn nsf_build(nsf) {
+fn nsf_build(nsf: i64): i64 {
     var fw = firewall_new();
     var t = table_new("agnos_agent", FAMILY_INET);
     var agent_name = nsf_agent_name(nsf);

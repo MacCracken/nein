@@ -8,10 +8,10 @@
 # Full TOML struct parsing awaits sutra's port.
 
 # -1 is the sentinel for "unknown value". All nein enum constants start at 1.
-fn _cfg_unknown() { return 0 - 1; }
+fn _cfg_unknown(): i64 { return 0 - 1; }
 
 # --- Family ---
-fn cfg_parse_family(s) {
+fn cfg_parse_family(s: cstring): i64 {
     if (streq(s, "inet") == 1) { return FAMILY_INET; }
     if (streq(s, "ip") == 1) { return FAMILY_IP; }
     if (streq(s, "ip6") == 1) { return FAMILY_IP6; }
@@ -22,7 +22,7 @@ fn cfg_parse_family(s) {
 }
 
 # --- ChainType ---
-fn cfg_parse_chain_type(s) {
+fn cfg_parse_chain_type(s: cstring): i64 {
     if (streq(s, "filter") == 1) { return CHAIN_FILTER; }
     if (streq(s, "nat") == 1) { return CHAIN_NAT; }
     if (streq(s, "route") == 1) { return CHAIN_ROUTE; }
@@ -30,7 +30,7 @@ fn cfg_parse_chain_type(s) {
 }
 
 # --- Hook ---
-fn cfg_parse_hook(s) {
+fn cfg_parse_hook(s: cstring): i64 {
     if (streq(s, "prerouting") == 1) { return HOOK_PREROUTING; }
     if (streq(s, "input") == 1) { return HOOK_INPUT; }
     if (streq(s, "forward") == 1) { return HOOK_FORWARD; }
@@ -41,14 +41,14 @@ fn cfg_parse_hook(s) {
 }
 
 # --- Policy ---
-fn cfg_parse_policy(s) {
+fn cfg_parse_policy(s: cstring): i64 {
     if (streq(s, "accept") == 1) { return POLICY_ACCEPT; }
     if (streq(s, "drop") == 1) { return POLICY_DROP; }
     return _cfg_unknown();
 }
 
 # --- Protocol ---
-fn cfg_parse_protocol(s) {
+fn cfg_parse_protocol(s: cstring): i64 {
     if (streq(s, "tcp") == 1) { return PROTO_TCP; }
     if (streq(s, "udp") == 1) { return PROTO_UDP; }
     if (streq(s, "icmp") == 1) { return PROTO_ICMP; }
@@ -57,7 +57,7 @@ fn cfg_parse_protocol(s) {
 }
 
 # --- RateUnit ---
-fn cfg_parse_rate_unit(s) {
+fn cfg_parse_rate_unit(s: cstring): i64 {
     if (streq(s, "second") == 1) { return RATE_SECOND; }
     if (streq(s, "minute") == 1) { return RATE_MINUTE; }
     if (streq(s, "hour") == 1) { return RATE_HOUR; }
@@ -66,14 +66,14 @@ fn cfg_parse_rate_unit(s) {
 }
 
 # --- QuotaMode ---
-fn cfg_parse_quota_mode(s) {
+fn cfg_parse_quota_mode(s: cstring): i64 {
     if (streq(s, "over") == 1) { return QUOTA_OVER; }
     if (streq(s, "until") == 1) { return QUOTA_UNTIL; }
     return _cfg_unknown();
 }
 
 # --- QuotaUnit ---
-fn cfg_parse_quota_unit(s) {
+fn cfg_parse_quota_unit(s: cstring): i64 {
     if (streq(s, "bytes") == 1) { return QUNIT_BYTES; }
     if (streq(s, "kbytes") == 1) { return QUNIT_KBYTES; }
     if (streq(s, "mbytes") == 1) { return QUNIT_MBYTES; }
@@ -82,7 +82,7 @@ fn cfg_parse_quota_unit(s) {
 }
 
 # --- PktType ---
-fn cfg_parse_pkt_type(s) {
+fn cfg_parse_pkt_type(s: cstring): i64 {
     if (streq(s, "unicast") == 1) { return PKT_UNICAST; }
     if (streq(s, "broadcast") == 1) { return PKT_BROADCAST; }
     if (streq(s, "multicast") == 1) { return PKT_MULTICAST; }
@@ -90,7 +90,7 @@ fn cfg_parse_pkt_type(s) {
 }
 
 # --- Ipv6ExtHdr ---
-fn cfg_parse_ipv6_ext_hdr(s) {
+fn cfg_parse_ipv6_ext_hdr(s: cstring): i64 {
     if (streq(s, "hbh") == 1) { return EXT_HOP_BY_HOP; }
     if (streq(s, "rt") == 1) { return EXT_ROUTING; }
     if (streq(s, "frag") == 1) { return EXT_FRAGMENT; }
@@ -101,7 +101,7 @@ fn cfg_parse_ipv6_ext_hdr(s) {
 }
 
 # --- CmpOp ---
-fn cfg_parse_cmp_op(s) {
+fn cfg_parse_cmp_op(s: cstring): i64 {
     if (streq(s, "==") == 1) { return NFT_CMP_EQ; }
     if (streq(s, "!=") == 1) { return NFT_CMP_NE; }
     if (streq(s, "<") == 1) { return NFT_CMP_LT; }
@@ -112,7 +112,7 @@ fn cfg_parse_cmp_op(s) {
 }
 
 # --- LogLevel ---
-fn cfg_parse_log_level(s) {
+fn cfg_parse_log_level(s: cstring): i64 {
     if (streq(s, "emerg") == 1) { return NFT_LOG_EMERG; }
     if (streq(s, "alert") == 1) { return NFT_LOG_ALERT; }
     if (streq(s, "crit") == 1) { return NFT_LOG_CRIT; }
@@ -125,7 +125,7 @@ fn cfg_parse_log_level(s) {
 }
 
 # --- RejectReason ---
-fn cfg_parse_reject_reason(s) {
+fn cfg_parse_reject_reason(s: cstring): i64 {
     if (streq(s, "icmp-host-unreachable") == 1) { return REJECT_ICMP_HOST_UNREACH; }
     if (streq(s, "icmp-port-unreachable") == 1) { return REJECT_ICMP_PORT_UNREACH; }
     if (streq(s, "icmp-net-unreachable") == 1) { return REJECT_ICMP_NET_UNREACH; }
@@ -136,7 +136,7 @@ fn cfg_parse_reject_reason(s) {
 }
 
 # --- SetType ---
-fn cfg_parse_set_type(s) {
+fn cfg_parse_set_type(s: cstring): i64 {
     if (streq(s, "ipv4_addr") == 1) { return SET_IPV4_ADDR; }
     if (streq(s, "ipv6_addr") == 1) { return SET_IPV6_ADDR; }
     if (streq(s, "inet_service") == 1) { return SET_INET_SERVICE; }
@@ -146,7 +146,7 @@ fn cfg_parse_set_type(s) {
 }
 
 # --- SetFlag ---
-fn cfg_parse_set_flag(s) {
+fn cfg_parse_set_flag(s: cstring): i64 {
     if (streq(s, "constant") == 1) { return SETFLAG_CONSTANT; }
     if (streq(s, "interval") == 1) { return SETFLAG_INTERVAL; }
     if (streq(s, "timeout") == 1) { return SETFLAG_TIMEOUT; }
@@ -154,7 +154,7 @@ fn cfg_parse_set_flag(s) {
 }
 
 # --- Transport (engine) ---
-fn cfg_parse_transport(s) {
+fn cfg_parse_transport(s: cstring): i64 {
     if (streq(s, "tcp") == 1) { return TRANS_TCP; }
     if (streq(s, "udp") == 1) { return TRANS_UDP; }
     if (streq(s, "quic") == 1) { return TRANS_QUIC; }
@@ -163,7 +163,7 @@ fn cfg_parse_transport(s) {
 
 # --- Helper: wrap result as Result<int, ERR_PARSE> ---
 # Useful when a parse function wants consistent error handling
-fn cfg_result(v) {
+fn cfg_result(v: i64): i64 {
     if (v < 0) { return nein_err(ERR_PARSE); }
     return Ok(v);
 }

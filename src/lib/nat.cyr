@@ -23,7 +23,7 @@ enum NatType {
 #
 # DNAT_RANGE needs 7 fields; we'll allocate 64 bytes for all for simplicity.
 
-fn nat_new(ntype, v1, v2, v3, v4, v5, v6) {
+fn nat_new(ntype: i64, v1: i64, v2: i64, v3: i64, v4: i64, v5: i64, v6: i64): i64 {
     var n = alloc(64);
     store64(n, ntype);
     store64(n + 8, v1);
@@ -36,42 +36,44 @@ fn nat_new(ntype, v1, v2, v3, v4, v5, v6) {
     return n;
 }
 
-fn nat_type(n) { return load64(n); }
-fn nat_v1(n) { return load64(n + 8); }
-fn nat_v2(n) { return load64(n + 16); }
-fn nat_v3(n) { return load64(n + 24); }
-fn nat_v4(n) { return load64(n + 32); }
-fn nat_v5(n) { return load64(n + 40); }
-fn nat_v6(n) { return load64(n + 48); }
-fn nat_v7(n) { return load64(n + 56); }
-fn nat_set_v7(n, val) { store64(n + 56, val); return n; }
+fn nat_type(n: i64): i64 { return load64(n); }
+fn nat_v1(n: i64): i64 { return load64(n + 8); }
+fn nat_v2(n: i64): i64 { return load64(n + 16); }
+fn nat_v3(n: i64): i64 { return load64(n + 24); }
+fn nat_v4(n: i64): i64 { return load64(n + 32); }
+fn nat_v5(n: i64): i64 { return load64(n + 40); }
+fn nat_v6(n: i64): i64 { return load64(n + 48); }
+fn nat_v7(n: i64): i64 { return load64(n + 56); }
+fn nat_set_v7(n: i64, val: i64): i64 { store64(n + 56, val); return n; }
 
 # --- Constructors ---
 
-fn nat_dnat(protocol, dest_port, to_addr, to_port, comment) {
+fn nat_dnat(protocol: i64, dest_port: i64, to_addr: cstring, to_port: i64, comment: cstring): i64 {
     return nat_new(NAT_DNAT, protocol, dest_port, to_addr, to_port, comment, 0);
 }
 
-fn nat_snat(source_cidr, to_addr, comment) {
+fn nat_snat(source_cidr: cstring, to_addr: cstring, comment: cstring): i64 {
     return nat_new(NAT_SNAT, source_cidr, to_addr, comment, 0, 0, 0);
 }
 
-fn nat_masquerade(source_cidr, oif, comment) {
+fn nat_masquerade(source_cidr: cstring, oif: cstring, comment: cstring): i64 {
     return nat_new(NAT_MASQUERADE, source_cidr, oif, comment, 0, 0, 0);
 }
 
-fn nat_redirect(protocol, dest_port, to_port, comment) {
+fn nat_redirect(protocol: i64, dest_port: i64, to_port: i64, comment: cstring): i64 {
     return nat_new(NAT_REDIRECT, protocol, dest_port, to_port, comment, 0, 0);
 }
 
-fn nat_dnat_range(protocol, dest_port_start, dest_port_end, to_addr, to_port_start, to_port_end, comment) {
+fn nat_dnat_range(protocol: i64, dest_port_start: i64, dest_port_end: i64,
+to_addr: cstring, to_port_start: i64, to_port_end: i64,
+comment: cstring): i64 {
     var n = nat_new(NAT_DNAT_RANGE, protocol, dest_port_start, dest_port_end, to_addr, to_port_start, to_port_end);
     nat_set_v7(n, comment);
     return n;
 }
 
 # --- Helper: check if an address contains ':' (IPv6) ---
-fn _addr_has_colon(s) {
+fn _addr_has_colon(s: cstring): i64 {
     var len = strlen(s);
     var i = 0;
     while (i < len) {
@@ -82,7 +84,7 @@ fn _addr_has_colon(s) {
 }
 
 # Emit an address, wrapping in brackets if IPv6
-fn _sb_add_addr(sb, addr) {
+fn _sb_add_addr(sb: i64, addr: cstring): i64 {
     if (_addr_has_colon(addr) == 1) {
         str_builder_add_cstr(sb, "[");
         str_builder_add_cstr(sb, addr);
@@ -95,7 +97,7 @@ fn _sb_add_addr(sb, addr) {
 
 # --- Render ---
 
-fn nat_render(n) {
+fn nat_render(n: i64): Str {
     var sb = str_builder_new();
     var nt = nat_type(n);
 
@@ -171,7 +173,7 @@ fn nat_render(n) {
 
 # --- Validate ---
 
-fn nat_validate(n) {
+fn nat_validate(n: i64): i64 {
     var nt = nat_type(n);
     var vr = 0;
 
@@ -228,17 +230,17 @@ fn nat_validate(n) {
 
 # --- Convenience ---
 
-fn port_forward(host_port, container_addr, container_port) {
+fn port_forward(host_port: i64, container_addr: cstring, container_port: i64): i64 {
     return nat_dnat(PROTO_TCP, host_port, container_addr, container_port, "container port fwd");
 }
 
-fn port_range_forward(host_start, host_end, container_addr, container_start) {
+fn port_range_forward(host_start: i64, host_end: i64, container_addr: cstring, container_start: i64): i64 {
     var range_size = host_end - host_start;
     var container_end = container_start + range_size;
     return nat_dnat_range(PROTO_TCP, host_start, host_end, container_addr,
     container_start, container_end, "container port range fwd");
 }
 
-fn container_masquerade(subnet, outbound_iface) {
+fn container_masquerade(subnet: cstring, outbound_iface: cstring): i64 {
     return nat_masquerade(subnet, outbound_iface, "container outbound NAT");
 }

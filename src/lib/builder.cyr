@@ -1,7 +1,7 @@
 # nein builder module — pre-built firewall configurations
 
 # --- Build a basic host firewall (allow established, lo, SSH, drop rest) ---
-fn basic_host_firewall() {
+fn basic_host_firewall(): i64 {
     var fw = firewall_new();
     var table = table_new("filter", FAMILY_INET);
 
@@ -28,7 +28,7 @@ fn basic_host_firewall() {
 }
 
 # --- Build container bridge networking rules ---
-fn container_bridge(bridge_name, subnet, outbound_iface) {
+fn container_bridge(bridge_name: cstring, subnet: cstring, outbound_iface: cstring): i64 {
     var fw = firewall_new();
 
     # filter table: forward chain
@@ -66,14 +66,14 @@ fn container_bridge(bridge_name, subnet, outbound_iface) {
 
 # --- Build agent-to-agent service policy rules ---
 # ports_vec: vec of { protocol, port } pair structs (16 bytes each)
-fn _port_pair_new(protocol, port) {
+fn _port_pair_new(protocol: i64, port: i64): i64 {
     var p = alloc(16);
     store64(p, protocol);
     store64(p + 8, port);
     return p;
 }
 
-fn service_policy(agent_source, ports_vec) {
+fn service_policy(agent_source: cstring, ports_vec: i64): i64 {
     var fw = firewall_new();
     var table = table_new("agnos_policy", FAMILY_INET);
     var chain = chain_regular("agent_access");

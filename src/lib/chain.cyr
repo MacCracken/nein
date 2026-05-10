@@ -24,14 +24,14 @@ enum PolicyEnum {
     POLICY_DROP = 2;
 }
 
-fn _chain_type_str(t) {
+fn _chain_type_str(t: i64): cstring {
     if (t == CHAIN_FILTER) { return "filter"; }
     if (t == CHAIN_NAT) { return "nat"; }
     if (t == CHAIN_ROUTE) { return "route"; }
     return "filter";
 }
 
-fn _hook_str(h) {
+fn _hook_str(h: i64): cstring {
     if (h == HOOK_PREROUTING) { return "prerouting"; }
     if (h == HOOK_INPUT) { return "input"; }
     if (h == HOOK_FORWARD) { return "forward"; }
@@ -41,7 +41,7 @@ fn _hook_str(h) {
     return "input";
 }
 
-fn _policy_str(p) {
+fn _policy_str(p: i64): cstring {
     if (p == POLICY_ACCEPT) { return "accept"; }
     if (p == POLICY_DROP) { return "drop"; }
     return "accept";
@@ -58,21 +58,21 @@ enum ChainRuleType {
     CR_NAT = 2;
 }
 
-fn chain_rule_new(ctype, inner) {
+fn chain_rule_new(ctype: i64, inner: i64): i64 {
     var cr = alloc(16);
     store64(cr, ctype);
     store64(cr + 8, inner);
     return cr;
 }
 
-fn chain_rule_render(cr) {
+fn chain_rule_render(cr: i64): Str {
     var ct = load64(cr);
     var inner = load64(cr + 8);
     if (ct == CR_NAT) { return nat_render(inner); }
     return rule_render(inner);
 }
 
-fn chain_rule_validate(cr) {
+fn chain_rule_validate(cr: i64): i64 {
     var ct = load64(cr);
     var inner = load64(cr + 8);
     if (ct == CR_NAT) { return nat_validate(inner); }
@@ -85,7 +85,7 @@ fn chain_rule_validate(cr) {
 # chain_type/hook/policy = 0 means "not set" (regular chain)
 # ================================================================
 
-fn chain_base(name, ctype, hook, priority, policy) {
+fn chain_base(name: cstring, ctype: i64, hook: i64, priority: i64, policy: i64): i64 {
     var c = alloc(48);
     store64(c, name);
     store64(c + 8, ctype);
@@ -96,7 +96,7 @@ fn chain_base(name, ctype, hook, priority, policy) {
     return c;
 }
 
-fn chain_regular(name) {
+fn chain_regular(name: cstring): i64 {
     var c = alloc(48);
     store64(c, name);
     store64(c + 8, 0);
@@ -107,24 +107,24 @@ fn chain_regular(name) {
     return c;
 }
 
-fn chain_name(c) { return load64(c); }
-fn chain_type_val(c) { return load64(c + 8); }
-fn chain_hook(c) { return load64(c + 16); }
-fn chain_priority(c) { return load64(c + 24); }
-fn chain_policy(c) { return load64(c + 32); }
-fn chain_rules(c) { return load64(c + 40); }
+fn chain_name(c: i64): i64 { return load64(c); }
+fn chain_type_val(c: i64): i64 { return load64(c + 8); }
+fn chain_hook(c: i64): i64 { return load64(c + 16); }
+fn chain_priority(c: i64): i64 { return load64(c + 24); }
+fn chain_policy(c: i64): i64 { return load64(c + 32); }
+fn chain_rules(c: i64): i64 { return load64(c + 40); }
 
-fn chain_add_rule(c, rule) {
+fn chain_add_rule(c: i64, rule: i64): i64 {
     vec_push(load64(c + 40), chain_rule_new(CR_RULE, rule));
     return c;
 }
 
-fn chain_add_nat_rule(c, natrule) {
+fn chain_add_nat_rule(c: i64, natrule: i64): i64 {
     vec_push(load64(c + 40), chain_rule_new(CR_NAT, natrule));
     return c;
 }
 
-fn chain_render(c) {
+fn chain_render(c: i64): Str {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "  chain ");
     str_builder_add_cstr(sb, chain_name(c));

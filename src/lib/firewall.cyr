@@ -3,28 +3,28 @@
 # Firewall struct — { tables(vec), dry_run }
 # Layout: [tables:8][dry_run:8] = 16 bytes
 
-fn firewall_new() {
+fn firewall_new(): i64 {
     var fw = alloc(16);
     store64(fw, vec_new());
     store64(fw + 8, 0);
     return fw;
 }
 
-fn firewall_tables(fw) { return load64(fw); }
-fn firewall_dry_run(fw) { return load64(fw + 8); }
+fn firewall_tables(fw: i64): i64 { return load64(fw); }
+fn firewall_dry_run(fw: i64): i64 { return load64(fw + 8); }
 
-fn firewall_set_dry_run(fw, enabled) {
+fn firewall_set_dry_run(fw: i64, enabled: i64): i64 {
     store64(fw + 8, enabled);
     return fw;
 }
 
-fn firewall_add_table(fw, t) {
+fn firewall_add_table(fw: i64, t: i64): i64 {
     vec_push(load64(fw), t);
     return fw;
 }
 
 # --- Render: concatenate all tables with trailing newlines ---
-fn firewall_render(fw) {
+fn firewall_render(fw: i64): Str {
     var sb = str_builder_new();
     var tables = firewall_tables(fw);
     var tlen = vec_len(tables);
@@ -39,7 +39,7 @@ fn firewall_render(fw) {
 }
 
 # --- Validate all tables, chains, and contents ---
-fn firewall_validate(fw) {
+fn firewall_validate(fw: i64): i64 {
     var tables = firewall_tables(fw);
     var tlen = vec_len(tables);
     var i = 0;

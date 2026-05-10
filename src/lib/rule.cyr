@@ -223,7 +223,7 @@ fn _log_level_str(l) {
 #   val1/val2/val3 meaning depends on type (string ptr, int, etc.)
 # ================================================================
 
-fn match_new(mtype, v1, v2, v3) {
+fn match_new(mtype: i64, v1: i64, v2: i64, v3: i64): i64 {
     var m = alloc(32);
     store64(m, mtype);
     store64(m + 8, v1);
@@ -232,10 +232,10 @@ fn match_new(mtype, v1, v2, v3) {
     return m;
 }
 
-fn match_type(m) { return load64(m); }
-fn match_val1(m) { return load64(m + 8); }
-fn match_val2(m) { return load64(m + 16); }
-fn match_val3(m) { return load64(m + 24); }
+fn match_type(m: i64): i64 { return load64(m); }
+fn match_val1(m: i64): i64 { return load64(m + 8); }
+fn match_val2(m: i64): i64 { return load64(m + 16); }
+fn match_val3(m: i64): i64 { return load64(m + 24); }
 
 # Match constructors
 
@@ -275,7 +275,7 @@ fn match_raw(expr: cstring): i64 { return match_new(MATCH_RAW, expr, 0, 0); }
 # Layout: [type:8][val1:8][val2:8][val3:8][val4:8] = 40 bytes
 # ================================================================
 
-fn verdict_new(vtype, v1, v2, v3, v4) {
+fn verdict_new(vtype: i64, v1: i64, v2: i64, v3: i64, v4: i64): i64 {
     var v = alloc(40);
     store64(v, vtype);
     store64(v + 8, v1);
@@ -285,11 +285,11 @@ fn verdict_new(vtype, v1, v2, v3, v4) {
     return v;
 }
 
-fn verdict_type(v) { return load64(v); }
-fn verdict_val1(v) { return load64(v + 8); }
-fn verdict_val2(v) { return load64(v + 16); }
-fn verdict_val3(v) { return load64(v + 24); }
-fn verdict_val4(v) { return load64(v + 32); }
+fn verdict_type(v: i64): i64 { return load64(v); }
+fn verdict_val1(v: i64): i64 { return load64(v + 8); }
+fn verdict_val2(v: i64): i64 { return load64(v + 16); }
+fn verdict_val3(v: i64): i64 { return load64(v + 24); }
+fn verdict_val4(v: i64): i64 { return load64(v + 32); }
 
 # Verdict constructors
 fn verdict_accept(): i64 { return verdict_new(VERDICT_ACCEPT, 0, 0, 0, 0); }
@@ -313,7 +313,7 @@ fn verdict_counter_named(name: cstring): i64 { return verdict_new(VERDICT_COUNTE
 # Layout: [verdict:8][matches:8][comment:8] = 24 bytes
 # ================================================================
 
-fn rule_new(verdict) {
+fn rule_new(verdict: i64): i64 {
     var r = alloc(24);
     store64(r, verdict);
     store64(r + 8, vec_new());
@@ -321,16 +321,16 @@ fn rule_new(verdict) {
     return r;
 }
 
-fn rule_verdict(r) { return load64(r); }
-fn rule_matches(r) { return load64(r + 8); }
-fn rule_comment(r) { return load64(r + 16); }
+fn rule_verdict(r: i64): i64 { return load64(r); }
+fn rule_matches(r: i64): i64 { return load64(r + 8); }
+fn rule_comment(r: i64): i64 { return load64(r + 16); }
 
-fn rule_add_match(r, m) {
+fn rule_add_match(r: i64, m: i64): i64 {
     vec_push(load64(r + 8), m);
     return r;
 }
 
-fn rule_set_comment(r, c) {
+fn rule_set_comment(r: i64, c: cstring): i64 {
     store64(r + 16, c);
     return r;
 }
@@ -558,7 +558,7 @@ fn _render_verdict(sb, v) {
 }
 
 # Render a complete rule to nftables syntax string
-fn rule_render(r) {
+fn rule_render(r: i64): Str {
     var sb = str_builder_new();
     var matches = rule_matches(r);
     var len = vec_len(matches);
@@ -586,7 +586,7 @@ fn rule_render(r) {
 # Validate — check all string fields for injection
 # ================================================================
 
-fn rule_validate(r) {
+fn rule_validate(r: i64): i64 {
     var matches = rule_matches(r);
     var len = vec_len(matches);
     var i = 0;
@@ -670,39 +670,39 @@ fn rule_validate(r) {
 # Convenience functions
 # ================================================================
 
-fn allow_tcp(port) {
+fn allow_tcp(port: i64): i64 {
     var r = rule_new(verdict_accept());
     rule_add_match(r, match_protocol(PROTO_TCP));
     rule_add_match(r, match_dport(port));
     return r;
 }
 
-fn allow_udp(port) {
+fn allow_udp(port: i64): i64 {
     var r = rule_new(verdict_accept());
     rule_add_match(r, match_protocol(PROTO_UDP));
     rule_add_match(r, match_dport(port));
     return r;
 }
 
-fn allow_established() {
+fn allow_established(): i64 {
     var r = rule_new(verdict_accept());
     rule_add_match(r, match_ct_state("established, related"));
     return r;
 }
 
-fn deny_source(cidr) {
+fn deny_source(cidr: cstring): i64 {
     var r = rule_new(verdict_drop());
     rule_add_match(r, match_source_addr(cidr));
     return r;
 }
 
-fn deny_source6(cidr) {
+fn deny_source6(cidr: cstring): i64 {
     var r = rule_new(verdict_drop());
     rule_add_match(r, match_source_addr6(cidr));
     return r;
 }
 
-fn allow_service(source_cidr, protocol, port) {
+fn allow_service(source_cidr: cstring, protocol: i64, port: i64): i64 {
     var r = rule_new(verdict_accept());
     rule_add_match(r, match_source_addr(source_cidr));
     rule_add_match(r, match_protocol(protocol));
@@ -710,7 +710,7 @@ fn allow_service(source_cidr, protocol, port) {
     return r;
 }
 
-fn rate_limit_tcp(port, rate, unit) {
+fn rate_limit_tcp(port: i64, rate: i64, unit: i64): i64 {
     var r = rule_new(verdict_accept());
     rule_add_match(r, match_protocol(PROTO_TCP));
     rule_add_match(r, match_dport(port));
@@ -718,7 +718,7 @@ fn rate_limit_tcp(port, rate, unit) {
     return r;
 }
 
-fn rate_limit_udp(port, rate, unit) {
+fn rate_limit_udp(port: i64, rate: i64, unit: i64): i64 {
     var r = rule_new(verdict_accept());
     rule_add_match(r, match_protocol(PROTO_UDP));
     rule_add_match(r, match_dport(port));
@@ -726,7 +726,7 @@ fn rate_limit_udp(port, rate, unit) {
     return r;
 }
 
-fn rate_limit_quic(port, rate, unit) {
+fn rate_limit_quic(port: i64, rate: i64, unit: i64): i64 {
     var r = rule_new(verdict_accept());
     rule_add_match(r, match_protocol(PROTO_UDP));
     rule_add_match(r, match_dport(port));

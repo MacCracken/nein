@@ -23,19 +23,56 @@ extract() {
         [ -f "$f" ] || continue
         local module
         module=$(basename "$f" .cyr)
-        # Match `fn NAME(args...)`; skip private fns (starting with `_`).
-        # sed extracts the fn name + paren block; awk computes arity from
-        # comma count (empty arg list → 0).
-        grep -E '^fn [a-zA-Z][a-zA-Z0-9_]*\(' "$f" \
-          | sed -E 's/^fn ([a-zA-Z][a-zA-Z0-9_]*)\(([^)]*)\).*/\1|\2/' \
-          | awk -F'|' -v m="$module" '
-              {
-                name = $1; args = $2
+        # awk pass: join multi-line `fn NAME(args, ...continuation)` into a
+        # single logical line, then extract NAME + arg-list. Multi-line
+        # signatures appear when a single-line `fn` declaration would
+        # exceed the 120-char lint limit (e.g. nat_dnat_range after
+        # v1.2.1's type-annotation expansion).
+        awk -v m="$module" '
+          /^fn [a-zA-Z][a-zA-Z0-9_]*\(/ {
+            # accumulate until the opening paren is balanced by a close
+            buf = $0
+            opens = gsub(/\(/, "(", buf)
+            # awk gsub returns the count; recompute via length diff so the
+            # buffer string itself stays intact for matching.
+            opens = 0; closes = 0
+            for (i = 1; i <= length($0); i++) {
+              c = substr($0, i, 1)
+              if (c == "(") opens++
+              if (c == ")") closes++
+            }
+            while (opens > closes) {
+              if ((getline next_line) <= 0) break
+              buf = buf " " next_line
+              for (i = 1; i <= length(next_line); i++) {
+                c = substr(next_line, i, 1)
+                if (c == "(") opens++
+                if (c == ")") closes++
+              }
+            }
+            # buf now has the full signature. Extract NAME + args.
+            if (match(buf, /^fn ([a-zA-Z][a-zA-Z0-9_]*)\(/)) {
+              name_start = RSTART + 3
+              name_len = RLENGTH - 4
+              name = substr(buf, name_start, name_len)
+              paren_open = index(buf, "(")
+              # find matching close: scan with nesting depth
+              depth = 0; close_at = 0
+              for (i = paren_open; i <= length(buf); i++) {
+                c = substr(buf, i, 1)
+                if (c == "(") depth++
+                if (c == ")") { depth--; if (depth == 0) { close_at = i; break } }
+              }
+              if (close_at > paren_open) {
+                args = substr(buf, paren_open + 1, close_at - paren_open - 1)
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "", args)
                 if (args == "") arity = 0
-                else { n = split(args, _, ","); arity = n }
+                else { arity = split(args, _, ",") }
                 print m "::" name "/" arity
-              }'
+              }
+            }
+          }
+        ' "$f"
     done | LC_ALL=C sort -u
 }
 

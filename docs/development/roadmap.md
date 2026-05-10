@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-05-10 (post v1.2.0 — first feature minor shipped).
+Last refresh: 2026-05-10 (post v1.2.1 — annotation closeout).
 
 The arc since v1.0.0 has been catch-up — toolchain 4.5.0 → 5.10.34, agnosys
 0.97.2 → 1.2.4, agnostik 0.97.1 → 1.2.1. v1.1.x is the housekeeping shoulder
@@ -94,12 +94,12 @@ story, capability map.
 
 ## v1.2.x — Annotation closeout (patches, no API change)
 
-### v1.2.1 — Annotation pass on remaining modules (next)
-- [ ] `: cstring` / `: Str` / `: i64` annotation pass on the remaining 14
-      `src/lib/` modules: chain, table, set, nat, firewall, builder,
-      policy, geoip, mesh, bridge, engine, config, netns, inspect.
-      Mechanical now that the patterns are settled from v1.1.2 / v1.1.3.
-      ~250 fns. Will land as one batched patch.
+### v1.2.1 — 2026-05-10
+Annotation pass on the remaining 14 modules — chain, table, set, nat,
+firewall, builder, policy, geoip, mesh, bridge, engine, config, netns,
+inspect. ~250 fn signatures. Type-check coverage now end-to-end across
+all 18 modules + the apply layer's `Str`/`cstring` boundary. API surface
+unchanged.
 
 ---
 
