@@ -4,6 +4,15 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.1] — 2026-05-11
+
+Toolchain bump. Cyrius compiler `5.10.34` → `5.10.44`; `agnosys`
+dependency `1.2.4` → `1.2.5`. No source changes.
+
+### Changed
+
+- `cyrius.cyml`: `cyrius = "5.10.44"`, `agnosys.tag = "1.2.5"`.
+
 ## [1.5.0] — 2026-05-10
 
 Live-rule diff + idempotent apply. New `src/lib/diff.cyr` module
