@@ -7,6 +7,12 @@ on:
 permissions:
   contents: write
 
+env:
+  # See ci.yml — `cyrius deps` populates ./lib/ from the version-pinned
+  # snapshot, which then shadows the global snapshot on every build.
+  # Intentional; silence the informational note across all release steps.
+  CYRIUS_NO_WARN_SHADOW_LIB: "1"
+
 jobs:
   ci:
     name: CI Gate
@@ -21,36 +27,91 @@ jobs:
 
       - name: Verify version
         run: |
-          FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-          TAG_VERSION="${GITHUB_REF_NAME}"
-          test "$FILE_VERSION" = "$TAG_VERSION" || { echo "VERSION ($FILE_VERSION) != tag ($TAG_VERSION)"; exit 1; }
+          FILE_VERSION=$(tr -d '[:space:]' < VERSION)
+          TAG="${GITHUB_REF_NAME}"
+          echo "$TAG" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "tag ($TAG) is not semver x.y.z"; exit 1; }
+          [ "$FILE_VERSION" = "$TAG" ] || {
+            echo "VERSION ($FILE_VERSION) != tag ($TAG)"; exit 1; }
+          grep -q '^version = "\${file:VERSION}"' cyrius.cyml || {
+            echo "cyrius.cyml version must be \${file:VERSION}"; exit 1; }
+          echo "Version verified: $TAG (cyrius.cyml pulls from VERSION via \${file:VERSION})"
 
       - name: Install Cyrius toolchain
+        # Delegates to the upstream installer keyed on the cyrius.cyml
+        # pin — lays out $HOME/.cyrius/{bin,lib} (binaries + stdlib
+        # snapshot). See ci.yml for the rationale (replaces the pre-6.x
+        # hand-rolled tarball extraction that copied `bin/cc5`, renamed
+        # to `cycc` in the 6.x toolchain).
         run: |
-          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
+          set -e
+          CYRIUS_VERSION="$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          VERSIONED="$HOME/.cyrius/versions/$CYRIUS_VERSION"
-          mkdir -p "$VERSIONED/bin" "$VERSIONED/lib"
-          cp "$CYRIUS_DIR/bin/"* "$VERSIONED/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$VERSIONED/lib/" 2>/dev/null || true
-          chmod +x "$VERSIONED/bin/"* 2>/dev/null || true
-          ln -sfn "$VERSIONED/bin" "$HOME/.cyrius/bin"
-          ln -sfn "$VERSIONED/lib" "$HOME/.cyrius/lib"
-          echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
+          curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | \
+            CYRIUS_VERSION="$CYRIUS_VERSION" sh
+          echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
+
+      - name: Resolve deps
+        run: cyrius deps
+
+      - name: Verify dep hashes
+        run: |
+          if [ -f cyrius.lock ]; then
+            cyrius deps --verify
+          else
+            echo "::warning::cyrius.lock not committed — skipping hash verification"
+          fi
 
       - name: Build
         run: |
-          cyrius deps
           mkdir -p build
           cyrius build src/main.cyr build/nein
+          echo "nein: $(wc -c < build/nein) bytes"
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+      - name: Regenerate dist bundle (consumer distribution artifact)
+        # Downstream consumers (stiva / aegis / daimon / sutra) pull
+        # `dist/nein.cyr` via `[deps.nein] modules = ["dist/nein.cyr"]`.
+        # A tagged release without dist/nein.cyr = broken `cyrius deps`
+        # for every consumer. Mirrors bote / patra release flow.
+        run: |
+          cyrius distlib || true
+          test -s dist/nein.cyr || { echo "FAIL: dist/nein.cyr not produced"; exit 1; }
+          echo "dist/nein.cyr: $(wc -l < dist/nein.cyr) lines, $(wc -c < dist/nein.cyr) bytes"
+
+      - name: Verify dist bundle matches committed copy
+        run: |
+          if ! git diff --exit-code dist/nein.cyr; then
+            echo "FAIL: dist/nein.cyr is stale. Regenerate via 'cyrius distlib' and commit before tagging."
+            exit 1
+          fi
+
+      - name: Smoke test
+        run: |
+          ./build/nein | tee /tmp/smoke
+          grep -q "nein ready" /tmp/smoke || { echo "FAIL: smoke test"; exit 1; }
+
+      - name: Archive
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          rm -f nein-*.tar.gz nein-*.cyr
+          git archive --format=tar.gz --prefix="nein-${TAG}/" -o "nein-${TAG}-src.tar.gz" HEAD
+          cp build/nein     "nein-${TAG}-x86_64-linux"
+          cp dist/nein.cyr  "nein-${TAG}.cyr"
+          sha256sum nein-*.tar.gz "nein-${TAG}-x86_64-linux" "nein-${TAG}.cyr" 2>/dev/null > SHA256SUMS
+
+      - name: Extract changelog
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          awk "/^## \\[${TAG}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > /tmp/body.md
+
+      - uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
-          files: build/*
+          name: "nein ${{ github.ref_name }}"
+          body_path: /tmp/body.md
+          prerelease: ${{ startsWith(github.ref_name, '0.') }}
+          files: |
+            nein-*.tar.gz
+            nein-*-linux
+            nein-*.cyr
+            cyrius.lock
+            SHA256SUMS

@@ -4,6 +4,23 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.2] — 2026-06-10
+
+Toolchain bump. Cyrius compiler `5.10.44` → `6.1.24`; `agnosys`
+dependency `1.2.5` → `1.4.1`. No source changes.
+
+### Changed
+
+- `cyrius.cyml`: `cyrius = "6.1.24"`, `agnosys.tag = "1.4.1"`.
+- CI/release toolchain install migrated to the upstream
+  `scripts/install.sh` installer (keyed on the `cyrius.cyml` pin),
+  replacing the pre-6.x hand-rolled tarball extraction that copied
+  `bin/cc5` — renamed to `cycc` in the 6.x toolchain. Matches the
+  patra / bote / agnosys 6.x convention.
+- CI aarch64 cross-build now probes `cycc_aarch64` (was the stale
+  `cc5_aarch64`, which 6.x renamed — the step had been silently
+  skipping).
+
 ## [1.5.1] — 2026-05-11
 
 Toolchain bump. Cyrius compiler `5.10.34` → `5.10.44`; `agnosys`

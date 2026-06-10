@@ -5,7 +5,7 @@ description = "nein — programmatic nftables firewall"
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/nein"
 language = "cyrius"
-cyrius = "5.10.44"
+cyrius = "6.1.24"
 
 [build]
 entry = "src/main.cyr"
@@ -69,5 +69,5 @@ stdlib = [
 [deps.agnosys]
 git = "https://github.com/MacCracken/agnosys.git"
 path = "../agnosys"
-tag = "1.2.5"
+tag = "1.4.1"
 modules = ["dist/agnosys-core.cyr"]

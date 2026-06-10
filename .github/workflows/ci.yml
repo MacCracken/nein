@@ -23,22 +23,24 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Cyrius toolchain
+        # The cyrius.cyml `[package].cyrius` pin is the single source of
+        # truth for the toolchain version — nothing is hardcoded in this
+        # YAML. Hand the pin to the upstream installer, which fetches +
+        # lays out $HOME/.cyrius/{bin,lib}: binaries (cycc / cyrius /
+        # cyrfmt / cyrlint ...) plus the stdlib snapshot. Replaces the
+        # hand-rolled tarball extraction used through 1.5.1 — that path
+        # copied `bin/cc5`, which the 6.x toolchain renamed to `cycc`.
+        # Same installer body as patra / bote / agnosys on 6.x.
         run: |
-          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
+          set -e
+          CYRIUS_VERSION="$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          VERSIONED="$HOME/.cyrius/versions/$CYRIUS_VERSION"
-          mkdir -p "$VERSIONED/bin" "$VERSIONED/lib"
-          cp "$CYRIUS_DIR/bin/"* "$VERSIONED/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$VERSIONED/lib/" 2>/dev/null || true
-          chmod +x "$VERSIONED/bin/"* 2>/dev/null || true
-          ln -sfn "$VERSIONED/bin" "$HOME/.cyrius/bin"
-          ln -sfn "$VERSIONED/lib" "$HOME/.cyrius/lib"
-          echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
+          curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | \
+            CYRIUS_VERSION="$CYRIUS_VERSION" sh
+          echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain
+        run: cyrius --version
 
       - name: Resolve dependencies
         run: cyrius deps
@@ -136,11 +138,12 @@ jobs:
         run: xxd -l 4 build/nein | grep -q "7f45 4c46"
 
       - name: Cross-build aarch64
-        # Best-effort: skip with a warning if cc5_aarch64 wasn't shipped
-        # in the toolchain bundle for this CYRIUS_VERSION.
+        # Best-effort: skip with a warning if cycc_aarch64 wasn't shipped
+        # in the toolchain bundle for this CYRIUS_VERSION. (6.x renamed
+        # the aarch64 backend cc5_aarch64 -> cycc_aarch64.)
         run: |
-          if [ ! -x "$HOME/.cyrius/bin/cc5_aarch64" ]; then
-            echo "::warning::cc5_aarch64 not shipped with Cyrius $CYRIUS_VERSION — skipping aarch64 cross-build"
+          if [ ! -x "$HOME/.cyrius/bin/cycc_aarch64" ]; then
+            echo "::warning::cycc_aarch64 not shipped with Cyrius $CYRIUS_VERSION — skipping aarch64 cross-build"
             exit 0
           fi
           CYRIUS_DCE=1 cyrius build --aarch64 src/main.cyr build/nein-aarch64
@@ -283,7 +286,7 @@ jobs:
           scan "writes to /etc"  '"/etc/'
           scan "writes to /bin"  '"/bin/'
           scan "writes to /sbin" '"/sbin/' src/lib/apply.cyr
-          # Large fn-scope buffers (cc5 emits `var buf[N]` inside a fn as
+          # Large fn-scope buffers (cycc emits `var buf[N]` inside a fn as
           # STATIC DATA, not stack — consecutive calls share the backing
           # memory; any Str/buf borrow is invalidated by the next call).
           # >= 4 KB warns; >= 64 KB fails. Tracked in roadmap v1.3.0
