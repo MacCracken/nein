@@ -52,8 +52,6 @@ stdlib = [
     "assert",
     "tagged",
     "hashmap",
-    "json",
-    "toml",
     "process",
     "bench",
     "fnptr",
