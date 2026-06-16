@@ -8,9 +8,12 @@ enum NeinError {
     ERR_INVALID_RULE = 2;
     ERR_TABLE_NOT_FOUND = 3;
     ERR_CHAIN_NOT_FOUND = 4;
-    ERR_PERMISSION_DENIED = 5;
+    # Prefixed to avoid symbol collision with agnosys-core's SysError
+    # enum (ERR_PERMISSION_DENIED, ERR_IO) — values unchanged so the
+    # consumer-facing nein_err_code() contract holds.
+    NEIN_ERR_PERMISSION_DENIED = 5;
     ERR_PARSE = 6;
-    ERR_IO = 7;
+    NEIN_ERR_IO = 7;
 }
 
 # --- Result helpers ---

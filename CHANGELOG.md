@@ -7,11 +7,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [1.5.3] — 2026-06-15
 
 Toolchain bump. Cyrius compiler `6.1.24` → `6.2.11`; `agnosys`
-dependency `1.4.1` → `1.4.3`. No source changes.
+dependency `1.4.1` → `1.4.3`.
 
 ### Changed
 
 - `cyrius.cyml`: `cyrius = "6.2.11"`, `agnosys.tag = "1.4.3"`.
+- `cyrius.cyml`: dropped `json` / `toml` from `[deps] stdlib` — the
+  6.2.11 stdlib snapshot no longer ships those modules, and nein never
+  used them (config.cyr does its own value parsing). They were dead
+  deps that broke `cyrius deps` on a clean install.
+
+### Fixed
+
+- `error.cyr`: renamed `ERR_PERMISSION_DENIED` → `NEIN_ERR_PERMISSION_DENIED`
+  and `ERR_IO` → `NEIN_ERR_IO` (numeric values unchanged: 5 and 7).
+  agnosys 1.4.3's `SysError` enum now defines `ERR_PERMISSION_DENIED`
+  and `ERR_IO`, colliding with `NeinError`. The duplicate symbols
+  failed the type-check CI gate and were a latent "last definition
+  wins" bug (include order decided the resolved value). The
+  consumer-facing `nein_err_code()` contract is unchanged.
 
 ## [1.5.2] — 2026-06-10
 

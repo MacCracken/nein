@@ -122,7 +122,7 @@ fn _run_nft_stdin(input_buf, input_len) {
             var sk_perm = "nein.apply: nft exit=127 (no executable found)";
             sakshi_error(sk_perm, strlen(sk_perm));
             sakshi_span_exit();
-            return nein_err(ERR_PERMISSION_DENIED);
+            return nein_err(NEIN_ERR_PERMISSION_DENIED);
         }
         if (WEXITSTATUS(status) != 0) {
             var sk_nft = "nein.apply: nft exit nonzero";
@@ -203,7 +203,7 @@ fn _run_nft_capture(argv, nft_path) {
             var sk_p = "nein.apply: nft capture exit=127";
             sakshi_error(sk_p, strlen(sk_p));
             sakshi_span_exit();
-            return nein_err(ERR_PERMISSION_DENIED);
+            return nein_err(NEIN_ERR_PERMISSION_DENIED);
         }
         if (WEXITSTATUS(status) != 0) {
             var sk_n = "nein.apply: nft capture exit nonzero";
