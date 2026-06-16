@@ -4,6 +4,15 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.3] — 2026-06-15
+
+Toolchain bump. Cyrius compiler `6.1.24` → `6.2.11`; `agnosys`
+dependency `1.4.1` → `1.4.3`. No source changes.
+
+### Changed
+
+- `cyrius.cyml`: `cyrius = "6.2.11"`, `agnosys.tag = "1.4.3"`.
+
 ## [1.5.2] — 2026-06-10
 
 Toolchain bump. Cyrius compiler `5.10.44` → `6.1.24`; `agnosys`
