@@ -4,6 +4,15 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.4] — 2026-06-19
+
+**Dropped the vestigial `[deps.agnosys]` (agnosys → agnodrm decomposition).**
+nein never called an agnosys symbol — the netns apply-side is invoked by the
+integrator against the kernel-interface lib directly (`src/lib/netns.cyr`), so the
+dep carried no real surface. Its local `path = "../agnosys"` also broke when the
+repo folder was renamed to `../agnodrm`. Removed the dep entirely; `cyrius deps` +
+build verified clean. No source or logic change.
+
 ## [1.5.3] — 2026-06-15
 
 Toolchain bump. Cyrius compiler `6.1.24` → `6.2.11`; `agnosys`

@@ -64,8 +64,8 @@ stdlib = [
     "sakshi",
 ]
 
-[deps.agnosys]
-git = "https://github.com/MacCracken/agnosys.git"
-path = "../agnosys"
-tag = "1.4.3"
-modules = ["dist/agnosys-core.cyr"]
+# [deps.agnosys] dropped at the agnosys → agnodrm decomposition (2026-06-19).
+# nein never called an agnosys symbol — the netns apply-side is invoked by the
+# integrator against the kernel-interface lib directly (see src/lib/netns.cyr),
+# so nein carried no real agnosys surface. (The local `path = "../agnosys"` also
+# broke when the repo folder was renamed to ../agnodrm.) Dropped.
