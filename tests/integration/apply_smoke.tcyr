@@ -12,7 +12,7 @@
 #   - kernel nf_tables + nf_conntrack modules loaded
 #
 # If any of these assumptions break, individual tests fail with
-# ERR_PERMISSION_DENIED — which IS the test outcome on a non-permissive
+# NEIN_ERR_PERMISSION_DENIED — which IS the test outcome on a non-permissive
 # host (covered by "permission denied path" assertion).
 
 include "src/lib/error.cyr"
@@ -80,11 +80,11 @@ fn test_apply_smoke_inside_netns() {
     var r = apply_firewall(fw);
 
     # On non-permissive hosts (CI default, no root) we expect
-    # ERR_PERMISSION_DENIED. On a permissive host (`unshare -n` as
+    # NEIN_ERR_PERMISSION_DENIED. On a permissive host (`unshare -n` as
     # root), we expect Ok.
     if (is_err_result(r) == 1) {
         var code = payload(r);
-        assert(code == ERR_PERMISSION_DENIED || code == ERR_NFT_FAILED,
+        assert(code == NEIN_ERR_PERMISSION_DENIED || code == ERR_NFT_FAILED,
         "apply failure is permission or nft-failed (got expected error class)");
         return 0;
     }

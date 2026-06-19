@@ -30,16 +30,16 @@ fn test_error() {
     assert(ERR_INVALID_RULE != 0, "ERR_INVALID_RULE nonzero");
     assert(ERR_TABLE_NOT_FOUND != 0, "ERR_TABLE_NOT_FOUND nonzero");
     assert(ERR_CHAIN_NOT_FOUND != 0, "ERR_CHAIN_NOT_FOUND nonzero");
-    assert(ERR_PERMISSION_DENIED != 0, "ERR_PERMISSION_DENIED nonzero");
+    assert(NEIN_ERR_PERMISSION_DENIED != 0, "NEIN_ERR_PERMISSION_DENIED nonzero");
     assert(ERR_PARSE != 0, "ERR_PARSE nonzero");
-    assert(ERR_IO != 0, "ERR_IO nonzero");
+    assert(NEIN_ERR_IO != 0, "NEIN_ERR_IO nonzero");
 
     assert(ERR_NFT_FAILED != ERR_INVALID_RULE, "nft != invalid");
     assert(ERR_INVALID_RULE != ERR_TABLE_NOT_FOUND, "invalid != table");
     assert(ERR_TABLE_NOT_FOUND != ERR_CHAIN_NOT_FOUND, "table != chain");
-    assert(ERR_CHAIN_NOT_FOUND != ERR_PERMISSION_DENIED, "chain != perm");
-    assert(ERR_PERMISSION_DENIED != ERR_PARSE, "perm != parse");
-    assert(ERR_PARSE != ERR_IO, "parse != io");
+    assert(ERR_CHAIN_NOT_FOUND != NEIN_ERR_PERMISSION_DENIED, "chain != perm");
+    assert(NEIN_ERR_PERMISSION_DENIED != ERR_PARSE, "perm != parse");
+    assert(ERR_PARSE != NEIN_ERR_IO, "parse != io");
 
     var e = nein_err(ERR_NFT_FAILED);
     assert(is_err_result(e) == 1, "nein_err returns Err");

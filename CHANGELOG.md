@@ -6,12 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.5.4] — 2026-06-19
 
-**Dropped the vestigial `[deps.agnosys]` (agnosys → agnodrm decomposition).**
-nein never called an agnosys symbol — the netns apply-side is invoked by the
-integrator against the kernel-interface lib directly (`src/lib/netns.cyr`), so the
-dep carried no real surface. Its local `path = "../agnosys"` also broke when the
-repo folder was renamed to `../agnodrm`. Removed the dep entirely; `cyrius deps` +
-build verified clean. No source or logic change.
+**Dropped `[deps.agnosys]` (agnosys → agnodrm decomposition).** nein's *source*
+never called an agnosys symbol — `src/lib/error.cyr` defines its own `NeinError`
+enum (the permission/io members deliberately prefixed `NEIN_ERR_*` to avoid the
+agnosys-core `ERR_PERMISSION_DENIED` / `ERR_IO` collision), and the netns
+apply-side is invoked by the integrator against the kernel-interface lib directly
+(`src/lib/netns.cyr`). The only agnosys touch was the **test suite**, which
+referenced agnosys-core's bare `ERR_PERMISSION_DENIED` / `ERR_IO` for its
+nonzero/distinctness checks — repointed those to nein's own `NEIN_ERR_*` (enum
+values + `nein_err_code()` contract unchanged). Its local `path = "../agnosys"`
+also broke when the repo folder was renamed to `../agnodrm`. Removed the dep +
+its stale `cyrius.lock` (nein now has no git deps). Verified: `cyrius deps` +
+build clean, `tests/nein.tcyr` **601/0**, `apply_smoke` **6/0**.
 
 ## [1.5.3] — 2026-06-15
 
