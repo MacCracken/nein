@@ -162,7 +162,7 @@ fn diff_parse_live(raw_str: Str): i64 {
     var current_table = 0;
     var current_chain = 0;
 
-    var diff_bstack[16];
+    var diff_bstack[128];
     var bs_depth = 0;
     store64(&diff_bstack, BLOCK_NONE);
 

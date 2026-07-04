@@ -112,7 +112,8 @@ fn _classify_block_open(trimmed: cstring): i64 {
 #   inside set/map/flowtable/ct_timeout bodies are NOT rules.
 #
 # Block-stack depth is bounded by nesting in real nft output
-# (table → chain/set/map → optional inner). 16 slots is comfortable.
+# (table → chain/set/map → optional inner). 16 slots is comfortable —
+# and `var buf[N]` is N BYTES, so 16 i64 slots need 128 bytes.
 fn _parse_ruleset(raw_str: Str, tables_vec: i64): i64 {
     var data = str_data(raw_str);
     var len = str_len(raw_str);
@@ -120,7 +121,7 @@ fn _parse_ruleset(raw_str: Str, tables_vec: i64): i64 {
     var line_start = 0;
     var i = 0;
 
-    var block_stack[16];
+    var block_stack[128];
     var bs_depth = 0;
     store64(&block_stack, BLOCK_NONE);
 
