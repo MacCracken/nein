@@ -105,7 +105,7 @@ fn _mcp_build_rule(args: cstring, verdict: cstring): cstring {
 # ================================================================
 
 # nein_status {} -> live firewall summary (table count + rule count).
-fn nein_status_handler(args: cstring, claims: i64): cstring {
+fn _nein_status_handler(args: cstring, claims: i64): cstring {
     var res = status();
     if (is_err_result(res) == 1) {
         return _mcp_err("nein_status: nft query failed (needs root + nft installed)");
@@ -146,17 +146,17 @@ fn _mcp_apply_verdict(args: cstring, verdict: cstring, label: cstring): cstring 
 }
 
 # nein_allow {protocol,port,source?,table?,chain?} -> add accept rule (live).
-fn nein_allow_handler(args: cstring, claims: i64): cstring {
+fn _nein_allow_handler(args: cstring, claims: i64): cstring {
     return _mcp_apply_verdict(args, "accept", "allowed");
 }
 
 # nein_deny {protocol,port,source?,table?,chain?} -> add drop rule (live).
-fn nein_deny_handler(args: cstring, claims: i64): cstring {
+fn _nein_deny_handler(args: cstring, claims: i64): cstring {
     return _mcp_apply_verdict(args, "drop", "denied");
 }
 
 # nein_validate {protocol,port,source?,table?,chain?} -> ok / error (no apply).
-fn nein_validate_handler(args: cstring, claims: i64): cstring {
+fn _nein_validate_handler(args: cstring, claims: i64): cstring {
     var bad = _mcp_check_rule_args(args);
     if (bad != 0) { return _mcp_err(bad); }
     return _mcp_ok("valid");
@@ -164,7 +164,7 @@ fn nein_validate_handler(args: cstring, claims: i64): cstring {
 
 # nein_list {table?,chain?} -> live rules (optionally filtered), as a JSON
 # array in the text content: [{family,table,chain,rule,handle}, ...].
-fn nein_list_handler(args: cstring, claims: i64): cstring {
+fn _nein_list_handler(args: cstring, claims: i64): cstring {
     var res = list_ruleset_with_handles();
     if (is_err_result(res) == 1) {
         return _mcp_err("nein_list: nft query failed (needs root + nft installed)");
@@ -212,7 +212,7 @@ fn nein_list_handler(args: cstring, claims: i64): cstring {
 # live ruleset onto the given target rules (PREVIEW — does not apply).
 # Target is built in table `filter` / chain `input` (family inet). Rules
 # without a verdict default to accept. Returns {"ops":[...],"count":N}.
-fn nein_diff_handler(args: cstring, claims: i64): cstring {
+fn _nein_diff_handler(args: cstring, claims: i64): cstring {
     var arr = jsonx_get_raw(args, "rules");
     if (arr == 0) { return _mcp_err("missing 'rules' array"); }
 
@@ -310,37 +310,37 @@ fn nein_tools_register(dispatcher: i64): i64 {
     "nein_status",
     "get current nftables firewall status (table count, rule count); args {}",
     schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_status", &nein_status_handler);
+    dispatcher_handle(dispatcher, "nein_status", &_nein_status_handler);
 
     registry_register(reg, tool_def_new(
     "nein_allow",
     "add an accept rule to the live firewall; args {protocol(tcp|udp), port, source?, table?, chain?}",
     schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_allow", &nein_allow_handler);
+    dispatcher_handle(dispatcher, "nein_allow", &_nein_allow_handler);
 
     registry_register(reg, tool_def_new(
     "nein_deny",
     "add a drop rule to the live firewall; args {protocol(tcp|udp), port, source?, table?, chain?}",
     schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_deny", &nein_deny_handler);
+    dispatcher_handle(dispatcher, "nein_deny", &_nein_deny_handler);
 
     registry_register(reg, tool_def_new(
     "nein_validate",
     "validate a port-rule request without applying it; args {protocol, port, source?, table?, chain?}",
     schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_validate", &nein_validate_handler);
+    dispatcher_handle(dispatcher, "nein_validate", &_nein_validate_handler);
 
     registry_register(reg, tool_def_new(
     "nein_list",
     "list live firewall rules, optionally filtered; args {table?, chain?}",
     schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_list", &nein_list_handler);
+    dispatcher_handle(dispatcher, "nein_list", &_nein_list_handler);
 
     registry_register(reg, tool_def_new(
     "nein_diff",
     "preview nft ops to converge live onto target rules (no apply); args {rules:[{protocol,port,verdict?}]}",
     schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_diff", &nein_diff_handler);
+    dispatcher_handle(dispatcher, "nein_diff", &_nein_diff_handler);
 
     return 0;
 }

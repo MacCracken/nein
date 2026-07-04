@@ -2119,38 +2119,38 @@ fn test_mcp() {
     assert(str_contains_cstr(str_from(errr), "\"isError\":true") == 1, "err envelope isError=true");
 
     # --- nein_validate: accepts a well-formed request ---
-    var v_ok = nein_validate_handler("{\"protocol\":\"tcp\",\"port\":443}", 0);
+    var v_ok = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":443}", 0);
     assert(str_contains_cstr(str_from(v_ok), "\"isError\":false") == 1, "validate tcp/443 ok");
     assert(str_contains_cstr(str_from(v_ok), "valid") == 1, "validate reports valid");
 
     # --- nein_validate: rejects bad inputs ---
-    var v_np = nein_validate_handler("{\"port\":443}", 0);
+    var v_np = _nein_validate_handler("{\"port\":443}", 0);
     assert(str_contains_cstr(str_from(v_np), "\"isError\":true") == 1, "validate missing protocol errors");
-    var v_bp = nein_validate_handler("{\"protocol\":\"icmp\",\"port\":1}", 0);
+    var v_bp = _nein_validate_handler("{\"protocol\":\"icmp\",\"port\":1}", 0);
     assert(str_contains_cstr(str_from(v_bp), "\"isError\":true") == 1, "validate unsupported proto errors");
-    var v_port = nein_validate_handler("{\"protocol\":\"tcp\",\"port\":70000}", 0);
+    var v_port = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":70000}", 0);
     assert(str_contains_cstr(str_from(v_port), "\"isError\":true") == 1, "validate port>65535 errors");
 
     # --- nein_validate: injection in table name is rejected ---
-    var v_inj = nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22,\"table\":\"a;drop\"}", 0);
+    var v_inj = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22,\"table\":\"a;drop\"}", 0);
     assert(str_contains_cstr(str_from(v_inj), "\"isError\":true") == 1, "validate rejects table injection");
 
     # --- nein_validate: valid source CIDR passes ---
-    var v_src = nein_validate_handler("{\"protocol\":\"udp\",\"port\":53,\"source\":\"10.0.0.0/8\"}", 0);
+    var v_src = _nein_validate_handler("{\"protocol\":\"udp\",\"port\":53,\"source\":\"10.0.0.0/8\"}", 0);
     assert(str_contains_cstr(str_from(v_src), "\"isError\":false") == 1, "validate with source ok");
 
     # --- nein_diff: input validation (deterministic, before the nft query) ---
-    var d_norules = nein_diff_handler("{}", 0);
+    var d_norules = _nein_diff_handler("{}", 0);
     assert(str_contains_cstr(str_from(d_norules), "missing 'rules'") == 1, "diff missing rules errors");
-    var d_empty = nein_diff_handler("{\"rules\":[]}", 0);
+    var d_empty = _nein_diff_handler("{\"rules\":[]}", 0);
     assert(str_contains_cstr(str_from(d_empty), "no rules provided") == 1, "diff empty rules errors");
-    var d_badproto = nein_diff_handler("{\"rules\":[{\"protocol\":\"icmp\",\"port\":1}]}", 0);
+    var d_badproto = _nein_diff_handler("{\"rules\":[{\"protocol\":\"icmp\",\"port\":1}]}", 0);
     assert(str_contains_cstr(str_from(d_badproto), "unsupported protocol") == 1, "diff bad proto errors");
-    var d_badvd = nein_diff_handler("{\"rules\":[{\"protocol\":\"tcp\",\"port\":80,\"verdict\":\"melt\"}]}", 0);
+    var d_badvd = _nein_diff_handler("{\"rules\":[{\"protocol\":\"tcp\",\"port\":80,\"verdict\":\"melt\"}]}", 0);
     assert(str_contains_cstr(str_from(d_badvd), "accept or drop") == 1, "diff bad verdict errors");
     # A well-formed multi-rule array must PARSE cleanly and reach the nft
     # query (no parse-error message) — proving the brace-walk array split works.
-    var d_ok = nein_diff_handler("{\"rules\":[{\"protocol\":\"tcp\",\"port\":22,\"verdict\":\"accept\"},{\"protocol\":\"udp\",\"port\":53}]}", 0);
+    var d_ok = _nein_diff_handler("{\"rules\":[{\"protocol\":\"tcp\",\"port\":22,\"verdict\":\"accept\"},{\"protocol\":\"udp\",\"port\":53}]}", 0);
     assert(str_contains_cstr(str_from(d_ok), "missing") == 0, "diff valid array parses (no missing-field error)");
     assert(str_contains_cstr(str_from(d_ok), "unsupported") == 0, "diff valid array parses (no proto error)");
 
