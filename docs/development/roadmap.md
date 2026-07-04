@@ -1,35 +1,96 @@
 # Roadmap
 
-Last refresh: 2026-05-10 (post v1.5.0 — live-rule diff shipped).
+Last refresh: 2026-07-03 (post v1.5.5 — toolchain 6.3.45 +
+block-stack buffer fix; ecosystem items scheduled as 1.6.x).
 
-Forward-looking only. The release history (v1.0.0 → v1.5.0) lives in
+Forward-looking only. The release history (v1.0.0 → v1.5.5) lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); the rationale for each shipped
 decision is preserved there, not duplicated here. This file tracks
 **what's next**.
 
 ---
 
-## Current state — v1.5.0
+## Current state — v1.5.5
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 18 modules,
 360 public fns, 601 test assertions, 31 benchmarks, 5 per-target fuzz
 drivers, integration test scaffold, single-file `dist/nein.cyr`
-bundle. Type-check end-to-end clean; aarch64 cross-build green;
-zero supply-chain warnings.
+bundle. Type-check end-to-end clean; aarch64 cross-build green; no
+git dependencies since the agnosys drop in 1.5.4.
 
-What's left is consumer-driven: nothing in nein itself is broken or
-incomplete; the next minors land features that a downstream actually
-asks for, not speculative additions.
+The next three minors land the ecosystem-integration surface now that
+its upstream blockers have cleared: bote is Cyrius-ported (3.0.0),
+unblocking the `mcp` module; sigil signing is stable (3.10.0),
+unblocking signed rulesets. Everything beyond 1.6.2 stays
+consumer-driven — features a downstream asks for, not speculative
+additions.
 
 ---
 
-## v1.6.0 candidates (no current driver — defer until requested)
+## v1.6.0 — `mcp` module
 
-These are obvious next steps but nothing downstream is blocking on
-them today. They surface here so the design is recoverable when a
-driver appears.
+Claude MCP tool descriptors so agents can drive nein directly.
+**Unblocked:** [bote](https://github.com/MacCracken/bote) is
+Cyrius-ported (bote 3.0.0). Tools: `nein_render_firewall`,
+`nein_apply_firewall`, `nein_validate_rule`, `nein_inspect_status`,
+`nein_diff`. Wrap bote's MCP surface — own the stack; don't hand-roll
+descriptor/JSON framing.
 
+## v1.6.1 — sigil-signed rulesets + daimon MCP setup
+
+- **Optional rule-set signing via sigil.** Stored ruleset carries an
+  Ed25519 signature; aegis verifies before apply. Defense-in-depth
+  against at-rest plan tampering. **Unblocked:** sigil signing is
+  stable (sigil 3.10.0; the gate was >= 3.0.0).
+- **Setup for daimon firewall MCP tools.** Land the shared surface
+  daimon's tools build on — tool-descriptor wiring plus agent
+  access-control hooks — so 1.6.2 is a clean joint ship, not a
+  big-bang PR.
+
+## v1.6.2 — daimon firewall MCP tools
+
+Ship the daimon firewall MCP tools jointly: one PR pair against
+[daimon](https://github.com/MacCracken/daimon), building on the 1.6.1
+setup.
+
+## v2.0.0 — breaking-API rewrite (language-gated, no date)
+
+The 2.0 bucket is reserved for a breaking API change large enough to
+warrant a major bump — most likely a full rewrite once the Cyrius
+language grows the primitives nein currently works around. The
+trigger is **wider / precise integer types**: today every value is an
+i64 (ports, protocol numbers, priorities, handles, and raw cstring
+pointers all share one width), and every compound value is hand-laid
+with `alloc(N)` + `store64` / `load64` offset arithmetic.
+
+When the language ships fixed-width ints (and, ideally, typed
+structs / records), 2.0 can:
+
+- Express the domain at its real widths — `u16` ports, `u8` protocol /
+  family / verdict discriminants, `i32` chain priority, `u64` handles
+  — instead of untyped i64. This is an API break: every public
+  signature that takes or returns these changes shape, so consumers
+  (stiva / daimon / aegis / sutra) recompile against new types.
+- Replace the manual offset structs (`LiveRule`, rule / match records)
+  with real typed structs. That retires the `store64(lr + 16, …)`
+  pattern outright — the exact footgun behind the v1.5.5 block-stack
+  OOB write — making that whole bug class unrepresentable rather than
+  merely tested against.
+
+No date and no driver: this waits on the language, not a consumer.
+Until the int-type work lands upstream, everything shippable fits
+under the 1.x line.
+
+## Later — driver-gated (no version yet)
+
+- **Live-rule fuzz harness.** `diff_parse_live` is exercised by 16
+  test assertions on hand-curated inputs. A property-based fuzz
+  harness against synthetic `nft list ruleset -a` output would harden
+  it further. **Raised in priority** after the v1.5.5 block-stack OOB
+  fix — fuzzing over nested/adversarial rulesets is exactly what would
+  have caught that class of bug. Strongest near-term hardening
+  candidate.
 - **Diff-level table / chain create + delete.** v1.5.0 ships rule-level
   diff only; full schema reconciliation (add/delete tables, chains,
   sets, maps to converge) needs a downstream that actually reshapes
@@ -40,39 +101,19 @@ driver appears.
   rule precedence depends on order; if a consumer needs deterministic
   ordering, the diff algorithm must compute `insert before handle N`
   ops. Wait for a consumer to surface the requirement.
-- **Live-rule fuzz harness.** `diff_parse_live` is exercised by 16
-  test assertions on hand-curated inputs. A property-based fuzz
-  harness against synthetic `nft list ruleset -a` output would
-  harden it further. Low priority — the smoke surface is already
-  well covered.
-
-## v2.0.0 — Ecosystem integration (blocked on upstream)
-
-- **`mcp` module — Claude MCP tool descriptors.** Blocked on
-  [bote](https://github.com/MacCracken/bote) Cyrius port. Tools:
-  `nein_render_firewall`, `nein_apply_firewall`, `nein_validate_rule`,
-  `nein_inspect_status`, `nein_diff`.
 - **Full TOML struct parsing** (sutra-driven). Blocked on richer
   `toml` stdlib parsing — the v1.0 scoped enum-dispatchers in
   `config.cyr` cover today's needs but not nested struct shapes.
 - **Fleet-playbook schema** (sutra-driven). Defines a serializable
   firewall plan independent of the in-memory builder API. Sequenced
   after the TOML unblock.
-- **Optional rule-set signing** via sigil. Stored ruleset includes
-  Ed25519 signature; aegis verifies before apply. Defense-in-depth
-  for at-rest plan tampering. Wait for sigil's signing surface to
-  stabilize at >= 3.0.0.
-- **daimon firewall MCP tools shipped jointly** (one PR pair against
-  daimon).
 
 ## Blocked on upstream
 
 | Item | Blocked on |
 |------|-----------|
-| `mcp` module | bote Cyrius port |
 | Full TOML struct parsing | richer `toml` stdlib |
 | Sutra playbook schema | sutra design + TOML parsing |
-| Sigil-signed rulesets | sigil >= 3.0.0 signing API |
 
 ## Deferred (with rationale)
 
@@ -92,8 +133,9 @@ driver appears.
 - Don't ship docs-only releases — fold prose currency into the next
   feature minor.
 - Don't add deps speculatively — nein dropped agnostik in v1.1.1 and
-  is now agnosys-core only. New deps need a function nein actually
-  calls.
+  agnosys in v1.5.4; it now carries no git deps. New deps need a
+  function nein actually calls (the 1.6.x line will pull bote / sigil
+  / daimon precisely because the mcp + signing surfaces call them).
 - Don't over-engineer the diff layer. The v1.5.0 byte-equality match
   is correct-by-construction; extend only when a consumer measures
   pain from the verbose delete+add pairs.
