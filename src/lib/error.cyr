@@ -18,6 +18,14 @@ enum NeinError {
     NEIN_ERR_PERMISSION_DENIED = 5;
     NEIN_ERR_PARSE = 6;
     NEIN_ERR_IO = 7;
+    # Signed-ruleset errors (1.6.1). Additive — values 1..7 unchanged, so
+    # the nein_err_code() contract holds.
+    NEIN_ERR_BAD_SIGNATURE = 8;       # ed25519_verify returned 0 over the body
+    NEIN_ERR_SIG_MALFORMED = 9;       # envelope structure / charset invalid
+    NEIN_ERR_SIG_VERSION = 10;        # nein-sig: value != v1
+    NEIN_ERR_SIG_UNSUPPORTED_ALG = 11; # nein-sig-alg: value != ed25519
+    NEIN_ERR_SIG_KEY_MISMATCH = 12;   # header pubkey != caller-supplied pubkey
+    NEIN_ERR_SIG_KEY = 13;            # null / short key material passed to sign
 }
 
 # --- Result helpers ---

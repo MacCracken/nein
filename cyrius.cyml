@@ -51,6 +51,7 @@ stdlib = [
     "args",
     "assert",
     "tagged",
+    "result",
     "hashmap",
     # bayan — 6.1.x consolidated data module (JSON: json_parse / json_get).
     # Opt-in: required by the vendored bote-core bundle (it folds in only
@@ -67,6 +68,23 @@ stdlib = [
     "regex",
     "chrono",
     "sakshi",
+    # Transitive stdlib for the git-dep bote/sigil stack (1.6.1). `cyrius
+    # lib sync` copies this declared subset into ./lib/ so the git deps'
+    # requirements resolve. sigil (Ed25519 signing) needs ct/keccak/random/
+    # slice/thread/thread_local; bote's manifest graph (libro/majra/patra)
+    # pulls sync/ws_server. sigil itself resolves as a git bundle via the
+    # stdlib registry. Order: ct/keccak/random before sigil, thread before
+    # thread_local.
+    "ct",
+    "keccak",
+    "random",
+    "slice",
+    "thread",
+    "thread_local",
+    "sync",
+    "atomic",
+    "ws_server",
+    "sigil",
 ]
 
 # [deps.agnosys] dropped at the agnosys → agnodrm decomposition (2026-06-19).
@@ -75,13 +93,24 @@ stdlib = [
 # so nein carried no real agnosys surface. (The local `path = "../agnosys"` also
 # broke when the repo folder was renamed to ../agnodrm.) Dropped.
 #
-# bote is NOT wired as a [deps.bote] git dep. Consuming the self-contained
-# dist/bote-core.cyr through `cyrius deps` makes it recursively resolve
-# bote's *manifest* git-deps (libro / majra / patra / sigil) instead of the
-# bundle's own .deps sidecar (hashmap + bayan), and those fail: "dep libro
-# requires 'ct' but it is not in the cyrius stdlib" (ct.cyr exists in the
-# 6.3.45 snapshot, so it's a resolver gap, not a missing module) — which
-# hard-blocks build. See src/vendor/README.md. As a documented bridge, the
-# transport-free core bundle is VENDORED at src/vendor/bote-core.cyr (it needs
-# only hashmap + bayan, both opt-in above). Restore the git dep once the
-# bundle-dep resolution is fixed upstream (filed on bote's roadmap).
+# bote MCP core (transport-free bundle) + its manifest graph, consumed as
+# git deps — same recipe as daimon. Build sequence is explicit (Cyrius does
+# not auto-resolve): `cyrius lib sync` copies the declared [deps] stdlib
+# above into ./lib/, THEN `cyrius deps` clones these bundles at their tags
+# and copies each dist/*.cyr into ./lib/. libro + majra are declared before
+# bote (bote's graph references them; Cyrius single-pass). sigil comes from
+# [deps] stdlib above. Retired the vendored src/vendor/bote-core.cyr at 1.6.1.
+[deps.libro]
+git = "https://github.com/MacCracken/libro.git"
+tag = "2.7.10"
+modules = ["dist/libro.cyr"]
+
+[deps.majra]
+git = "https://github.com/MacCracken/majra.git"
+tag = "2.5.0"
+modules = ["dist/majra.cyr"]
+
+[deps.bote]
+git = "https://github.com/MacCracken/bote.git"
+tag = "3.0.0"
+modules = ["dist/bote-core.cyr"]

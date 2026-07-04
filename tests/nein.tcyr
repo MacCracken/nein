@@ -19,7 +19,11 @@ include "src/lib/netns.cyr"
 include "src/lib/apply.cyr"
 include "src/lib/inspect.cyr"
 include "src/lib/diff.cyr"
-include "src/vendor/bote-core.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+include "lib/sigil.cyr"
+include "src/lib/sign.cyr"
+include "lib/bote-core.cyr"
 include "src/lib/mcp.cyr"
 
 # ================================================================
@@ -2108,6 +2112,13 @@ fn test_diff() {
 # integration tier, not here.
 # ================================================================
 
+# Host access-control gate for the gated-register test: permit only
+# nein_validate, deny everything else.
+fn _test_mcp_gate(name: cstring, claims: i64): i64 {
+    if (streq(name, "nein_validate") == 1) { return 1; }
+    return 0;
+}
+
 fn test_mcp() {
     test_group("mcp");
 
@@ -2165,6 +2176,99 @@ fn test_mcp() {
     assert(registry_contains(reg, "nein_list") == 1, "registered nein_list");
     assert(registry_contains(reg, "nein_diff") == 1, "registered nein_diff");
     assert_eq(registry_len(reg), 6, "all 6 nein tools registered");
+
+    # --- annotations + profiles (daimon 1.6.2 gates on these) ---
+    assert(ann_read_only_hint(tool_def_annotations(registry_get(reg, "nein_status"))) == 1,
+    "nein_status annotated read-only");
+    assert(ann_destructive_hint(tool_def_annotations(registry_get(reg, "nein_allow"))) == 1,
+    "nein_allow annotated destructive");
+    assert(tool_def_has_profile(registry_get(reg, "nein_list"), "firewall") == 1,
+    "nein_list in firewall profile");
+    assert(tool_def_has_profile(registry_get(reg, "nein_deny"), "firewall_admin") == 1,
+    "nein_deny in firewall_admin profile");
+    assert(tool_def_has_profile(registry_get(reg, "nein_status"), "firewall_admin") == 0,
+    "nein_status NOT in firewall_admin profile");
+
+    # --- public envelope helpers (daimon reuses these) ---
+    assert(str_contains_cstr(str_from(nein_mcp_ok("hi")), "\"isError\":false") == 1, "nein_mcp_ok envelope");
+    assert(str_contains_cstr(str_from(nein_mcp_err("no")), "\"isError\":true") == 1, "nein_mcp_err envelope");
+
+    # --- gated register: gate permits only nein_validate ---
+    var greg = tool_registry_new();
+    var gd = dispatcher_new(greg);
+    nein_tools_register_gated(gd, &_test_mcp_gate);
+    var gv = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(gv), "\"isError\":false") == 1, "gate permits validate");
+    var gs = _nein_status_handler("{}", 0);
+    assert(str_contains_cstr(str_from(gs), "access denied") == 1, "gate denies status pre-nft");
+    var gd2 = _nein_diff_handler("{\"rules\":[{\"protocol\":\"tcp\",\"port\":22}]}", 0);
+    assert(str_contains_cstr(str_from(gd2), "access denied") == 1, "gate denies diff pre-parse");
+    _nein_gate = 0;   # reset so nothing else is gated
+
+    return 0;
+}
+
+# ================================================================
+# Signed-ruleset tests (1.6.1): Ed25519 sign/verify round-trip,
+# wrong-key + tamper rejection, fail-closed apply. Pure crypto — no nft.
+# ================================================================
+
+fn test_sign() {
+    test_group("sign");
+
+    var sk = alloc(64);
+    var pk = alloc(32);
+    assert(sign_keygen(sk, pk) == 1, "keygen ok");
+
+    # build a small firewall and sign it
+    var fw = firewall_new();
+    var t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(c, allow_tcp(22));
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+
+    var sr = sign_ruleset(fw, sk, "aegis-key");
+    assert(is_err_result(sr) == 0, "sign_ruleset ok");
+    var env = payload(sr);
+    assert(str_contains_cstr(env, "nein-sig: v1") == 1, "envelope version line");
+    assert(str_contains_cstr(env, "-----BEGIN NFT RULESET-----") == 1, "envelope begin delim");
+    assert(str_contains_cstr(env, "tcp dport 22 accept") == 1, "envelope carries body");
+
+    # verify with the correct key -> Ok
+    assert(is_err_result(verify_ruleset(env, pk)) == 0, "verify correct key ok");
+
+    # verify with a different key -> key mismatch
+    var sk2 = alloc(64);
+    var pk2 = alloc(32);
+    sign_keygen(sk2, pk2);
+    var vw = verify_ruleset(env, pk2);
+    assert(is_err_result(vw) == 1, "verify wrong key errs");
+    assert_eq(nein_err_code(vw), NEIN_ERR_SIG_KEY_MISMATCH, "wrong key = key mismatch");
+
+    # parse accessors
+    var pr = parse_signed_ruleset(env);
+    assert(is_err_result(pr) == 0, "parse ok");
+    var rec = payload(pr);
+    assert(streq(signed_keyid(rec), "aegis-key") == 1, "keyid parsed");
+    assert_eq(strlen(signed_pubkey_hex(rec)), 64, "pubkey hex is 64 chars");
+    assert_eq(strlen(signed_sig_hex(rec)), 128, "sig hex is 128 chars");
+
+    # apply with wrong key is fail-closed (never reaches nft)
+    var aw = apply_signed_ruleset(env, pk2);
+    assert(is_err_result(aw) == 1, "apply wrong key fails closed");
+    assert_eq(nein_err_code(aw), NEIN_ERR_SIG_KEY_MISMATCH, "apply blocked pre-nft");
+
+    # tamper a body byte -> bad signature (header pubkey still matches)
+    var at = _sign_find(str_data(env), str_len(env), "tcp dport 22");
+    assert(at >= 0, "found body marker to tamper");
+    store8(str_data(env) + at, 117);   # 't' -> 'u'
+    var vt = verify_ruleset(env, pk);
+    assert(is_err_result(vt) == 1, "tampered body rejected");
+    assert_eq(nein_err_code(vt), NEIN_ERR_BAD_SIGNATURE, "tamper = bad signature");
+
+    # malformed envelope -> Err
+    assert(is_err_result(parse_signed_ruleset(str_from("not an envelope"))) == 1, "malformed errs");
 
     return 0;
 }
@@ -2250,6 +2354,9 @@ fn main() {
 
     # mcp (tool descriptors + validate + registration)
     test_mcp();
+
+    # sign (Ed25519 signed rulesets)
+    test_sign();
 
     return assert_summary();
 }

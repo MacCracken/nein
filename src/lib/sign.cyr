@@ -1,0 +1,267 @@
+# nein sign module — Ed25519-signed rulesets (1.6.1)
+#
+# A stored ruleset carries an Ed25519 signature so a verifier (aegis) can
+# detect at-rest tampering before applying it. The signed message is the
+# rendered nft body bytes ONLY — render once, sign the bytes, apply the
+# same bytes. The header pubkey is a carrier; the trust root is always the
+# caller-supplied key.
+#
+# Envelope (.nftsig), plain UTF-8:
+#   nein-sig: v1
+#   nein-sig-alg: ed25519
+#   nein-sig-keyid: <label>
+#   nein-sig-pubkey: <64 hex>
+#   nein-sig-digest: <64 hex sha256(body)>   (audit aid — not trusted)
+#   nein-sig-sig: <128 hex>
+#   -----BEGIN NFT RULESET-----
+#   <verbatim firewall_render body>
+#   -----END NFT RULESET-----
+#
+# Crypto comes from sigil (Ed25519 + hex + sha256); apply reuses apply.cyr.
+# Key material sizes (sigil): sk = 64 bytes (seed32||pk32), pk = 32, sig = 64.
+
+# ================================================================
+# Envelope constants
+# ================================================================
+
+fn _sign_begin(): cstring { return "-----BEGIN NFT RULESET-----"; }
+fn _sign_end(): cstring { return "-----END NFT RULESET-----"; }
+
+# Build a Str {data, len} record pointing at existing bytes (no copy).
+fn _sign_str(data: i64, len: i64): i64 {
+    var s = alloc(16);
+    store64(s, data);
+    store64(s + 8, len);
+    return s;
+}
+
+# Substring search: index of needle (cstring) in hay[0,hlen), or -1.
+fn _sign_find(hay: i64, hlen: i64, needle: cstring): i64 {
+    var nlen = strlen(needle);
+    if (nlen == 0) { return 0; }
+    if (nlen > hlen) { return 0 - 1; }
+    var i = 0;
+    var last = hlen - nlen;
+    while (i <= last) {
+        var j = 0;
+        var ok = 1;
+        while (j < nlen) {
+            if (load8(hay + i + j) != load8(needle + j)) { ok = 0; break; }
+            j = j + 1;
+        }
+        if (ok == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# ================================================================
+# Signing
+# ================================================================
+
+# Generate a fresh Ed25519 keypair. sk_out: 64 bytes, pk_out: 32 bytes
+# (both caller-allocated). Returns 1 on success, 0 on entropy failure.
+fn sign_keygen(sk_out: i64, pk_out: i64): i64 {
+    return ed25519_generate_keypair(sk_out, pk_out);
+}
+
+# Sign an already-rendered nft body with a 64-byte secret key. `key_id` is
+# an optional operator label (validate_identifier charset), or 0 for
+# "unnamed". Returns Ok(Str envelope) | Err(NEIN_ERR_SIG_KEY).
+fn sign_ruleset_body(body: i64, sk: i64, key_id: cstring): i64 {
+    if (sk == 0) { return nein_err(NEIN_ERR_SIG_KEY); }
+    var kid = key_id;
+    if (kid == 0) { kid = "unnamed"; }
+    if (is_err_result(validate_identifier(kid)) == 1) { return nein_err(NEIN_ERR_SIG_KEY); }
+
+    var body_data = str_data(body);
+    var body_len = str_len(body);
+
+    var sig = alloc(64);
+    ed25519_sign(sk, body_data, body_len, sig);
+    var digest = alloc(32);
+    sha256(body_data, body_len, digest);
+
+    var sig_hex = hex_encode(sig, 64);        # 128 chars
+    var pk_hex = hex_encode(sk + 32, 32);     # pk is the 2nd half of sk
+    var digest_hex = hex_encode(digest, 32);  # 64 chars
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "nein-sig: v1\nnein-sig-alg: ed25519\nnein-sig-keyid: ");
+    str_builder_add_cstr(sb, kid);
+    str_builder_add_cstr(sb, "\nnein-sig-pubkey: ");
+    str_builder_add_cstr(sb, pk_hex);
+    str_builder_add_cstr(sb, "\nnein-sig-digest: ");
+    str_builder_add_cstr(sb, digest_hex);
+    str_builder_add_cstr(sb, "\nnein-sig-sig: ");
+    str_builder_add_cstr(sb, sig_hex);
+    str_builder_add_cstr(sb, "\n");
+    str_builder_add_cstr(sb, _sign_begin());
+    str_builder_add_cstr(sb, "\n");
+    # body verbatim
+    str_builder_add_cstr(sb, _sign_body_cstr(body_data, body_len));
+    str_builder_add_cstr(sb, "\n");
+    str_builder_add_cstr(sb, _sign_end());
+    str_builder_add_cstr(sb, "\n");
+    return Ok(str_builder_build(sb));
+}
+
+# Null-terminate the body bytes so str_builder_add_cstr copies them whole.
+fn _sign_body_cstr(data: i64, len: i64): cstring {
+    var out = alloc(len + 1);
+    memcpy(out, data, len);
+    store8(out + len, 0);
+    return out;
+}
+
+# Validate `fw`, render it, and sign the rendered body. Returns
+# Ok(Str envelope) | Err (firewall_validate's Err, or NEIN_ERR_SIG_KEY).
+fn sign_ruleset(fw: i64, sk: i64, key_id: cstring): i64 {
+    var vr = firewall_validate(fw);
+    if (is_err_result(vr) == 1) { return vr; }
+    return sign_ruleset_body(firewall_render(fw), sk, key_id);
+}
+
+# ================================================================
+# Parsing — SignedRuleset record
+#   [pubkey_hex:8][sig_hex:8][keyid:8][body_data:8][body_len:8] = 40 bytes
+# ================================================================
+
+fn signed_pubkey_hex(sr: i64): cstring { return load64(sr); }
+fn signed_sig_hex(sr: i64): cstring { return load64(sr + 8); }
+fn signed_keyid(sr: i64): cstring { return load64(sr + 16); }
+fn signed_body(sr: i64): i64 { return _sign_str(load64(sr + 24), load64(sr + 32)); }
+
+# Extract a `prefix`-tagged header value (up to end-of-line) from the
+# header region hay[0,limit). Returns an alloc'd NUL-terminated cstr, or 0.
+fn _sign_header(hay: i64, limit: i64, prefix: cstring): cstring {
+    var at = _sign_find(hay, limit, prefix);
+    if (at < 0) { return 0; }
+    var p = at + strlen(prefix);
+    var start = p;
+    while (p < limit) {
+        if (load8(hay + p) == 10) { break; }   # '\n'
+        p = p + 1;
+    }
+    var vlen = p - start;
+    var out = alloc(vlen + 1);
+    memcpy(out, hay + start, vlen);
+    store8(out + vlen, 0);
+    return out;
+}
+
+# Parse an envelope into a SignedRuleset record. Structure/charset only —
+# does NOT verify the signature. Returns Ok(ptr) | Err.
+fn parse_signed_ruleset(signed: i64): i64 {
+    var data = str_data(signed);
+    var len = str_len(signed);
+
+    # Body region is delimited; headers must come before BEGIN.
+    var begin_at = _sign_find(data, len, _sign_begin());
+    var end_at = _sign_find(data, len, _sign_end());
+    if (begin_at < 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (end_at < 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (end_at <= begin_at) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+
+    # Version + algorithm gates (headers only searched in [0, begin_at)).
+    var ver = _sign_header(data, begin_at, "nein-sig: ");
+    if (ver == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (streq(ver, "v1") == 0) { return nein_err(NEIN_ERR_SIG_VERSION); }
+    var alg = _sign_header(data, begin_at, "nein-sig-alg: ");
+    if (alg == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (streq(alg, "ed25519") == 0) { return nein_err(NEIN_ERR_SIG_UNSUPPORTED_ALG); }
+
+    var pubkey_hex = _sign_header(data, begin_at, "nein-sig-pubkey: ");
+    var sig_hex = _sign_header(data, begin_at, "nein-sig-sig: ");
+    var keyid = _sign_header(data, begin_at, "nein-sig-keyid: ");
+    if (pubkey_hex == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (sig_hex == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (keyid == 0) { keyid = "unnamed"; }
+    # Hex length + charset gates.
+    if (strlen(pubkey_hex) != 64) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (strlen(sig_hex) != 128) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (hex_is_valid(pubkey_hex, 64) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (hex_is_valid(sig_hex, 128) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+
+    # Body = bytes between BEGIN's trailing '\n' and the '\n' before END.
+    var body_start = begin_at + strlen(_sign_begin());
+    if (load8(data + body_start) == 10) { body_start = body_start + 1; }
+    var body_stop = end_at;
+    if (body_stop > body_start) {
+        if (load8(data + body_stop - 1) == 10) { body_stop = body_stop - 1; }
+    }
+    var body_len = body_stop - body_start;
+    if (body_len < 0) { body_len = 0; }
+
+    var sr = alloc(40);
+    store64(sr, pubkey_hex);
+    store64(sr + 8, sig_hex);
+    store64(sr + 16, keyid);
+    store64(sr + 24, data + body_start);
+    store64(sr + 32, body_len);
+    return Ok(sr);
+}
+
+# ================================================================
+# Verify
+# ================================================================
+
+# Internal: verify a parsed record against 32 trusted pubkey bytes.
+fn _sign_verify_parsed(sr: i64, pubkey: i64): i64 {
+    # Header pubkey must byte-match the caller-supplied trusted key.
+    var hdr_pk = alloc(32);
+    if (hex_decode_into(signed_pubkey_hex(sr), 64, hdr_pk) == 0) {
+        return nein_err(NEIN_ERR_SIG_MALFORMED);
+    }
+    if (memeq(hdr_pk, pubkey, 32) == 0) { return nein_err(NEIN_ERR_SIG_KEY_MISMATCH); }
+
+    var sig = alloc(64);
+    if (hex_decode_into(signed_sig_hex(sr), 128, sig) == 0) {
+        return nein_err(NEIN_ERR_SIG_MALFORMED);
+    }
+    var body = signed_body(sr);
+    if (ed25519_verify(pubkey, str_data(body), str_len(body), sig) == 1) {
+        return nein_ok();
+    }
+    return nein_err(NEIN_ERR_BAD_SIGNATURE);
+}
+
+# Verify a signed envelope against a trusted 32-byte pubkey.
+# Ok(0) iff it parses AND header pubkey == supplied AND the signature
+# verifies over the body. Fail-closed.
+fn verify_ruleset(signed: i64, pubkey: i64): i64 {
+    var pr = parse_signed_ruleset(signed);
+    if (is_err_result(pr) == 1) { return pr; }
+    return _sign_verify_parsed(payload(pr), pubkey);
+}
+
+# Verify against a 64-char hex pubkey instead of raw bytes.
+fn verify_ruleset_hex(signed: i64, pubkey_hex: cstring): i64 {
+    if (strlen(pubkey_hex) != 64) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (hex_is_valid(pubkey_hex, 64) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    var pk = alloc(32);
+    hex_decode_into(pubkey_hex, 64, pk);
+    return verify_ruleset(signed, pk);
+}
+
+# ================================================================
+# Verified apply — fail-closed: verify, and ONLY then apply the body.
+# apply.cyr never learns about signatures; it applies raw bytes.
+# ================================================================
+
+fn apply_signed_ruleset(signed: i64, pubkey: i64): i64 {
+    var pr = parse_signed_ruleset(signed);
+    if (is_err_result(pr) == 1) { return pr; }
+    var sr = payload(pr);
+    var vr = _sign_verify_parsed(sr, pubkey);
+    if (is_err_result(vr) == 1) { return vr; }   # fail-closed: never apply
+    return apply_ruleset_str(signed_body(sr));
+}
+
+fn apply_signed_ruleset_hex(signed: i64, pubkey_hex: cstring): i64 {
+    if (strlen(pubkey_hex) != 64) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (hex_is_valid(pubkey_hex, 64) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    var pk = alloc(32);
+    hex_decode_into(pubkey_hex, 64, pk);
+    return apply_signed_ruleset(signed, pk);
+}

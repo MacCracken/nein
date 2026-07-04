@@ -40,6 +40,31 @@ fn _mcp_result(msg: cstring, is_err: i64): cstring {
 fn _mcp_ok(msg: cstring): cstring { return _mcp_result(msg, 0); }
 fn _mcp_err(msg: cstring): cstring { return _mcp_result(msg, 1); }
 
+# Public envelope builders — daimon's future firewall tools (1.6.2) reuse
+# these so every consumer emits the identical injection-safe MCP envelope
+# instead of re-deriving (and re-escaping) it. Same output as _mcp_ok/_err.
+fn nein_mcp_ok(msg: cstring): cstring { return _mcp_result(msg, 0); }
+fn nein_mcp_err(msg: cstring): cstring { return _mcp_result(msg, 1); }
+
+# ================================================================
+# Access-control gate (1.6.1 setup for daimon's 1.6.2 tools).
+# The host may register nein's tools WITH a gate fn — fn(name, claims) ->
+# 1 permit / 0 deny — via nein_tools_register_gated. Each handler consults
+# it first. bote's `claims` is a reserved 0 today (2.x ABI); the gate is
+# threaded claims-ready but decides on host policy, not on dereferencing
+# claims. With no gate (plain nein_tools_register) behavior is unchanged.
+# ================================================================
+
+var _nein_gate = 0;
+
+# Returns 0 if the tool is permitted (no gate, or gate says permit), else
+# an "access denied" error envelope the handler returns directly.
+fn _nein_gate_check(name: cstring, claims: i64): cstring {
+    if (_nein_gate == 0) { return 0; }
+    if (fncall2(_nein_gate, name, claims) == 1) { return 0; }
+    return _mcp_err("access denied: tool gated by host policy");
+}
+
 # ================================================================
 # Shared arg validation for the port-rule tools (allow/deny/validate).
 # Returns Ok(0) if {protocol,port,source?,table?,chain?} are all valid,
@@ -106,6 +131,8 @@ fn _mcp_build_rule(args: cstring, verdict: cstring): cstring {
 
 # nein_status {} -> live firewall summary (table count + rule count).
 fn _nein_status_handler(args: cstring, claims: i64): cstring {
+    var g = _nein_gate_check("nein_status", claims);
+    if (g != 0) { return g; }
     var res = status();
     if (is_err_result(res) == 1) {
         return _mcp_err("nein_status: nft query failed (needs root + nft installed)");
@@ -147,16 +174,22 @@ fn _mcp_apply_verdict(args: cstring, verdict: cstring, label: cstring): cstring 
 
 # nein_allow {protocol,port,source?,table?,chain?} -> add accept rule (live).
 fn _nein_allow_handler(args: cstring, claims: i64): cstring {
+    var g = _nein_gate_check("nein_allow", claims);
+    if (g != 0) { return g; }
     return _mcp_apply_verdict(args, "accept", "allowed");
 }
 
 # nein_deny {protocol,port,source?,table?,chain?} -> add drop rule (live).
 fn _nein_deny_handler(args: cstring, claims: i64): cstring {
+    var g = _nein_gate_check("nein_deny", claims);
+    if (g != 0) { return g; }
     return _mcp_apply_verdict(args, "drop", "denied");
 }
 
 # nein_validate {protocol,port,source?,table?,chain?} -> ok / error (no apply).
 fn _nein_validate_handler(args: cstring, claims: i64): cstring {
+    var g = _nein_gate_check("nein_validate", claims);
+    if (g != 0) { return g; }
     var bad = _mcp_check_rule_args(args);
     if (bad != 0) { return _mcp_err(bad); }
     return _mcp_ok("valid");
@@ -165,6 +198,8 @@ fn _nein_validate_handler(args: cstring, claims: i64): cstring {
 # nein_list {table?,chain?} -> live rules (optionally filtered), as a JSON
 # array in the text content: [{family,table,chain,rule,handle}, ...].
 fn _nein_list_handler(args: cstring, claims: i64): cstring {
+    var g = _nein_gate_check("nein_list", claims);
+    if (g != 0) { return g; }
     var res = list_ruleset_with_handles();
     if (is_err_result(res) == 1) {
         return _mcp_err("nein_list: nft query failed (needs root + nft installed)");
@@ -213,6 +248,8 @@ fn _nein_list_handler(args: cstring, claims: i64): cstring {
 # Target is built in table `filter` / chain `input` (family inet). Rules
 # without a verdict default to accept. Returns {"ops":[...],"count":N}.
 fn _nein_diff_handler(args: cstring, claims: i64): cstring {
+    var g = _nein_gate_check("nein_diff", claims);
+    if (g != 0) { return g; }
     var arr = jsonx_get_raw(args, "rules");
     if (arr == 0) { return _mcp_err("missing 'rules' array"); }
 
@@ -301,46 +338,76 @@ fn _nein_diff_handler(args: cstring, claims: i64): cstring {
 
 # ================================================================
 # Registration — mount nein's tools on an existing bote dispatcher.
+# Each descriptor carries bote ToolAnnotations (read-only vs destructive)
+# and profile tags (firewall / firewall_admin) so a host can filter and
+# gate them by side-effect without any dependency on bote's reserved
+# claims. This is what daimon's 1.6.2 firewall tools build on.
 # ================================================================
+
+# Profile vecs: read-only tools -> {firewall}; mutating -> {firewall,
+# firewall_admin} so a host can expose the admin set only to privileged
+# agents (tools/list?profile=...).
+fn _nein_pf_ro(): i64 {
+    var v = vec_new();
+    vec_push(v, "firewall");
+    return v;
+}
+
+fn _nein_pf_admin(): i64 {
+    var v = vec_new();
+    vec_push(v, "firewall");
+    vec_push(v, "firewall_admin");
+    return v;
+}
+
+# Register one tool: descriptor (empty-object schema + annotations +
+# profiles) into the registry, and bind its handler on the dispatcher.
+fn _nein_reg(dispatcher: i64, reg: i64, name: cstring, desc: cstring,
+ann: i64, profiles: i64, handler_fp: i64): i64 {
+    var td = tool_def_new(name, desc, schema_new("object", 0, vec_new()));
+    td = tool_def_with_annotations(td, ann);
+    td = tool_def_with_profiles(td, profiles);
+    registry_register(reg, td);
+    dispatcher_handle(dispatcher, name, handler_fp);
+    return 0;
+}
 
 fn nein_tools_register(dispatcher: i64): i64 {
     var reg = dispatcher_registry(dispatcher);
 
-    registry_register(reg, tool_def_new(
-    "nein_status",
+    _nein_reg(dispatcher, reg, "nein_status",
     "get current nftables firewall status (table count, rule count); args {}",
-    schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_status", &_nein_status_handler);
+    ann_read_only(), _nein_pf_ro(), &_nein_status_handler);
 
-    registry_register(reg, tool_def_new(
-    "nein_allow",
+    _nein_reg(dispatcher, reg, "nein_allow",
     "add an accept rule to the live firewall; args {protocol(tcp|udp), port, source?, table?, chain?}",
-    schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_allow", &_nein_allow_handler);
+    ann_destructive(), _nein_pf_admin(), &_nein_allow_handler);
 
-    registry_register(reg, tool_def_new(
-    "nein_deny",
+    _nein_reg(dispatcher, reg, "nein_deny",
     "add a drop rule to the live firewall; args {protocol(tcp|udp), port, source?, table?, chain?}",
-    schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_deny", &_nein_deny_handler);
+    ann_destructive(), _nein_pf_admin(), &_nein_deny_handler);
 
-    registry_register(reg, tool_def_new(
-    "nein_validate",
+    _nein_reg(dispatcher, reg, "nein_validate",
     "validate a port-rule request without applying it; args {protocol, port, source?, table?, chain?}",
-    schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_validate", &_nein_validate_handler);
+    ann_read_only(), _nein_pf_ro(), &_nein_validate_handler);
 
-    registry_register(reg, tool_def_new(
-    "nein_list",
+    _nein_reg(dispatcher, reg, "nein_list",
     "list live firewall rules, optionally filtered; args {table?, chain?}",
-    schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_list", &_nein_list_handler);
+    ann_read_only(), _nein_pf_ro(), &_nein_list_handler);
 
-    registry_register(reg, tool_def_new(
-    "nein_diff",
+    _nein_reg(dispatcher, reg, "nein_diff",
     "preview nft ops to converge live onto target rules (no apply); args {rules:[{protocol,port,verdict?}]}",
-    schema_new("object", 0, vec_new())));
-    dispatcher_handle(dispatcher, "nein_diff", &_nein_diff_handler);
+    ann_read_only(), _nein_pf_ro(), &_nein_diff_handler);
 
     return 0;
+}
+
+# Like nein_tools_register, but installs a host access-control gate:
+# `gate_fp` = fn(tool_name: cstring, claims: i64) -> 1 permit / 0 deny.
+# Every handler consults it before acting; a denied call returns an
+# "access denied" envelope and never touches the firewall. The host owns
+# the policy (agent identity lives there); nein just provides the seam.
+fn nein_tools_register_gated(dispatcher: i64, gate_fp: i64): i64 {
+    _nein_gate = gate_fp;
+    return nein_tools_register(dispatcher);
 }

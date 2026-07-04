@@ -42,6 +42,13 @@ jobs:
       - name: Verify toolchain
         run: cyrius --version
 
+      - name: Sync stdlib
+        # Cyrius does not auto-resolve stdlib (supply-chain safety): copy the
+        # explicitly-declared `[deps] stdlib` subset from the pinned snapshot
+        # into ./lib/ so the git-dep bundles' requirements resolve. Must run
+        # before `cyrius deps`.
+        run: cyrius lib sync
+
       - name: Resolve dependencies
         run: cyrius deps
 

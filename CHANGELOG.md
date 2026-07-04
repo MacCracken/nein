@@ -4,6 +4,52 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.1] — 2026-07-04
+
+**Signed rulesets + daimon MCP setup, and a real git-dep migration.**
+
+### Added
+
+- **`src/lib/sign.cyr` — Ed25519-signed rulesets.** A stored ruleset can
+  carry an Ed25519 signature (via [sigil](https://github.com/MacCracken/sigil))
+  so a verifier (aegis) detects at-rest tampering before applying. The
+  signed message is the rendered nft **body bytes only** — render once, sign
+  the bytes, apply the same bytes; the envelope's carried pubkey is never the
+  trust root (verification uses the caller-supplied key and rejects a
+  mismatch). API: `sign_ruleset(fw, sk, keyid)` / `sign_ruleset_body`,
+  `verify_ruleset(signed, pubkey)` / `_hex`, `parse_signed_ruleset` +
+  accessors, `apply_signed_ruleset(signed, pubkey)` / `_hex` (fail-closed —
+  verify or never touch nft), `sign_keygen`. `.nftsig` envelope: `nein-sig:`
+  header block (alg, keyid, pubkey, sha256 digest, sig) + verbatim body.
+  6 additive `NEIN_ERR_SIG_*` codes (8–13; values 1–7 unchanged). 18 tests:
+  round-trip, wrong-key mismatch, **tamper → bad-signature**, fail-closed apply.
+- **daimon MCP setup (`src/lib/mcp.cyr`).** All 6 tools now carry bote
+  `ToolAnnotations` (read-only vs destructive) and profile tags
+  (`firewall` / `firewall_admin`) so a host filters/gates them by
+  side-effect. `nein_tools_register_gated(dispatcher, gate_fp)` adds a host
+  access-control seam — `fn(tool_name, claims) -> 1 permit / 0 deny`
+  consulted by every handler (fail-closed, claims-ready but not
+  claims-dependent, since bote's `claims` is a reserved 0 today). Public
+  `nein_mcp_ok` / `nein_mcp_err` envelope helpers for daimon to reuse.
+  10 tests. Public fn surface 361 → 376.
+
+### Changed
+
+- **Dep model: retired vendoring, adopted git deps** (matches daimon). bote
+  MCP core + sigil are now `[deps.*]` git bundles, not vendored files —
+  `src/vendor/` removed. The 1.6.0 "resolver bug" was a wrong diagnosis:
+  Cyrius does **not** auto-resolve deps (supply-chain safety — you declare
+  every module). The build sequence is explicit: `cyrius lib sync` copies the
+  declared `[deps] stdlib` subset from the pinned snapshot into `./lib/`,
+  **then** `cyrius deps` clones the git bundles. Added `[deps.libro]` /
+  `[deps.majra]` / `[deps.bote]` (dist/bote-core.cyr) and the transitive
+  stdlib the graph needs (`ct, keccak, random, slice, thread, thread_local,
+  sync, atomic, ws_server, result`, + `sigil`). CI gained a `cyrius lib sync`
+  step before `cyrius deps`; new `cyrius.lock` pins the git-dep hashes. `vet`
+  is clean (0 untrusted — git-dep bundles are trusted). `sign.cyr` and
+  `mcp.cyr` stay out of `[lib]`, so `dist/nein.cyr` remains self-contained.
+  Suite **624 → 652**.
+
 ## [1.6.0] — 2026-07-03
 
 **MCP surface — nein tools over bote's core.** A new `mcp` module exposes

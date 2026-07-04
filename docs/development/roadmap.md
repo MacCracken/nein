@@ -1,7 +1,7 @@
 # Roadmap
 
-Last refresh: 2026-07-03 (post v1.6.0 — mcp module shipped;
-1.6.1 / 1.6.2 next).
+Last refresh: 2026-07-04 (post v1.6.1 — signed rulesets + daimon MCP
+setup shipped; vendoring retired for the git-dep recipe; 1.6.2 next).
 
 Forward-looking only. The release history (v1.0.0 → v1.6.0) lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); the rationale for each shipped
@@ -10,18 +10,19 @@ decision is preserved there, not duplicated here. This file tracks
 
 ---
 
-## Current state — v1.6.0
+## Current state — v1.6.1
 
 Library is feature-complete for the AGNOS-ecosystem consumers
-identified at port time (stiva / daimon / aegis / sutra). 19 modules
-(mcp added at 1.6.0), 624 test assertions, 31 benchmarks, 5 per-target
-fuzz drivers, integration test scaffold, single-file `dist/nein.cyr`
-bundle (bote-free — mcp is out of `[lib]`). Type-check end-to-end
-clean; aarch64 cross-build green.
+identified at port time (stiva / daimon / aegis / sutra). 20 modules
+(mcp at 1.6.0, sign at 1.6.1), 652 test assertions, 31 benchmarks,
+5 per-target fuzz drivers, integration test scaffold, single-file
+`dist/nein.cyr` bundle (still bote/sigil-free — mcp + sign are out of
+`[lib]`). Type-check end-to-end clean; aarch64 cross-build green. bote
++ sigil consumed as git deps (daimon recipe) via `cyrius lib sync` +
+`cyrius deps`; no vendored bundles.
 
-The next two minors continue the ecosystem-integration surface: sigil
-signing is stable (3.10.0), unblocking signed rulesets; the daimon MCP
-tools build on 1.6.0's `mcp` module. Everything beyond 1.6.2 stays
+The remaining minor, 1.6.2, ships the daimon firewall MCP tools jointly
+on 1.6.1's annotation/profile/gate setup. Everything beyond 1.6.2 stays
 consumer-driven — features a downstream asks for, not speculative
 additions.
 
@@ -47,16 +48,22 @@ fails and blocks the build (filed on bote's roadmap; see
 renamed `ERR_PARSE` → `NEIN_ERR_PARSE` (value 6 unchanged) to dodge a
 collision with bote's `BoteErrTag::ERR_PARSE`.
 
-## v1.6.1 — sigil-signed rulesets + daimon MCP setup
+## v1.6.1 — sigil-signed rulesets + daimon MCP setup ✅ shipped
 
-- **Optional rule-set signing via sigil.** Stored ruleset carries an
-  Ed25519 signature; aegis verifies before apply. Defense-in-depth
-  against at-rest plan tampering. **Unblocked:** sigil signing is
-  stable (sigil 3.10.0; the gate was >= 3.0.0).
-- **Setup for daimon firewall MCP tools.** Land the shared surface
-  daimon's tools build on — tool-descriptor wiring plus agent
-  access-control hooks — so 1.6.2 is a clean joint ship, not a
-  big-bang PR.
+- **Rule-set signing via sigil** — `src/lib/sign.cyr`, Ed25519 over the
+  rendered nft body, fail-closed `apply_signed_ruleset`. aegis holds the
+  trusted pubkey and verifies before apply (at-rest tamper defense).
+- **daimon MCP setup** — bote `ToolAnnotations` (read-only vs
+  destructive) + `firewall` / `firewall_admin` profiles on all 6 tools,
+  a `nein_tools_register_gated(dispatcher, gate_fp)` access-control seam,
+  and public `nein_mcp_ok` / `nein_mcp_err` helpers for daimon to reuse.
+  The gate is claims-ready but decides on host policy (bote `claims` is a
+  reserved 0 today).
+- **Dep migration** — retired the 1.6.0 vendoring; bote-core + sigil are
+  now git deps (daimon recipe). The 1.6.0 "resolver bug" was an
+  incomplete `[deps] stdlib`: Cyrius doesn't auto-resolve (supply-chain
+  safety), so `cyrius lib sync` materializes the declared stdlib before
+  `cyrius deps` pulls the bundles.
 
 ## v1.6.2 — daimon firewall MCP tools
 

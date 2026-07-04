@@ -25,9 +25,15 @@ include "src/lib/apply.cyr"
 include "src/lib/inspect.cyr"
 include "src/lib/diff.cyr"
 
-# MCP surface — vendored bote-core bundle (see src/vendor/README.md) must
-# precede mcp.cyr for single-pass forward-reference resolution.
-include "src/vendor/bote-core.cyr"
+# Crypto + MCP bundles — copied into lib/ by `cyrius lib sync` (stdlib)
+# and `cyrius deps` (git bundles). sigil calls thread_local_* but doesn't
+# fold it in, so thread(+_local) precede it; bote-core precedes mcp.cyr
+# (single-pass forward-reference resolution).
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+include "lib/sigil.cyr"
+include "src/lib/sign.cyr"
+include "lib/bote-core.cyr"
 include "src/lib/mcp.cyr"
 
 fn main() {
