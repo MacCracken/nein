@@ -4,6 +4,37 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.5] — 2026-07-03
+
+Toolchain bump and a block-stack buffer fix in the ruleset parsers.
+nein carries no git dependencies since the agnosys drop in 1.5.4, so
+the `[deps] stdlib` snapshot rides the compiler pin — updating the
+pin updates the dependency surface.
+
+### Security
+
+- **Out-of-bounds stack write in the live-ruleset parsers.**
+  `diff_parse_live` (`src/lib/diff.cyr`) and `_parse_ruleset`
+  (`src/lib/inspect.cyr`) declared their block-nesting stack as
+  `var …_stack[16]` — 16 **bytes**, i.e. 2 i64 slots — but index it
+  as `&stack + bs_depth * 8` with `bs_depth` guarded `< 15`, i.e. a
+  16-**slot** (128-byte) stack. Any nested ruleset (`table → chain`,
+  depth ≥ 2 — the shape of all real `nft list ruleset` output) wrote
+  a `BLOCK_*` enum value one slot past the buffer, over an adjacent
+  stack variable. In `diff_parse_live` the clobbered slot was the
+  `current_chain` cstring pointer, so every parsed rule got a bogus
+  chain pointer (`BLOCK_CHAIN` = 2) and a later `streq` dereferenced
+  address `2` → SIGSEGV. In `_parse_ruleset` the corruption was
+  silent (only an integer rule count is returned). Impact was
+  stack-layout-dependent — latent since the diff module shipped
+  (1.5.0). Fix: size both buffers to `[128]` (16 i64 slots).
+
+### Changed
+
+- `cyrius.cyml`: `cyrius = "6.2.11"` → `cyrius = "6.3.45"` (latest).
+- `dist/nein.cyr`: regenerated with `cyrius distlib` against the
+  6.3.45 stdlib snapshot.
+
 ## [1.5.4] — 2026-06-19
 
 **Dropped `[deps.agnosys]` (agnosys → agnodrm decomposition).** nein's *source*

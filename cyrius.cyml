@@ -5,7 +5,7 @@ description = "nein — programmatic nftables firewall"
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/nein"
 language = "cyrius"
-cyrius = "6.2.11"
+cyrius = "6.3.45"
 
 [build]
 entry = "src/main.cyr"
