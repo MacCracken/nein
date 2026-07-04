@@ -360,54 +360,118 @@ fn _nein_pf_admin(): i64 {
     return v;
 }
 
-# Register one tool: descriptor (empty-object schema + annotations +
-# profiles) into the registry, and bind its handler on the dispatcher.
-fn _nein_reg(dispatcher: i64, reg: i64, name: cstring, desc: cstring,
-ann: i64, profiles: i64, handler_fp: i64): i64 {
-    var td = tool_def_new(name, desc, schema_new("object", 0, vec_new()));
+# --- Tool table — single source of truth for the 6 tools ----------------
+# Both integration paths (bote-dispatcher registration below, and the
+# daimon-friendly dispatch adapter) read from these accessors, so names /
+# descriptions / read-only classification never drift between them. A host
+# that dispatches by name (daimon's model) uses nein_tool_name/desc/
+# read_only/admin to register descriptors and nein_mcp_dispatch to route.
+
+fn nein_tool_count(): i64 { return 6; }
+
+fn nein_tool_name(i: i64): cstring {
+    if (i == 0) { return "nein_status"; }
+    if (i == 1) { return "nein_allow"; }
+    if (i == 2) { return "nein_deny"; }
+    if (i == 3) { return "nein_validate"; }
+    if (i == 4) { return "nein_list"; }
+    if (i == 5) { return "nein_diff"; }
+    return "";
+}
+
+fn nein_tool_desc(i: i64): cstring {
+    if (i == 0) { return "get current nftables firewall status (table count, rule count); args {}"; }
+    if (i == 1) { return "add an accept rule to the live firewall; args {protocol, port, source?, table?, chain?}"; }
+    if (i == 2) { return "add a drop rule to the live firewall; args {protocol, port, source?, table?, chain?}"; }
+    if (i == 3) { return "validate a port-rule request (no apply); args {protocol, port, source?, table?, chain?}"; }
+    if (i == 4) { return "list live firewall rules, optionally filtered; args {table?, chain?}"; }
+    if (i == 5) { return "preview nft ops to reach target rules (no apply); args {rules:[{protocol,port,verdict}]}"; }
+    return "";
+}
+
+# 1 = read-only (no side effects); 0 = mutating (live apply). Hosts should
+# gate the mutating tools to privileged agents.
+fn nein_tool_read_only(i: i64): i64 {
+    if (i == 1) { return 0; }   # nein_allow
+    if (i == 2) { return 0; }   # nein_deny
+    return 1;                    # status / validate / list / diff
+}
+
+# 1 = firewall_admin profile (the mutating tools); 0 = firewall only.
+fn nein_tool_admin(i: i64): i64 {
+    if (nein_tool_read_only(i) == 0) { return 1; }
+    return 0;
+}
+
+fn _nein_handler(i: i64): i64 {
+    if (i == 0) { return &_nein_status_handler; }
+    if (i == 1) { return &_nein_allow_handler; }
+    if (i == 2) { return &_nein_deny_handler; }
+    if (i == 3) { return &_nein_validate_handler; }
+    if (i == 4) { return &_nein_list_handler; }
+    if (i == 5) { return &_nein_diff_handler; }
+    return 0;
+}
+
+# --- Path A: bote-dispatcher registration -------------------------------
+# For hosts that run a bote Dispatcher. Register descriptor (schema +
+# annotations + profiles) and bind the handler, from the tool table.
+fn _nein_reg(dispatcher: i64, reg: i64, i: i64): i64 {
+    var ann = ann_read_only();
+    var pf = _nein_pf_ro();
+    if (nein_tool_read_only(i) == 0) {
+        ann = ann_destructive();
+        pf = _nein_pf_admin();
+    }
+    var td = tool_def_new(nein_tool_name(i), nein_tool_desc(i), schema_new("object", 0, vec_new()));
     td = tool_def_with_annotations(td, ann);
-    td = tool_def_with_profiles(td, profiles);
+    td = tool_def_with_profiles(td, pf);
     registry_register(reg, td);
-    dispatcher_handle(dispatcher, name, handler_fp);
+    dispatcher_handle(dispatcher, nein_tool_name(i), _nein_handler(i));
     return 0;
 }
 
 fn nein_tools_register(dispatcher: i64): i64 {
     var reg = dispatcher_registry(dispatcher);
-
-    _nein_reg(dispatcher, reg, "nein_status",
-    "get current nftables firewall status (table count, rule count); args {}",
-    ann_read_only(), _nein_pf_ro(), &_nein_status_handler);
-
-    _nein_reg(dispatcher, reg, "nein_allow",
-    "add an accept rule to the live firewall; args {protocol(tcp|udp), port, source?, table?, chain?}",
-    ann_destructive(), _nein_pf_admin(), &_nein_allow_handler);
-
-    _nein_reg(dispatcher, reg, "nein_deny",
-    "add a drop rule to the live firewall; args {protocol(tcp|udp), port, source?, table?, chain?}",
-    ann_destructive(), _nein_pf_admin(), &_nein_deny_handler);
-
-    _nein_reg(dispatcher, reg, "nein_validate",
-    "validate a port-rule request without applying it; args {protocol, port, source?, table?, chain?}",
-    ann_read_only(), _nein_pf_ro(), &_nein_validate_handler);
-
-    _nein_reg(dispatcher, reg, "nein_list",
-    "list live firewall rules, optionally filtered; args {table?, chain?}",
-    ann_read_only(), _nein_pf_ro(), &_nein_list_handler);
-
-    _nein_reg(dispatcher, reg, "nein_diff",
-    "preview nft ops to converge live onto target rules (no apply); args {rules:[{protocol,port,verdict?}]}",
-    ann_read_only(), _nein_pf_ro(), &_nein_diff_handler);
-
+    var i = 0;
+    while (i < nein_tool_count()) {
+        _nein_reg(dispatcher, reg, i);
+        i = i + 1;
+    }
     return 0;
 }
 
 # Like nein_tools_register, but installs a host access-control gate:
 # `gate_fp` = fn(tool_name: cstring, claims: i64) -> 1 permit / 0 deny.
 # Every handler consults it before acting; a denied call returns an
-# "access denied" envelope and never touches the firewall. The host owns
-# the policy (agent identity lives there); nein just provides the seam.
+# "access denied" envelope and never touches the firewall.
 fn nein_tools_register_gated(dispatcher: i64, gate_fp: i64): i64 {
     _nein_gate = gate_fp;
     return nein_tools_register(dispatcher);
+}
+
+# --- Path B: daimon-friendly dispatch adapter ---------------------------
+# For hosts that route MCP calls by name (daimon's mcp_dispatch_builtin
+# model) rather than standing up a bote Dispatcher. The host registers
+# descriptors from the tool table and forwards every "nein_*" call to
+# nein_mcp_dispatch. Install the gate first with nein_mcp_set_gate.
+
+# Install the access-control gate for the dispatch-adapter path (same
+# gate the gated register uses, minus the dispatcher).
+fn nein_mcp_set_gate(gate_fp: i64): i64 {
+    _nein_gate = gate_fp;
+    return 0;
+}
+
+# Route a tool call by name -> the handler's MCP result envelope cstr, or
+# an "unknown tool" error envelope. Handlers consult the installed gate.
+fn nein_mcp_dispatch(name: cstring, args: cstring, claims: i64): cstring {
+    var i = 0;
+    while (i < nein_tool_count()) {
+        if (streq(name, nein_tool_name(i)) == 1) {
+            return fncall2(_nein_handler(i), args, claims);
+        }
+        i = i + 1;
+    }
+    return _mcp_err("unknown nein tool");
 }

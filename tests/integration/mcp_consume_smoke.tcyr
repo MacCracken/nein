@@ -1,0 +1,52 @@
+# Bundle-consumability guard (1.6.2): a host (daimon) supplies bote +
+# sigil + stdlib, then consumes nein's opt-in dist/nein-mcp.cyr and drives
+# the firewall tools through the dispatch adapter. If the [lib.mcp] bundle
+# drifts (missing a module, or nein-mcp.cyr not regenerated) this fails at
+# CI. Pure/no-nft: only nein_validate + the tool table + unknown-tool path
+# are exercised (the live tools need root+nft, covered by apply_smoke).
+
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+include "lib/sigil.cyr"
+include "lib/bote-core.cyr"
+include "dist/nein-mcp.cyr"
+
+fn test_consume() {
+    test_group("mcp_consume");
+
+    # tool table is present in the bundle
+    assert_eq(nein_tool_count(), 6, "bundle exposes 6-tool table");
+    assert(streq(nein_tool_name(0), "nein_status") == 1, "bundle tool 0 = nein_status");
+    assert_eq(nein_tool_read_only(1), 0, "bundle: nein_allow mutating");
+
+    # dispatch adapter routes a pure tool through the bundle
+    var ok = nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":443}", 0);
+    assert(str_contains_cstr(str_from(ok), "\"isError\":false") == 1, "bundle dispatch validate ok");
+    assert(str_contains_cstr(str_from(ok), "valid") == 1, "bundle dispatch validate -> valid");
+
+    var bad = nein_mcp_dispatch("nein_validate", "{\"port\":443}", 0);
+    assert(str_contains_cstr(str_from(bad), "\"isError\":true") == 1, "bundle dispatch bad input errs");
+
+    var unk = nein_mcp_dispatch("bogus_tool", "{}", 0);
+    assert(str_contains_cstr(str_from(unk), "unknown nein tool") == 1, "bundle dispatch unknown errs");
+
+    # signing surface is in the bundle too (sign a body, verify round-trip)
+    var sk = alloc(64);
+    var pk = alloc(32);
+    assert(sign_keygen(sk, pk) == 1, "bundle sign_keygen ok");
+    var body = str_from("table inet filter { }");
+    var sr = sign_ruleset_body(body, sk, "smoke");
+    assert(is_err_result(sr) == 0, "bundle sign_ruleset_body ok");
+    assert(is_err_result(verify_ruleset(payload(sr), pk)) == 0, "bundle verify round-trips");
+
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    test_consume();
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

@@ -246,12 +246,15 @@ jobs:
         # change. Pattern lifted from agnosys / agnostik 1.2.x.
         run: |
           cyrius distlib
-          if ! git diff --quiet dist/nein.cyr 2>/dev/null; then
-            echo "ERROR: dist/nein.cyr is stale. Run 'cyrius distlib' and commit."
-            git --no-pager diff dist/nein.cyr | head -40
-            exit 1
-          fi
-          echo "dist bundle matches src/"
+          cyrius distlib mcp
+          for b in dist/nein.cyr dist/nein-mcp.cyr; do
+            if ! git diff --quiet "$b" 2>/dev/null; then
+              echo "ERROR: $b is stale. Run 'cyrius distlib' (+ 'cyrius distlib mcp') and commit."
+              git --no-pager diff "$b" | head -40
+              exit 1
+            fi
+          done
+          echo "dist bundles (default + mcp) match src/"
 
   security:
     name: Security Scan

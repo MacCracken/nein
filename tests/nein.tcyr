@@ -2205,6 +2205,30 @@ fn test_mcp() {
     assert(str_contains_cstr(str_from(gd2), "access denied") == 1, "gate denies diff pre-parse");
     _nein_gate = 0;   # reset so nothing else is gated
 
+    # --- 1.6.2 dispatch adapter: tool table + dispatch-by-name ---
+    assert_eq(nein_tool_count(), 6, "tool table has 6 tools");
+    assert(streq(nein_tool_name(0), "nein_status") == 1, "tool 0 is nein_status");
+    assert(streq(nein_tool_name(3), "nein_validate") == 1, "tool 3 is nein_validate");
+    assert_eq(nein_tool_read_only(0), 1, "nein_status is read-only");
+    assert_eq(nein_tool_read_only(1), 0, "nein_allow is mutating");
+    assert_eq(nein_tool_admin(1), 1, "nein_allow is admin-profile");
+    assert_eq(nein_tool_admin(0), 0, "nein_status is not admin-profile");
+
+    var dv = nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(dv), "\"isError\":false") == 1, "dispatch nein_validate ok");
+    var dvbad = nein_mcp_dispatch("nein_validate", "{\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(dvbad), "\"isError\":true") == 1, "dispatch validate bad input errs");
+    var dunk = nein_mcp_dispatch("bogus_tool", "{}", 0);
+    assert(str_contains_cstr(str_from(dunk), "unknown nein tool") == 1, "dispatch unknown tool errs");
+
+    # gate via the adapter path (nein_mcp_set_gate) — permit only validate
+    nein_mcp_set_gate(&_test_mcp_gate);
+    var gdv = nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(gdv), "\"isError\":false") == 1, "adapter gate permits validate");
+    var gds = nein_mcp_dispatch("nein_status", "{}", 0);
+    assert(str_contains_cstr(str_from(gds), "access denied") == 1, "adapter gate denies status");
+    _nein_gate = 0;
+
     return 0;
 }
 

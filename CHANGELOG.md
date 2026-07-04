@@ -4,6 +4,38 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.2] — 2026-07-04
+
+**nein's half of the daimon firewall-MCP joint ship:** a consumable bundle
++ a host-friendly dispatch adapter so a host (daimon) can mount nein's
+firewall tools. The daimon-side PR (`[deps.nein]` + registration + gate
+wiring to daimon's agent identity) lands separately in daimon's repo.
+
+### Added
+
+- **`[lib.mcp]` bundle profile → `dist/nein-mcp.cyr`.** `cyrius distlib mcp`
+  emits nein's core + `sign` + `mcp` as one bundle for hosts that want the
+  firewall + signing surface. It leaves bote (`jsonx` / dispatcher /
+  annotations) and sigil (`ed25519` / `hex` / `sha256`) symbols unresolved —
+  the consumer supplies them (per `dist/nein-mcp.deps`: `thread`,
+  `thread_local`, `sigil`, `bote-core`), exactly as bote's `[lib.core]`
+  leaves its stdlib. The default `dist/nein.cyr` stays bote/sigil-free.
+- **Daimon-friendly dispatch adapter (`src/lib/mcp.cyr`).** For hosts that
+  route MCP calls by name (daimon's `mcp_dispatch_builtin` model) instead of
+  a bote `Dispatcher`: `nein_mcp_dispatch(name, args, claims)` routes to the
+  right handler (or an "unknown tool" envelope); `nein_mcp_set_gate(gate_fp)`
+  installs the access-control gate without a dispatcher. A single-source
+  tool table — `nein_tool_count` / `nein_tool_name` / `nein_tool_desc` /
+  `nein_tool_read_only` / `nein_tool_admin` — drives both this path and the
+  bote-`Dispatcher` `nein_tools_register` path, so names/descriptions/
+  classification never drift. Public fn surface 376 → 383.
+- **Integration guide** ([`docs/guides/mcp-host-integration.md`](docs/guides/mcp-host-integration.md))
+  and a **bundle-consumability guard** (`tests/integration/mcp_consume_smoke.tcyr`,
+  10 assertions) that supplies bote+sigil, consumes `dist/nein-mcp.cyr`, and
+  drives the tools + signing through it — failing CI if the `[lib.mcp]`
+  bundle drifts. CI dist-staleness now checks both `dist/nein.cyr` and
+  `dist/nein-mcp.cyr`. Unit suite **652 → 664**.
+
 ## [1.6.1] — 2026-07-04
 
 **Signed rulesets + daimon MCP setup, and a real git-dep migration.**

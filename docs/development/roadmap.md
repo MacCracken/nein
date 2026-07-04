@@ -1,30 +1,30 @@
 # Roadmap
 
-Last refresh: 2026-07-04 (post v1.6.1 — signed rulesets + daimon MCP
-setup shipped; vendoring retired for the git-dep recipe; 1.6.2 next).
+Last refresh: 2026-07-04 (post v1.6.2 — nein's half of the daimon
+firewall-MCP joint ship: [lib.mcp] bundle + dispatch adapter. The
+paired daimon-side PR is the only 1.6.x item left).
 
-Forward-looking only. The release history (v1.0.0 → v1.6.0) lives in
+Forward-looking only. The release history (v1.0.0 → v1.6.2) lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); the rationale for each shipped
 decision is preserved there, not duplicated here. This file tracks
 **what's next**.
 
 ---
 
-## Current state — v1.6.1
+## Current state — v1.6.2
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 20 modules
-(mcp at 1.6.0, sign at 1.6.1), 652 test assertions, 31 benchmarks,
-5 per-target fuzz drivers, integration test scaffold, single-file
-`dist/nein.cyr` bundle (still bote/sigil-free — mcp + sign are out of
-`[lib]`). Type-check end-to-end clean; aarch64 cross-build green. bote
-+ sigil consumed as git deps (daimon recipe) via `cyrius lib sync` +
-`cyrius deps`; no vendored bundles.
+(mcp at 1.6.0, sign at 1.6.1), 664 test assertions + a bundle-consume
+integration guard, 31 benchmarks, 5 per-target fuzz drivers, single-file
+`dist/nein.cyr` bundle (still bote/sigil-free) plus the opt-in
+`dist/nein-mcp.cyr` (`[lib.mcp]`) for MCP hosts. Type-check end-to-end
+clean; aarch64 cross-build green. bote + sigil consumed as git deps
+(daimon recipe) via `cyrius lib sync` + `cyrius deps`; no vendored bundles.
 
-The remaining minor, 1.6.2, ships the daimon firewall MCP tools jointly
-on 1.6.1's annotation/profile/gate setup. Everything beyond 1.6.2 stays
-consumer-driven — features a downstream asks for, not speculative
-additions.
+nein's side of the 1.6.x ecosystem work is done. The only open 1.6.x
+item is the **paired daimon-side PR** (below). Everything beyond stays
+consumer-driven — features a downstream asks for, not speculative additions.
 
 ---
 
@@ -67,9 +67,23 @@ collision with bote's `BoteErrTag::ERR_PARSE`.
 
 ## v1.6.2 — daimon firewall MCP tools
 
-Ship the daimon firewall MCP tools jointly: one PR pair against
-[daimon](https://github.com/MacCracken/daimon), building on the 1.6.1
-setup.
+**nein side ✅ shipped.** The `[lib.mcp]` bundle (`dist/nein-mcp.cyr` —
+core + sign + mcp, bote/sigil-free for the consumer to supply) plus a
+daimon-friendly dispatch adapter: `nein_mcp_dispatch(name, args, claims)`
++ `nein_mcp_set_gate` + the single-source tool table
+(`nein_tool_name/desc/read_only/admin`). Integration guide at
+[`docs/guides/mcp-host-integration.md`](../guides/mcp-host-integration.md);
+a bundle-consumability guard runs in CI.
+
+**daimon side — the paired PR (open, in daimon's repo).** daimon adds
+`[deps.nein] modules = ["dist/nein-mcp.cyr"]`, registers nein's six tools
+in its MCP host from the tool table, routes `nein_*` calls to
+`nein_mcp_dispatch`, and wires the gate to its agent identity
+(`agent.cyr` / `agent_id`) — exposing read-only firewall tools broadly and
+the `firewall_admin` (mutating) set only to privileged agents. Because
+daimon dispatches builtins by name (not via a bote `Dispatcher`), it uses
+the adapter path, not `nein_tools_register`. This is the only open 1.6.x
+item and belongs to daimon's release cadence.
 
 ## v2.0.0 — breaking-API rewrite (language-gated, no date)
 

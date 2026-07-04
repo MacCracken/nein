@@ -39,6 +39,38 @@ modules = [
     "src/lib/diff.cyr",
 ]
 
+# `[lib.mcp]` — opt-in bundle for hosts that want nein's MCP + signing
+# surface (daimon, 1.6.2). `cyrius distlib mcp` → dist/nein-mcp.cyr adds
+# sign.cyr + mcp.cyr on top of the full [lib] core. The bundle carries
+# unresolved bote (jsonx / dispatcher / annotations) and sigil (ed25519 /
+# hex / sha256) symbols by design — the consumer (daimon) supplies both,
+# exactly as bote's [lib.core] leaves its stdlib to the consumer. The
+# default dist/nein.cyr stays bote/sigil-free; consumers opt into this one.
+[lib.mcp]
+modules = [
+    "src/lib/error.cyr",
+    "src/lib/validate.cyr",
+    "src/lib/rule.cyr",
+    "src/lib/set.cyr",
+    "src/lib/nat.cyr",
+    "src/lib/chain.cyr",
+    "src/lib/table.cyr",
+    "src/lib/firewall.cyr",
+    "src/lib/builder.cyr",
+    "src/lib/policy.cyr",
+    "src/lib/geoip.cyr",
+    "src/lib/mesh.cyr",
+    "src/lib/bridge.cyr",
+    "src/lib/engine.cyr",
+    "src/lib/config.cyr",
+    "src/lib/netns.cyr",
+    "src/lib/apply.cyr",
+    "src/lib/inspect.cyr",
+    "src/lib/diff.cyr",
+    "src/lib/sign.cyr",
+    "src/lib/mcp.cyr",
+]
+
 [deps]
 stdlib = [
     "string",
