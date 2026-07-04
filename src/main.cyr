@@ -25,6 +25,11 @@ include "src/lib/apply.cyr"
 include "src/lib/inspect.cyr"
 include "src/lib/diff.cyr"
 
+# MCP surface — vendored bote-core bundle (see src/vendor/README.md) must
+# precede mcp.cyr for single-pass forward-reference resolution.
+include "src/vendor/bote-core.cyr"
+include "src/lib/mcp.cyr"
+
 fn main() {
     alloc_init();
     println("nein ready");

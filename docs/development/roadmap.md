@@ -1,41 +1,51 @@
 # Roadmap
 
-Last refresh: 2026-07-03 (post v1.5.5 — toolchain 6.3.45 +
-block-stack buffer fix; ecosystem items scheduled as 1.6.x).
+Last refresh: 2026-07-03 (post v1.6.0 — mcp module shipped;
+1.6.1 / 1.6.2 next).
 
-Forward-looking only. The release history (v1.0.0 → v1.5.5) lives in
+Forward-looking only. The release history (v1.0.0 → v1.6.0) lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); the rationale for each shipped
 decision is preserved there, not duplicated here. This file tracks
 **what's next**.
 
 ---
 
-## Current state — v1.5.5
+## Current state — v1.6.0
 
 Library is feature-complete for the AGNOS-ecosystem consumers
-identified at port time (stiva / daimon / aegis / sutra). 18 modules,
-360 public fns, 601 test assertions, 31 benchmarks, 5 per-target fuzz
-drivers, integration test scaffold, single-file `dist/nein.cyr`
-bundle. Type-check end-to-end clean; aarch64 cross-build green; no
-git dependencies since the agnosys drop in 1.5.4.
+identified at port time (stiva / daimon / aegis / sutra). 19 modules
+(mcp added at 1.6.0), 624 test assertions, 31 benchmarks, 5 per-target
+fuzz drivers, integration test scaffold, single-file `dist/nein.cyr`
+bundle (bote-free — mcp is out of `[lib]`). Type-check end-to-end
+clean; aarch64 cross-build green.
 
-The next three minors land the ecosystem-integration surface now that
-its upstream blockers have cleared: bote is Cyrius-ported (3.0.0),
-unblocking the `mcp` module; sigil signing is stable (3.10.0),
-unblocking signed rulesets. Everything beyond 1.6.2 stays
+The next two minors continue the ecosystem-integration surface: sigil
+signing is stable (3.10.0), unblocking signed rulesets; the daimon MCP
+tools build on 1.6.0's `mcp` module. Everything beyond 1.6.2 stays
 consumer-driven — features a downstream asks for, not speculative
 additions.
 
 ---
 
-## v1.6.0 — `mcp` module
+## v1.6.0 — `mcp` module ✅ shipped
 
-Claude MCP tool descriptors so agents can drive nein directly.
-**Unblocked:** [bote](https://github.com/MacCracken/bote) is
-Cyrius-ported (bote 3.0.0). Tools: `nein_render_firewall`,
-`nein_apply_firewall`, `nein_validate_rule`, `nein_inspect_status`,
-`nein_diff`. Wrap bote's MCP surface — own the stack; don't hand-roll
-descriptor/JSON framing.
+MCP tool descriptors + handlers over
+[bote](https://github.com/MacCracken/bote)'s core, so agents drive nein
+directly. Shipped the **merged** agent-ergonomic surface (six flat-arg
+tools) rather than the originally-sketched five library-shaped tools —
+render/apply-whole-firewall would need a JSON→Firewall schema nein
+doesn't have yet, whereas flat args map cleanly to how an LLM calls a
+tool: `nein_status`, `nein_allow`, `nein_deny`, `nein_validate`,
+`nein_list`, `nein_diff`. `nein_tools_register(dispatcher)` mounts them;
+handlers are injection-safe (validate + JSON escaping).
+
+**Dependency note:** bote is **vendored** (`src/vendor/bote-core.cyr`), not a
+git dep — `cyrius deps` resolves bote's full manifest git-deps for a
+core-bundle consumer instead of the bundle's `.deps` sidecar, which
+fails and blocks the build (filed on bote's roadmap; see
+`src/vendor/README.md`). Restore the git dep once fixed upstream. Also
+renamed `ERR_PARSE` → `NEIN_ERR_PARSE` (value 6 unchanged) to dodge a
+collision with bote's `BoteErrTag::ERR_PARSE`.
 
 ## v1.6.1 — sigil-signed rulesets + daimon MCP setup
 

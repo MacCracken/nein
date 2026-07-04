@@ -8,13 +8,15 @@ enum NeinError {
     ERR_INVALID_RULE = 2;
     ERR_TABLE_NOT_FOUND = 3;
     ERR_CHAIN_NOT_FOUND = 4;
-    # Prefixed `NEIN_ERR_` — originally to avoid a symbol collision with
-    # agnosys-core's SysError enum (its bare `ERR_PERMISSION_DENIED` / `ERR_IO`).
-    # That dep was dropped in the agnosys → agnodrm decomposition (1.5.4), so the
-    # collision is moot; the prefix is kept — values unchanged — so the
+    # Prefixed `NEIN_ERR_` to avoid symbol collisions with sibling AGNOS
+    # enums included in the same single-pass build: originally agnosys-core's
+    # SysError (bare `ERR_PERMISSION_DENIED` / `ERR_IO`, dropped at 1.5.4),
+    # and — from 1.6.0 — bote's `BoteErrTag`, which defines a bare
+    # `ERR_PARSE` (=4) and `ERR_IO` (=11). The prefix keeps nein's values
+    # fixed (last-definition-wins would otherwise clobber them), so the
     # consumer-facing nein_err_code() contract holds.
     NEIN_ERR_PERMISSION_DENIED = 5;
-    ERR_PARSE = 6;
+    NEIN_ERR_PARSE = 6;
     NEIN_ERR_IO = 7;
 }
 

@@ -1,0 +1,346 @@
+# nein mcp module — MCP tool descriptors + handlers over bote's core
+#
+# Exposes nein's firewall operations as Model Context Protocol tools so
+# an agent host can drive nein through bote's Dispatcher / ToolRegistry.
+# nein owns no transport — the consuming binary builds the dispatcher and
+# a transport (stdio/http/...), then calls `nein_tools_register(d)` to
+# mount these tools. Handlers follow bote's 2.0 ABI: fn(args, claims) ->
+# result_cstr, where `args` is the raw JSON `arguments` object (cstr) and
+# the return is a `{"content":[...],"isError":bool}` envelope cstr.
+#
+# Tools (merged agent-ergonomic + diff surface):
+#   nein_status   {}                                  -> table/rule summary
+#   nein_allow    {protocol,port,source?,table?,chain?} -> add accept rule (live)
+#   nein_deny     {protocol,port,source?,table?,chain?} -> add drop rule (live)
+#   nein_validate {protocol,port,source?,table?,chain?} -> ok / error (no apply)
+#   nein_list     {table?,chain?}                      -> live rules (filtered)
+#   nein_diff     {rules:[{protocol,port,verdict}]}    -> nft ops vs live (preview)
+#
+# Depends on the vendored bote-core bundle (src/vendor/bote-core.cyr): the
+# dispatcher/registry/schema/jsonx surface + _json_emit_escaped. Backing
+# nein ops come from the modules included ahead of this one (inspect.cyr,
+# apply.cyr, validate.cyr, diff.cyr, rule.cyr, ...).
+
+# ================================================================
+# Result envelope — mirrors bote's fs_tools `_fs_result`. bote-core
+# omits content.cyr, so the MCP text-content envelope is hand-built
+# (str_builder + _json_emit_escaped for injection-safe escaping).
+# ================================================================
+
+fn _mcp_result(msg: cstring, is_err: i64): cstring {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"content\":[{\"type\":\"text\",\"text\":\"");
+    _json_emit_escaped(sb, msg);
+    str_builder_add_cstr(sb, "\"}],\"isError\":");
+    if (is_err == 1) { str_builder_add_cstr(sb, "true}"); }
+    else { str_builder_add_cstr(sb, "false}"); }
+    return str_data(str_builder_build(sb));
+}
+
+fn _mcp_ok(msg: cstring): cstring { return _mcp_result(msg, 0); }
+fn _mcp_err(msg: cstring): cstring { return _mcp_result(msg, 1); }
+
+# ================================================================
+# Shared arg validation for the port-rule tools (allow/deny/validate).
+# Returns Ok(0) if {protocol,port,source?,table?,chain?} are all valid,
+# else Err with a NeinError code — the caller maps it to a message.
+# Reads are re-done by each handler; this only validates.
+# ================================================================
+
+fn _mcp_valid_proto(proto: cstring): i64 {
+    if (proto == 0) { return 0; }
+    if (streq(proto, "tcp") == 1) { return 1; }
+    if (streq(proto, "udp") == 1) { return 1; }
+    return 0;
+}
+
+# Validate the shared rule args. Returns 0 if all valid, or a cstr error
+# message if not (so handlers can return it directly).
+fn _mcp_check_rule_args(args: cstring): cstring {
+    var proto = jsonx_get_str(args, "protocol");
+    if (proto == 0) { return "missing 'protocol' (tcp or udp)"; }
+    if (_mcp_valid_proto(proto) == 0) { return "unsupported protocol (use tcp or udp)"; }
+
+    var port_raw = jsonx_get_raw(args, "port");
+    if (port_raw == 0) { return "missing 'port'"; }
+    var port = atoi(port_raw);
+    if (port < 1) { return "port out of range (1-65535)"; }
+    if (port > 65535) { return "port out of range (1-65535)"; }
+
+    var table = jsonx_get_str(args, "table");
+    if (table == 0) { table = "filter"; }
+    if (is_err_result(validate_identifier(table)) == 1) { return "invalid 'table' name"; }
+
+    var chain = jsonx_get_str(args, "chain");
+    if (chain == 0) { chain = "input"; }
+    if (is_err_result(validate_identifier(chain)) == 1) { return "invalid 'chain' name"; }
+
+    var src = jsonx_get_str(args, "source");
+    if (src != 0) {
+        if (is_err_result(validate_addr(src)) == 1) { return "invalid 'source' CIDR/address"; }
+    }
+    return 0;
+}
+
+# Build the nft rule body from validated args + a verdict cstr. Caller
+# has already run _mcp_check_rule_args, so components are injection-safe.
+fn _mcp_build_rule(args: cstring, verdict: cstring): cstring {
+    var sb = str_builder_new();
+    var src = jsonx_get_str(args, "source");
+    if (src != 0) {
+        str_builder_add_cstr(sb, "ip saddr ");
+        str_builder_add_cstr(sb, src);
+        str_builder_add_cstr(sb, " ");
+    }
+    str_builder_add_cstr(sb, jsonx_get_str(args, "protocol"));
+    str_builder_add_cstr(sb, " dport ");
+    str_builder_add_int(sb, atoi(jsonx_get_raw(args, "port")));
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, verdict);
+    return str_data(str_builder_build(sb));
+}
+
+# ================================================================
+# Handlers
+# ================================================================
+
+# nein_status {} -> live firewall summary (table count + rule count).
+fn nein_status_handler(args: cstring, claims: i64): cstring {
+    var res = status();
+    if (is_err_result(res) == 1) {
+        return _mcp_err("nein_status: nft query failed (needs root + nft installed)");
+    }
+    var st = payload(res);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "tables=");
+    str_builder_add_int(sb, vec_len(status_tables(st)));
+    str_builder_add_cstr(sb, " total_rules=");
+    str_builder_add_int(sb, status_total_rules(st));
+    return _mcp_ok(str_data(str_builder_build(sb)));
+}
+
+# Shared allow/deny body: validate, build rule, apply live, report.
+fn _mcp_apply_verdict(args: cstring, verdict: cstring, label: cstring): cstring {
+    var bad = _mcp_check_rule_args(args);
+    if (bad != 0) { return _mcp_err(bad); }
+
+    var table = jsonx_get_str(args, "table");
+    if (table == 0) { table = "filter"; }
+    var chain = jsonx_get_str(args, "chain");
+    if (chain == 0) { chain = "input"; }
+
+    var rule = _mcp_build_rule(args, verdict);
+    var res = add_rule_live("inet", table, chain, rule);
+    if (is_err_result(res) == 1) {
+        return _mcp_err("apply failed (needs root + nft; verify the table/chain exist)");
+    }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, label);
+    str_builder_add_cstr(sb, ": inet ");
+    str_builder_add_cstr(sb, table);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, chain);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, rule);
+    return _mcp_ok(str_data(str_builder_build(sb)));
+}
+
+# nein_allow {protocol,port,source?,table?,chain?} -> add accept rule (live).
+fn nein_allow_handler(args: cstring, claims: i64): cstring {
+    return _mcp_apply_verdict(args, "accept", "allowed");
+}
+
+# nein_deny {protocol,port,source?,table?,chain?} -> add drop rule (live).
+fn nein_deny_handler(args: cstring, claims: i64): cstring {
+    return _mcp_apply_verdict(args, "drop", "denied");
+}
+
+# nein_validate {protocol,port,source?,table?,chain?} -> ok / error (no apply).
+fn nein_validate_handler(args: cstring, claims: i64): cstring {
+    var bad = _mcp_check_rule_args(args);
+    if (bad != 0) { return _mcp_err(bad); }
+    return _mcp_ok("valid");
+}
+
+# nein_list {table?,chain?} -> live rules (optionally filtered), as a JSON
+# array in the text content: [{family,table,chain,rule,handle}, ...].
+fn nein_list_handler(args: cstring, claims: i64): cstring {
+    var res = list_ruleset_with_handles();
+    if (is_err_result(res) == 1) {
+        return _mcp_err("nein_list: nft query failed (needs root + nft installed)");
+    }
+    var rules = diff_parse_live(payload(res));
+    var ftable = jsonx_get_str(args, "table");
+    var fchain = jsonx_get_str(args, "chain");
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "[");
+    var n = vec_len(rules);
+    var count = 0;
+    var i = 0;
+    while (i < n) {
+        var lr = vec_get(rules, i);
+        var keep = 1;
+        if (ftable != 0) {
+            if (streq(live_rule_table(lr), ftable) == 0) { keep = 0; }
+        }
+        if (fchain != 0) {
+            if (streq(live_rule_chain(lr), fchain) == 0) { keep = 0; }
+        }
+        if (keep == 1) {
+            if (count > 0) { str_builder_add_cstr(sb, ","); }
+            str_builder_add_cstr(sb, "{\"family\":\"");
+            _json_emit_escaped(sb, live_rule_family(lr));
+            str_builder_add_cstr(sb, "\",\"table\":\"");
+            _json_emit_escaped(sb, live_rule_table(lr));
+            str_builder_add_cstr(sb, "\",\"chain\":\"");
+            _json_emit_escaped(sb, live_rule_chain(lr));
+            str_builder_add_cstr(sb, "\",\"rule\":\"");
+            _json_emit_escaped(sb, live_rule_body(lr));
+            str_builder_add_cstr(sb, "\",\"handle\":");
+            str_builder_add_int(sb, live_rule_handle(lr));
+            str_builder_add_cstr(sb, "}");
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "]");
+    return _mcp_ok(str_data(str_builder_build(sb)));
+}
+
+# nein_diff {rules:[{protocol,port,verdict?}]} -> nft ops to converge the
+# live ruleset onto the given target rules (PREVIEW — does not apply).
+# Target is built in table `filter` / chain `input` (family inet). Rules
+# without a verdict default to accept. Returns {"ops":[...],"count":N}.
+fn nein_diff_handler(args: cstring, claims: i64): cstring {
+    var arr = jsonx_get_raw(args, "rules");
+    if (arr == 0) { return _mcp_err("missing 'rules' array"); }
+
+    var fw = firewall_new();
+    var t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+
+    var alen = strlen(arr);
+    var count = 0;
+    var i = 0;
+    while (i < alen) {
+        if (load8(arr + i) != 123) {   # '{'
+            i = i + 1;
+        } else {
+            # find the matching top-level '}' (brace-depth walk)
+            var depth = 1;
+            var j = i + 1;
+            while (depth > 0) {
+                if (j >= alen) { depth = 0; }
+                else {
+                    var cj = load8(arr + j);
+                    if (cj == 123) { depth = depth + 1; }
+                    elif (cj == 125) { depth = depth - 1; }
+                    j = j + 1;
+                }
+            }
+            # copy element arr[i, j) as a NUL-terminated object cstr
+            var elen = j - i;
+            var elem = alloc(elen + 1);
+            memcpy(elem, arr + i, elen);
+            store8(elem + elen, 0);
+
+            var proto = jsonx_get_str(elem, "protocol");
+            if (proto == 0) { return _mcp_err("a rule is missing 'protocol'"); }
+            if (_mcp_valid_proto(proto) == 0) { return _mcp_err("a rule has an unsupported protocol"); }
+            var port_raw = jsonx_get_raw(elem, "port");
+            if (port_raw == 0) { return _mcp_err("a rule is missing 'port'"); }
+            var port = atoi(port_raw);
+            if (port < 1) { return _mcp_err("a rule 'port' is out of range (1-65535)"); }
+            if (port > 65535) { return _mcp_err("a rule 'port' is out of range (1-65535)"); }
+
+            var vd = verdict_accept();
+            var verdict_s = jsonx_get_str(elem, "verdict");
+            if (verdict_s != 0) {
+                if (streq(verdict_s, "drop") == 1) { vd = verdict_drop(); }
+                elif (streq(verdict_s, "accept") == 0) { return _mcp_err("a rule 'verdict' must be accept or drop"); }
+            }
+            var proto_id = PROTO_TCP;
+            if (streq(proto, "udp") == 1) { proto_id = PROTO_UDP; }
+
+            var rule = rule_new(vd);
+            rule_add_match(rule, match_protocol(proto_id));
+            rule_add_match(rule, match_dport(port));
+            chain_add_rule(c, rule);
+            count = count + 1;
+            i = j;
+        }
+    }
+    if (count == 0) { return _mcp_err("no rules provided"); }
+
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+
+    var live = list_ruleset();
+    if (is_err_result(live) == 1) {
+        return _mcp_err("nein_diff: nft query failed (needs root + nft installed)");
+    }
+    var ops = diff_compute(fw, payload(live));
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"ops\":[");
+    var n = vec_len(ops);
+    var k = 0;
+    while (k < n) {
+        if (k > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\"");
+        _json_emit_escaped(sb, vec_get(ops, k));
+        str_builder_add_cstr(sb, "\"");
+        k = k + 1;
+    }
+    str_builder_add_cstr(sb, "],\"count\":");
+    str_builder_add_int(sb, n);
+    str_builder_add_cstr(sb, "}");
+    return _mcp_ok(str_data(str_builder_build(sb)));
+}
+
+# ================================================================
+# Registration — mount nein's tools on an existing bote dispatcher.
+# ================================================================
+
+fn nein_tools_register(dispatcher: i64): i64 {
+    var reg = dispatcher_registry(dispatcher);
+
+    registry_register(reg, tool_def_new(
+    "nein_status",
+    "get current nftables firewall status (table count, rule count); args {}",
+    schema_new("object", 0, vec_new())));
+    dispatcher_handle(dispatcher, "nein_status", &nein_status_handler);
+
+    registry_register(reg, tool_def_new(
+    "nein_allow",
+    "add an accept rule to the live firewall; args {protocol(tcp|udp), port, source?, table?, chain?}",
+    schema_new("object", 0, vec_new())));
+    dispatcher_handle(dispatcher, "nein_allow", &nein_allow_handler);
+
+    registry_register(reg, tool_def_new(
+    "nein_deny",
+    "add a drop rule to the live firewall; args {protocol(tcp|udp), port, source?, table?, chain?}",
+    schema_new("object", 0, vec_new())));
+    dispatcher_handle(dispatcher, "nein_deny", &nein_deny_handler);
+
+    registry_register(reg, tool_def_new(
+    "nein_validate",
+    "validate a port-rule request without applying it; args {protocol, port, source?, table?, chain?}",
+    schema_new("object", 0, vec_new())));
+    dispatcher_handle(dispatcher, "nein_validate", &nein_validate_handler);
+
+    registry_register(reg, tool_def_new(
+    "nein_list",
+    "list live firewall rules, optionally filtered; args {table?, chain?}",
+    schema_new("object", 0, vec_new())));
+    dispatcher_handle(dispatcher, "nein_list", &nein_list_handler);
+
+    registry_register(reg, tool_def_new(
+    "nein_diff",
+    "preview nft ops to converge live onto target rules (no apply); args {rules:[{protocol,port,verdict?}]}",
+    schema_new("object", 0, vec_new())));
+    dispatcher_handle(dispatcher, "nein_diff", &nein_diff_handler);
+
+    return 0;
+}

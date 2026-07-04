@@ -161,9 +161,9 @@ fn cfg_parse_transport(s: cstring): i64 {
     return _cfg_unknown();
 }
 
-# --- Helper: wrap result as Result<int, ERR_PARSE> ---
+# --- Helper: wrap result as Result<int, NEIN_ERR_PARSE> ---
 # Useful when a parse function wants consistent error handling
 fn cfg_result(v: i64): i64 {
-    if (v < 0) { return nein_err(ERR_PARSE); }
+    if (v < 0) { return nein_err(NEIN_ERR_PARSE); }
     return Ok(v);
 }

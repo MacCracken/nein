@@ -52,6 +52,11 @@ stdlib = [
     "assert",
     "tagged",
     "hashmap",
+    # bayan — 6.1.x consolidated data module (JSON: json_parse / json_get).
+    # Opt-in: required by the vendored bote-core bundle (it folds in only
+    # hashmap + bayan, per its .deps sidecar) and by the mcp module's
+    # handlers, which read tool-call args as JSON. Added at 1.6.0.
+    "bayan",
     "process",
     "bench",
     "fnptr",
@@ -69,3 +74,14 @@ stdlib = [
 # integrator against the kernel-interface lib directly (see src/lib/netns.cyr),
 # so nein carried no real agnosys surface. (The local `path = "../agnosys"` also
 # broke when the repo folder was renamed to ../agnodrm.) Dropped.
+#
+# bote is NOT wired as a [deps.bote] git dep. Consuming the self-contained
+# dist/bote-core.cyr through `cyrius deps` makes it recursively resolve
+# bote's *manifest* git-deps (libro / majra / patra / sigil) instead of the
+# bundle's own .deps sidecar (hashmap + bayan), and those fail: "dep libro
+# requires 'ct' but it is not in the cyrius stdlib" (ct.cyr exists in the
+# 6.3.45 snapshot, so it's a resolver gap, not a missing module) — which
+# hard-blocks build. See src/vendor/README.md. As a documented bridge, the
+# transport-free core bundle is VENDORED at src/vendor/bote-core.cyr (it needs
+# only hashmap + bayan, both opt-in above). Restore the git dep once the
+# bundle-dep resolution is fixed upstream (filed on bote's roadmap).

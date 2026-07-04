@@ -4,6 +4,56 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.0] — 2026-07-03
+
+**MCP surface — nein tools over bote's core.** A new `mcp` module exposes
+nein's firewall operations as Model Context Protocol tools so an agent host
+can drive nein through [bote](https://github.com/MacCracken/bote)'s
+Dispatcher / ToolRegistry. nein owns no transport: the consuming binary
+builds the dispatcher + a transport, then calls `nein_tools_register(d)`.
+
+### Added
+
+- **`src/lib/mcp.cyr` — 6 MCP tools.** `nein_status` (table/rule summary),
+  `nein_allow` / `nein_deny` (add an accept/drop rule to the live ruleset),
+  `nein_validate` (validate a port-rule request without applying),
+  `nein_list` (live rules, optionally filtered by table/chain, as JSON),
+  and `nein_diff` (preview the nft ops to converge the live ruleset onto a
+  target rule set — no apply). Handlers follow bote's 2.0 ABI
+  (`fn(args, claims) -> result_cstr`), read args with `jsonx_*`, and return
+  injection-safe `{"content":[...],"isError":bool}` envelopes — every
+  string field runs through `validate_identifier` / `validate_addr` and
+  JSON escaping (`_json_emit_escaped`). `nein_tools_register(dispatcher)`
+  mounts all six. 23 new assertions (`test_mcp`): envelope shape, every
+  `nein_validate` decision path incl. injection rejection, `nein_diff`
+  array parsing, and registration. Suite **601 → 624**.
+- **Vendored bote-core bundle** at `src/vendor/bote-core.cyr` (bote 3.0.0,
+  transport-free core profile) + `bayan` added to `[deps] stdlib`.
+
+### Changed
+
+- bote is **vendored**, not wired as a `[deps.bote]` git dep. `cyrius deps`
+  recursively resolves bote's manifest git-deps (libro / majra / patra /
+  sigil) for a self-contained core-bundle consumer instead of honoring the
+  bundle's `.deps` sidecar (`hashmap` + `bayan`); that resolution fails
+  (`dep libro requires 'ct' … not in the cyrius stdlib`) and blocks the
+  build. Vendoring the self-contained bundle sidesteps it. See
+  `src/vendor/README.md`; filed upstream on bote's roadmap. Restore the git dep
+  once fixed. `src/lib/mcp.cyr` is intentionally **not** in `[lib]`, so the
+  `dist/nein.cyr` consumer bundle stays self-contained (bote-free).
+
+### Breaking
+
+- **`NeinError::ERR_PARSE` renamed to `NEIN_ERR_PARSE`** (numeric value
+  unchanged: **6**). bote's `BoteErrTag` defines a bare `ERR_PARSE` (=4);
+  under Cyrius single-pass include the later definition would clobber
+  nein's value ("last definition wins"). The `NEIN_ERR_` prefix — as with
+  `NEIN_ERR_PERMISSION_DENIED` / `NEIN_ERR_IO` at 1.5.3 — keeps nein's value
+  fixed and the `nein_err_code()` contract intact.
+  **Migration:** replace `ERR_PARSE` with `NEIN_ERR_PARSE`. The code value
+  (6) returned by `nein_err_code()` is unchanged, so any consumer keying on
+  the number needs no change.
+
 ## [1.5.5] — 2026-07-03
 
 Toolchain bump and a block-stack buffer fix in the ruleset parsers.
