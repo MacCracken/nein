@@ -44,7 +44,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   **then** `cyrius deps` clones the git bundles. Added `[deps.libro]` /
   `[deps.majra]` / `[deps.bote]` (dist/bote-core.cyr) and the transitive
   stdlib the graph needs (`ct, keccak, random, slice, thread, thread_local,
-  sync, atomic, ws_server, result`, + `sigil`). CI gained a `cyrius lib sync`
+  sync, atomic, result`, + `sigil`) — the minimal transport-free set, no
+  `ws_server` / `tls` / `sandhi`. CI gained a `cyrius lib sync`
   step before `cyrius deps`; new `cyrius.lock` pins the git-dep hashes. `vet`
   is clean (0 untrusted — git-dep bundles are trusted). `sign.cyr` and
   `mcp.cyr` stay out of `[lib]`, so `dist/nein.cyr` remains self-contained.

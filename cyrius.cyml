@@ -68,13 +68,14 @@ stdlib = [
     "regex",
     "chrono",
     "sakshi",
-    # Transitive stdlib for the git-dep bote/sigil stack (1.6.1). `cyrius
-    # lib sync` copies this declared subset into ./lib/ so the git deps'
-    # requirements resolve. sigil (Ed25519 signing) needs ct/keccak/random/
-    # slice/thread/thread_local; bote's manifest graph (libro/majra/patra)
-    # pulls sync/ws_server. sigil itself resolves as a git bundle via the
-    # stdlib registry. Order: ct/keccak/random before sigil, thread before
-    # thread_local.
+    # Transitive stdlib for the git-dep bote-core/sigil stack (1.6.1).
+    # `cyrius lib sync` copies this declared subset into ./lib/ so the git
+    # deps' requirements resolve. sigil (Ed25519 signing) needs ct/keccak/
+    # random/slice/thread/thread_local; libro/majra/patra add sync/atomic.
+    # sigil resolves as a git bundle via the stdlib registry. This is the
+    # MINIMAL set for the transport-free bote-core — ws_server / tls /
+    # sandhi (bote's full-transport deps) are deliberately NOT declared.
+    # Order: ct/keccak/random before sigil, thread before thread_local.
     "ct",
     "keccak",
     "random",
@@ -83,7 +84,6 @@ stdlib = [
     "thread_local",
     "sync",
     "atomic",
-    "ws_server",
     "sigil",
 ]
 
