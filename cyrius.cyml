@@ -108,7 +108,7 @@ stdlib = [
     # tls / sandhi (bote's full-transport deps) are deliberately NOT declared.
     #
     # sigil is NOT a stdlib entry — it's an explicit deps.sigil git pin
-    # (full dist/sigil.cyr, below), mirroring bote 3.1.2 (1.6.3). That
+    # (full dist/sigil.cyr, below), mirroring bote 3.1.x (1.6.3). That
     # top-level pin reaches the latest self-contained bundle (the stdlib
     # registry lags) AND wins over libro 2.8.x's transitive thin sigil
     # sub-bundles (sigil-mldsa + sha_ni + sha256 + hex); without it the full
@@ -140,12 +140,12 @@ stdlib = [
 # above into ./lib/, THEN `cyrius deps` clones these bundles at their tags
 # and copies each dist/*.cyr into ./lib/. libro + majra are declared before
 # bote (bote's graph references them; Cyrius single-pass). sigil is an
-# explicit deps.sigil pin below (full dist/sigil.cyr, mirrors bote 3.1.2 —
+# explicit deps.sigil pin below (full dist/sigil.cyr, mirrors bote 3.1.x —
 # see the stdlib note above). Retired the vendored src/vendor/bote-core.cyr
 # at 1.6.1.
 [deps.libro]
 git = "https://github.com/MacCracken/libro.git"
-tag = "2.8.1"
+tag = "2.8.2"
 modules = ["dist/libro.cyr"]
 
 [deps.majra]
@@ -155,11 +155,11 @@ modules = ["dist/majra.cyr"]
 
 [deps.bote]
 git = "https://github.com/MacCracken/bote.git"
-tag = "3.1.2"
+tag = "3.1.4"
 modules = ["dist/bote-core.cyr"]
 
 # sigil crypto — explicit pin to the self-contained single-file dist bundle
-# (same pattern as libro / majra, mirrors bote 3.1.2). Added at 1.6.3 when
+# (same pattern as libro / majra, mirrors bote 3.1.x). Added at 1.6.3 when
 # the sigil surface moved out of the deps stdlib list. Two jobs: (1) reach the
 # latest self-contained bundle — the stdlib registry lags the toolchain
 # snapshot; (2) win over libro 2.8.x's transitive thin sigil sub-bundles
@@ -173,12 +173,12 @@ git = "https://github.com/MacCracken/sigil.git"
 tag = "3.12.1"
 modules = ["dist/sigil.cyr"]
 
-# patra sqlite — libro 2.8.x's audit store links it, and libro's .deps
-# sidecar pulls it transitively at 1.12.9. Pinned explicitly at 1.12.12
-# (latest; libro 2.8.1 supports 1.12.9+) so ./lib/ matches the 6.4.66
-# toolchain snapshot's bundled patra and no shadow-lib warning fires. nein
-# calls no patra symbol directly; this pin only keeps the transitive audit
-# dep current. Banks 1.12.10's SQL-quote escaping fix along the way.
+# patra sqlite — libro 2.8.x's audit store links it; libro 2.8.2's .deps
+# sidecar now pulls it transitively at 1.12.12. Pinned explicitly at 1.12.12
+# too (latest; matches the 6.4.66 toolchain snapshot's bundled patra) so no
+# shadow-lib warning fires and the pin stays current independent of libro's
+# own choice. nein calls no patra symbol directly. Banks 1.12.10's SQL-quote
+# escaping fix along the way.
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
 tag = "1.12.12"

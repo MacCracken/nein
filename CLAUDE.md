@@ -8,7 +8,7 @@
 - **License**: GPL-3.0-only
 - **Language**: Cyrius (sovereign systems language, compiled by cc5; pinned `cyrius = "5.10.34"` in `cyrius.cyml`)
 - **Version**: SemVer, version file at `VERSION`
-- **Status**: 1.5.0 — Cyrius port complete (9,338 lines of Rust → ~3,800 lines of Cyrius, 601 tests, 31 benchmarks, 360 public fns). CI gates: fmt/lint/vet/capacity/type-check/aarch64-cross/security-scan/api-surface/bench-regression/fuzz/integration/dist-staleness
+- **Status**: 1.6.4 — Cyrius port complete + MCP/Ed25519-signing surface (mcp 1.6.0, sign 1.6.1, daimon dispatch adapter 1.6.2; toolchain 6.4.66 + dependency refresh 1.6.3–1.6.4). 664 unit + 16 integration assertions, 31 benchmarks, 5 fuzz drivers, 383 public fns. CI gates: fmt/lint/vet/capacity/type-check/aarch64-cross/security-scan/api-surface/bench-regression/fuzz/integration/dist-staleness
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)

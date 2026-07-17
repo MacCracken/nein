@@ -1,18 +1,19 @@
 # Roadmap
 
-Last refresh: 2026-07-17 (post v1.6.3 — toolchain 6.4.66 + full
-dependency refresh; no feature or API change. v1.6.2 shipped nein's
-half of the daimon firewall-MCP joint ship: [lib.mcp] bundle + dispatch
+Last refresh: 2026-07-17 (post v1.6.4 — banked bote 3.1.4 + libro 2.8.2's
+bare-error-enum repairs on top of v1.6.3's toolchain 6.4.66 + full
+dependency refresh; no feature or API change. v1.6.2 shipped nein's half
+of the daimon firewall-MCP joint ship: [lib.mcp] bundle + dispatch
 adapter, whose paired daimon-side PR is the only 1.6.x item left).
 
-Forward-looking only. The release history (v1.0.0 → v1.6.3) lives in
+Forward-looking only. The release history (v1.0.0 → v1.6.4) lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); the rationale for each shipped
 decision is preserved there, not duplicated here. This file tracks
 **what's next**.
 
 ---
 
-## Current state — v1.6.3
+## Current state — v1.6.4
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 20 modules

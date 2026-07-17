@@ -4,6 +4,32 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.4] — 2026-07-17
+
+**Banks the upstream bare-error-enum repairs.** bote and libro both
+namespaced the `ERR_*` enums that shared bare tokens, so nein's last two
+benign duplicate-symbol warnings (`ERR_JSON` / `ERR_IO`, libro↔bote-core) are
+now fixed *at the source on both sides* rather than merely avoided by include
+order. No nein source or API change (383 public fns); the only warning left in
+a clean build is majra's long-documented `_sub_new` last-wins dup. 664 unit +
+16 integration assertions, 31 benches (no regressions), 5 fuzz drivers green;
+`cyrius deps --verify` clean.
+
+### Changed
+
+- **bote `3.1.2` → `3.1.4`.** 3.1.3 namespaced `BoteErrTag` `ERR_* →
+  BOTE_ERR_*` (13 tags); 3.1.4 bumped bote's own `[deps.libro]` to 2.8.2 and
+  realigned its tag↔lock. Same cyrius 6.4.66 pin, identical wire contract —
+  numeric error values and JSON-RPC code mapping unchanged, so nein's consumed
+  `jsonx` / dispatcher / `ToolAnnotations` surface needs no edits.
+- **libro `2.8.1` → `2.8.2`.** Namespaced `LibroErr` `ERR_* → LIBRO_ERR_*`
+  (13 constants, `LIBRO_ERR_IO=3` …) and moved its internal deps to sigil
+  3.12.1 / patra 1.12.12 under the 6.4.66 pin — matching nein's own top-level
+  `[deps.sigil]` / `[deps.patra]` pins, so nothing else in nein's dep set
+  shifts (majra 2.5.1, sigil 3.12.1, patra 1.12.12, sakshi 2.4.6 unchanged).
+- **`dist/nein.cyr` + `dist/nein-mcp.cyr` regenerated at 1.6.4** (version banner
+  only; `[lib]` bodies and the `.deps` sidecars are unchanged).
+
 ## [1.6.3] — 2026-07-17
 
 **Toolchain 6.4.66 + full dependency refresh.** No nein source or API change
