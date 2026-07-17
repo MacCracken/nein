@@ -55,7 +55,7 @@ Each ADR is dated at write-time; superseding ADRs reference the originals.
 | Doc | Last refresh | Status | Notes |
 |-----|--------------|--------|-------|
 | `docs/development/roadmap.md` | 2026-07-17 | ✅ | Bumped to v1.6.4 (toolchain + dep refresh, bare-err bank); current-state module count 20→21. Release history lives in CHANGELOG.md. |
-| `docs/development/threat-model.md` | 2026-07-17 | 🟠 | T-8 dep set + toolchain pin brought current. **Gap:** the v1.6.1 `sign` (Ed25519 trust / key management) and v1.6.0 `mcp` (agent tool access-control) surfaces are not yet threat-modeled — a dedicated pass is pending. |
+| `docs/development/threat-model.md` | 2026-07-17 | ✅ | 1.6.x security surfaces now modeled: added T-9 (Ed25519 signed-ruleset trust/integrity — key-substitution, tamper, downgrade, replay/keygen residuals), T-10 (MCP destructive-tool access control — fail-closed gate primitive vs. ungated-default fail-open), T-11 (MCP tool-argument injection + output escaping). Scope list +2 surfaces; T-8 pin still current. |
 | `docs/development/capability-map.md` | 2026-07-17 | ✅ | v1.6.4 sweep: version block → 1.6.4 / cyrius 6.4.66, Lens-2 single pinned nft path, added `sign` + `mcp` per-module entries (both transitive-only). |
 
 ## Guides

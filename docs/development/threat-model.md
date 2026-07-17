@@ -1,11 +1,13 @@
 # Threat Model
 
-Last refresh: **2026-07-17** (v1.6.4 — T-8 dep set + toolchain pin
-brought current. **Gap:** the v1.6.1 `sign` (Ed25519 trust / key
-management) and v1.6.0 `mcp` (agent tool access-control) surfaces are
-not yet threat-modeled — a dedicated pass is pending. The v1.4.0
-refresh hardened T-3 to a single pinned absolute path and added the
-integration test scaffold + inspect-parser hardening).
+Last refresh: **2026-07-17** (v1.6.4 — modeled the two 1.6.x
+security-relevant surfaces: added **T-9** (Ed25519 signed-ruleset
+trust / integrity, `sign.cyr` v1.6.1), **T-10** (MCP destructive-tool
+access control, `mcp.cyr` v1.6.0), and **T-11** (MCP tool-argument
+injection + output escaping). The prior pass brought the T-8 dep set +
+toolchain pin current; the v1.4.0 refresh hardened T-3 to a single
+pinned absolute path and added the integration test scaffold +
+inspect-parser hardening).
 
 ## Scope
 
@@ -17,6 +19,8 @@ threat model covers:
 2. The handoff to the `nft` subprocess (subprocess hygiene, PATH attacks)
 3. The kernel-side surface nein touches (privilege model)
 4. Supply chain — Cyrius toolchain, git dependencies, lockfile
+5. Signed-ruleset trust — the Ed25519 verify-before-apply path (`sign.cyr`)
+6. MCP tool dispatch — agent access-control + tool-arg injection (`mcp.cyr`)
 
 Out of scope: the `nft` userspace tool's own attack surface, the kernel
 netfilter subsystem, and downstream callers (stiva, daimon, aegis,
@@ -191,6 +195,198 @@ git-dependency release could inject malicious code into the nein binary.
 - No external `unsafe` paths — Cyrius doesn't have an `unsafe` block
   concept; all syscall surface is stdlib-mediated and surfaced through
   the security-scan CI gate.
+
+### T-9 — signed-ruleset trust and integrity (`sign.cyr`, v1.6.1)
+
+**Threat.** `sign.cyr` attaches an Ed25519 signature to a rendered
+ruleset so a verifier detects at-rest tampering before
+`apply_signed_ruleset` touches nft. Four ways an attacker could subvert
+that: (a) **key substitution** — re-sign a malicious ruleset with an
+attacker key and rely on the envelope's carried pubkey being trusted;
+(b) **tampering** — mutate the nft body while keeping a valid-looking
+envelope; (c) **downgrade / strip** — remove the signature, or swap the
+algorithm/version so a weaker or no check runs, then apply; (d)
+**replay / rollback** — re-present an older, legitimately-signed
+envelope to roll the firewall back to a weaker but validly-signed state.
+
+**Mitigation.**
+- **Trust root is caller-supplied, never the envelope.**
+  `_sign_verify_parsed` decodes the envelope's `nein-sig-pubkey` header
+  and requires it to byte-match the 32-byte key the caller passes in
+  (`memeq(hdr_pk, pubkey, 32)` → else `NEIN_ERR_SIG_KEY_MISMATCH`,
+  `sign.cyr:216`). The header pubkey is only a carrier/audit label; an
+  attacker who re-signs with their own key produces an envelope whose
+  header key ≠ the operator's trusted key and is rejected before
+  `ed25519_verify` even runs. `verify_ruleset` /
+  `apply_signed_ruleset` (and their `_hex` forms) take the trusted key
+  as an explicit argument — there is no "trust the key in the file"
+  entry point.
+- **Signature covers the rendered body bytes; any mutation fails
+  closed.** `ed25519_verify` runs over exactly the bytes between the
+  `BEGIN/END NFT RULESET` delimiters (`_sign_verify_parsed` →
+  `signed_body`, `sign.cyr:223`); a one-byte body edit yields
+  `NEIN_ERR_BAD_SIGNATURE`. The `nein-sig-digest` (sha256) header is
+  documented and treated as an **audit aid only** —
+  `parse_signed_ruleset` never reads it back, so there is no
+  digest-only fast path to downgrade to.
+- **Version + algorithm are gated at parse.** `parse_signed_ruleset`
+  rejects `nein-sig:` ≠ `v1` (`NEIN_ERR_SIG_VERSION`) and
+  `nein-sig-alg:` ≠ `ed25519` (`NEIN_ERR_SIG_UNSUPPORTED_ALG`); a
+  missing `pubkey`/`sig` header, malformed hex, or wrong hex length
+  (64/128) yields `NEIN_ERR_SIG_MALFORMED`. Stripping the signature
+  therefore fails *parse*, not verify — there is no unsigned path
+  reachable through the signed-apply functions.
+- **Fail-closed apply on the identical bytes it verified.**
+  `apply_signed_ruleset` parses, calls `_sign_verify_parsed`, and only
+  on `Ok` calls `apply_ruleset_str(signed_body(sr))`
+  (`sign.cyr:252-258`). Verify and apply consume the same
+  `(data + body_start, body_len)` span — no re-render or re-parse
+  between them — so there is no verify-vs-apply TOCTOU. Any error
+  short-circuits before nft is touched.
+- **Keygen entropy is fail-closed.** `sign_keygen` delegates to sigil's
+  `ed25519_generate_keypair`, which fills the 32-byte seed through
+  sigil's single CSPRNG boundary (`_sigil_random_fill` → `random_bytes`
+  → per-target getrandom / getentropy / ProcessPrng). On entropy
+  failure it zeroizes both outputs and returns 0, which `sign_keygen`
+  propagates; a key produced on failure is all-zero, so any later
+  verify against it fails deterministically rather than silently
+  accepting weak material.
+
+**Residual risk.**
+- **Replay / rollback is not defended.** The signed message is the body
+  bytes alone — no nonce, timestamp, or monotonic version counter. A
+  captured, still-valid envelope re-verifies and re-applies
+  indefinitely; an attacker who can substitute an older signed ruleset
+  can roll the firewall back to a weaker-but-signed state.
+  Freshness / anti-rollback (a generation counter or wall-clock bound
+  checked by the operator) is a verifier-side control, out of
+  `sign.cyr`'s scope today — tracked as future hardening.
+- **Secret-key custody is the operator's.** nein never persists `sk`
+  (64 bytes, `seed32||pk32`); at-rest protection of the signing key is
+  the signer's responsibility.
+- **Enforcement is opt-in by entry point.** `apply_ruleset_str` and the
+  incremental `*_live` functions remain direct unsigned apply paths.
+  "Signed rulesets only" is a property the caller gets by choosing
+  `apply_signed_ruleset*` as its sole apply entry point; nein does not
+  globally forbid unsigned apply.
+
+### T-10 — MCP destructive-tool access control (`mcp.cyr`, v1.6.0)
+
+**Threat.** `mcp.cyr` exposes nein as MCP tools an agent host can
+drive. Two of the six — `nein_allow` and `nein_deny` — perform a
+**live** `add_rule_live` against the running firewall. An agent that
+reaches the dispatcher could invoke the mutating tools directly, or
+slip past a host's intended gate, and change the live ruleset (open a
+port, drop traffic) without operator intent.
+
+**Mitigation.**
+- **Side-effect classification travels with every tool.**
+  `nein_tool_read_only` marks `nein_allow`/`nein_deny` as mutating
+  (`0`) and the other four as read-only (`1`); `nein_tool_admin`
+  promotes the mutating pair to the `firewall_admin` profile. On the
+  bote-dispatcher path (`_nein_reg`) the mutating tools get
+  `ann_destructive()` annotations and the `{firewall, firewall_admin}`
+  profile vec, while read-only tools get `ann_read_only()` and
+  `{firewall}`. A host can therefore filter/gate by side-effect
+  (`tools/list?profile=firewall_admin`) and expose the admin set only
+  to privileged agents — without any dependency on bote's reserved
+  `claims`.
+- **Fail-closed gate primitive, consulted first in every handler.**
+  When a gate is installed — `nein_tools_register_gated(d, gate_fp)`
+  (dispatcher path) or `nein_mcp_set_gate(gate_fp)` (daimon
+  dispatch-adapter path) — each handler's first act is
+  `_nein_gate_check(name, claims)`, which permits only when
+  `fncall2(_nein_gate, name, claims) == 1` and otherwise returns the
+  `"access denied"` envelope **before** any validate/apply. A denied
+  mutating call never reaches `add_rule_live`.
+- **Single source of truth for both integration paths.** The
+  bote-dispatcher registration and the daimon-friendly
+  `nein_mcp_dispatch` adapter both read the same
+  `nein_tool_name/desc/read_only/admin` table, so a tool cannot be
+  classified destructive on one path and read-only on the other.
+
+**Residual risk.**
+- **The default registration is ungated (fail-open).** Plain
+  `nein_tools_register`, or `nein_mcp_dispatch` with no prior
+  `nein_mcp_set_gate`, leaves `_nein_gate == 0`, and `_nein_gate_check`
+  then returns "permit" for every tool — including the destructive
+  pair. nein ships the fail-closed *primitive* and the classification
+  metadata; **enforcing** it is the host's responsibility. A host that
+  mounts the tools with the plain register exposes live `allow`/`deny`
+  to any agent that can reach the transport. Hosts driving nein should
+  install the gate (gated register / `set_gate`) and deny
+  `firewall_admin` tools by default.
+- **No per-agent identity yet.** bote's `claims` is a reserved `0` in
+  the 2.x ABI, so the gate decides on tool name + whatever ambient host
+  policy `gate_fp` encodes — it cannot yet distinguish *which* agent is
+  calling. Per-agent authorization must wait for bote to populate
+  `claims`; the seam is threaded claims-ready
+  (`fncall2(_nein_gate, name, claims)`) so no signature change is
+  needed when it lands.
+- **Process-global, last-writer-wins gate.** `_nein_gate` is a single
+  module-scope slot; the final `register_gated`/`set_gate` wins and the
+  setting is shared across every dispatcher in the process. A host
+  standing up multiple dispatchers with different policies cannot
+  express per-dispatcher gating through this seam.
+- **Read-only tools still disclose live topology.**
+  `nein_status`/`nein_list`/`nein_diff` return live table/chain/rule
+  state to any permitted agent. They are correctly classed read-only
+  (no mutation), but a host that treats "read-only" as "safe for all
+  agents" leaks firewall topology; the `{firewall}` profile lets a host
+  withhold even the read set from unprivileged agents.
+
+### T-11 — MCP tool-argument injection (`mcp.cyr`, v1.6.0)
+
+**Threat.** MCP tool arguments arrive as an attacker-influenced JSON
+`arguments` object. Two directions of injection: (a) a crafted
+`protocol`/`port`/`source`/`table`/`chain` (or a `nein_diff` rule
+element) could inject nft grammar into the rule that `add_rule_live`
+applies; (b) nft-derived output (live rule bodies, table/chain names)
+echoed back into the MCP `{"content":[...]}` envelope could break out
+of the JSON string and forge tool results.
+
+**Mitigation.**
+- **Every arg that reaches nft is validated before interpolation.**
+  `_mcp_check_rule_args` gates the shared rule surface: `protocol` must
+  be `tcp`/`udp` (`_mcp_valid_proto`), `port` is `atoi`'d and
+  range-checked to `1..65535`, `table`/`chain` pass
+  `validate_identifier`, and `source` (when present) passes
+  `validate_addr` — the same T-1 validators, rejecting the
+  `; { } | \n \r \0 \` $ "` set. `_mcp_build_rule` interpolates only
+  those already-validated components, and `add_rule_live` independently
+  re-runs `_validate_rule_args` — `validate_identifier` on family/table/
+  chain plus `validate_nft_element` over the whole composed rule body
+  (T-2) — so the MCP path inherits both injection gates. The
+  `nein_diff` element parser applies the same protocol/port/verdict
+  checks and then builds the target through **typed constructors**
+  (`rule_new` / `match_protocol` / `match_dport`) — no untrusted string
+  is ever concatenated into nft grammar on the diff path.
+- **All nft-derived output is JSON-escaped.** Every text field emitted
+  back — the result message in `_mcp_result`, and the
+  `family/table/chain/rule` fields in `nein_list`/`nein_diff` — goes
+  through bote's `_json_emit_escaped`, which escapes `" \ \n \r \t`.
+  Live-rule bytes therefore cannot terminate the JSON string early or
+  inject envelope keys such as a forged `"isError":false`.
+- **Preview tools never apply.** `nein_validate` and `nein_diff` are
+  read-only: they validate / compute ops and return them without
+  touching nft, so a malformed arg on those tools is a rejected
+  request, not a state change.
+
+**Residual risk.**
+- **`jsonx` is a minimal parser.** `jsonx_get_str` returns string
+  values **without** decoding escapes (`\n`, `\"` pass through
+  verbatim) and `jsonx_get_raw` returns verbatim source bytes. This is
+  safe here because every consumed value is subsequently range/charset
+  -validated (`validate_identifier` / `validate_addr` / `atoi`) before
+  use — the validators reject the raw escape/metacharacter bytes. Any
+  *future* MCP arg that is interpolated without a `validate_*` pass
+  would reintroduce injection; new tool args must route through the
+  same validators. The `nein_diff` brace-depth element splitter is a
+  hand-rolled scanner over the `rules` array — it is bounded by `alen`
+  and copies each element to a NUL-terminated buffer, but it assumes
+  well-formed brace nesting; malformed nesting degrades to a
+  best-effort parse (rejected downstream by the per-field checks), not
+  memory unsafety.
 
 ## What is NOT a mitigation
 
