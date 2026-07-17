@@ -19,7 +19,7 @@ Consumers:
   sutra  ──→ nein (fleet-wide firewall playbooks)
 ```
 
-## Modules (19)
+## Modules (21)
 
 | Module     | Purpose |
 |------------|---------|
@@ -38,10 +38,12 @@ Consumers:
 | `bridge`   | Container bridge with port mappings and O(1) set-based isolation groups |
 | `engine`   | Multi-agent policy engine with dispatch chains and host restriction sets |
 | `config`   | String→enum dispatchers for TOML/JSON/CLI configuration sources |
-| `netns`    | Per-agent network namespace firewall builder (pairs with agnosys netns apply) |
+| `netns`    | Per-agent network namespace firewall builder (pairs with agnodrm netns apply) |
 | `apply`    | Execute rulesets via `nft -f -` (fork+pipe+execve); batch + incremental rule ops |
 | `inspect`  | Query live firewall state — `status()` returns tables + rule count + raw ruleset |
 | `diff`     | Live-rule diff + idempotent apply — converge the live ruleset onto a target plan with the minimal nft op set |
+| `sign`     | Ed25519-signed rulesets — sign the rendered nft body, verify at-rest tampering before apply (added 1.6.1) |
+| `mcp`      | MCP tool descriptors + handlers exposing nein's firewall ops over bote's Dispatcher/ToolRegistry (added 1.6.0) |
 
 ## Quick Start
 
@@ -154,10 +156,11 @@ for the disclosure policy and full threat model.
 ## Development
 
 ```sh
-cyrius deps                            # resolve dependencies into ./lib/
+cyrius lib sync                        # sync declared stdlib subset from pinned snapshot
+cyrius deps                            # resolve git bundles into ./lib/
 cyrius build src/main.cyr build/nein   # compile (x86_64)
 cyrius build --aarch64 src/main.cyr build/nein-aarch64
-cyrius test tests/nein.tcyr            # run test suite (601 assertions)
+cyrius test tests/nein.tcyr            # run test suite (664 assertions)
 cyrius bench tests/nein.bcyr           # run benchmarks (31 benchmarks)
 cyrius fuzz                            # 5 per-target fuzz drivers
 ```
@@ -170,9 +173,8 @@ through the permission-denied class on non-permissive hosts.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 
-## Deferred (blocked on upstream)
+## Deferred
 
-- `mcp` — blocked on [bote](https://github.com/MacCracken/bote) Cyrius port
 - full TOML struct parsing — core config dispatchers shipped; full struct parsing scheduled for sutra port start
 
 ## Roadmap

@@ -16,7 +16,7 @@ decision is preserved there, not duplicated here. This file tracks
 ## Current state — v1.6.4
 
 Library is feature-complete for the AGNOS-ecosystem consumers
-identified at port time (stiva / daimon / aegis / sutra). 20 modules
+identified at port time (stiva / daimon / aegis / sutra). 21 modules
 (mcp at 1.6.0, sign at 1.6.1), 664 test assertions + a bundle-consume
 integration guard, 31 benchmarks, 5 per-target fuzz drivers, single-file
 `dist/nein.cyr` bundle (still bote/sigil-free) plus the opt-in
@@ -24,7 +24,7 @@ integration guard, 31 benchmarks, 5 per-target fuzz drivers, single-file
 clean; aarch64 cross-build green. libro / majra / bote / sigil / patra
 consumed as git deps (daimon recipe) via `cyrius lib sync` + `cyrius deps`;
 no vendored bundles. As of 1.6.3 sigil + patra carry explicit `[deps.*]`
-pins (full `dist/sigil.cyr`, mirroring bote 3.1.2) so libro 2.8.x's thin
+pins (full `dist/sigil.cyr`, mirroring bote 3.1.x) so libro 2.8.x's thin
 sigil sub-bundles don't collide with the full crypto bundle.
 
 nein's side of the 1.6.x ecosystem work is done. The only open 1.6.x
@@ -169,9 +169,10 @@ under the 1.x line.
 - Don't ship docs-only releases — fold prose currency into the next
   feature minor.
 - Don't add deps speculatively — nein dropped agnostik in v1.1.1 and
-  agnosys in v1.5.4; it now carries no git deps. New deps need a
-  function nein actually calls (the 1.6.x line will pull bote / sigil
-  / daimon precisely because the mcp + signing surfaces call them).
+  agnosys in v1.5.4, then re-added git deps in the 1.6.x line (bote /
+  sigil / libro / majra / patra / sakshi) precisely because the mcp +
+  signing surfaces call them. New deps still need a function nein
+  actually calls, not a "might need it later".
 - Don't over-engineer the diff layer. The v1.5.0 byte-equality match
   is correct-by-construction; extend only when a consumer measures
   pain from the verbose delete+add pairs.

@@ -1,14 +1,14 @@
 # Testing Guide
 
-Last refresh: **2026-05-10** (v1.1.4). Replaces the Rust-era guide that
+Last refresh: **2026-07-17** (v1.6.4). Replaces the Rust-era guide that
 shipped with the v1.0.0 port.
 
 ## Unit Tests
 
-The full unit-test suite lives in `tests/nein.tcyr` — 580 assertions
+The full unit-test suite lives in `tests/nein.tcyr` — 664 assertions
 across 42 test groups (validators, rule rendering, NAT, sets/maps,
 chains, tables, firewall validation, builders, policy, geoip, mesh,
-bridge, engine, config, netns, inspect).
+bridge, engine, config, netns, inspect, diff, sign, mcp).
 
 ```sh
 cyrius test tests/nein.tcyr
@@ -28,12 +28,15 @@ Apply-layer integration tests need:
 
 - Root privileges (or `CAP_NET_ADMIN`)
 - A kernel with `nf_tables` + `nf_conntrack` modules loaded
-- `nft` binary installed at one of `/usr/sbin/nft` / `/sbin/nft` /
-  `/usr/bin/nft` (apply.cyr tries each in order; PATH is **not**
-  consulted — see threat model T-3)
+- `nft` binary installed at the pinned `/usr/sbin/nft` (override at
+  runtime via `nein_set_nft_path`; PATH is **not** consulted — see
+  threat model T-3)
 
-The integration harness is not yet shipped (roadmap v1.4.0 — "real
-nftables integration test harness"). Until then, run smoke tests
+The integration harness ships in `tests/integration/*.tcyr` — 16 tests
+(6 `apply_smoke` + 10 `mcp_consume_smoke`), run via
+`cyrius test tests/integration/*.tcyr`. On non-permissive hosts the
+apply assertions fall through the permission-denied class; the
+pure-function assertions still run. You can also run a smoke test
 manually:
 
 ```sh
@@ -41,15 +44,15 @@ sudo ./build/nein   # exits 0 with "nein ready" — confirms apply
                     # path doesn't crash before nft contact
 ```
 
-**Warning:** future integration tests will flush the live nftables
+**Warning:** the live-apply integration tests flush the live nftables
 ruleset. They are designed to run in a network namespace; do not
 disable the namespace guard on production systems.
 
 ## Coverage
 
 Cyrius does not yet ship a coverage tool. `cyrius coverage` is listed
-in `cyrius --help` but is a no-op in 5.10.x. Roadmap-watched —
-empirical coverage from the 580 assertions is the gate today.
+in `cyrius --help` but is a no-op in 6.4.x. Roadmap-watched —
+empirical coverage from the 664 assertions is the gate today.
 
 ## Benchmarks
 
@@ -96,18 +99,15 @@ reference without affecting the gate.
 
 ## Fuzzing
 
-The fuzz harness lives in `tests/nein.fcyr` and is built like a
-regular `.cyr` program:
+The fuzz harness is 5 per-target drivers in `fuzz/*.fcyr` (`validate`,
+`config_parse`, `rule`, `nat`, `firewall`), auto-discovered and run via:
 
 ```sh
-cyrius build tests/nein.fcyr build/fuzz_nein
-./build/fuzz_nein 500    # 500 iterations
+cyrius fuzz
 ```
 
-Today the harness is one monolithic file. Splitting it per-validator
-(`fuzz/validate_addr.fcyr`, `fuzz/rule_render.fcyr`, …) is on the
-v1.3.0 roadmap to allow per-target iteration tuning and crash
-attribution.
+`cyrius fuzz` builds each driver, runs it, and exits 0 only if every
+driver exits 0; crash attribution is by driver name.
 
 CI runs the harness for 500 iterations under a 10-second wall clock
 timeout per file (best-effort — slow runners may exit cleanly with
@@ -133,7 +133,7 @@ Running all of these locally reproduces CI:
 
 ```sh
 # Toolchain check
-cyrius deps && cyrius build src/main.cyr build/nein
+cyrius lib sync && cyrius deps && cyrius build src/main.cyr build/nein
 # Test + bench
 cyrius test tests/nein.tcyr && cyrius bench tests/nein.bcyr
 # Surface + regression

@@ -6,7 +6,7 @@
 
 - **Type**: Shared library
 - **License**: GPL-3.0-only
-- **Language**: Cyrius (sovereign systems language, compiled by cc5; pinned `cyrius = "5.10.34"` in `cyrius.cyml`)
+- **Language**: Cyrius (sovereign systems language, compiled by cycc; pinned `cyrius = "6.4.66"` in `cyrius.cyml`)
 - **Version**: SemVer, version file at `VERSION`
 - **Status**: 1.6.4 — Cyrius port complete + MCP/Ed25519-signing surface (mcp 1.6.0, sign 1.6.1, daimon dispatch adapter 1.6.2; toolchain 6.4.66 + dependency refresh 1.6.3–1.6.4). 664 unit + 16 integration assertions, 31 benchmarks, 5 fuzz drivers, 383 public fns. CI gates: fmt/lint/vet/capacity/type-check/aarch64-cross/security-scan/api-surface/bench-regression/fuzz/integration/dist-staleness
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
@@ -53,7 +53,9 @@ src/
     builder.cyr    — pre-built configurations
     policy.cyr     — Kubernetes-style network policy
     netns.cyr      — network namespace firewall
-    # mcp.cyr — blocked on bote Cyrius port (roadmap v2.0.0)
+    firewall.cyr   — top-level manager (add_table, validate, render)
+    sign.cyr       — Ed25519-signed rulesets (v1.6.1)
+    mcp.cyr        — MCP tool surface over bote (v1.6.0)
 
 rust-old/          — preserved Rust source (9,338 lines, reference only)
 ```
@@ -81,7 +83,7 @@ rust-old/          — preserved Rust source (9,338 lines, reference only)
 4. Internal review — performance, memory, correctness
 5. **Security check** — any new syscall usage, user input handling, buffer allocation reviewed for safety
 6. Documentation — update CHANGELOG, roadmap, docs
-7. Version check — VERSION, cyrius.toml in sync
+7. Version check — VERSION, cyrius.cyml in sync
 8. Return to step 1
 
 ### Security Hardening (before release)
@@ -114,8 +116,8 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 5. **Security re-scan** — quick grep for new `sys_system`, unchecked writes, unsanitized input, buffer size mismatches
 6. **Downstream check** — all consumers that depend on this crate still build and pass tests with the new version
 7. **CHANGELOG/roadmap sync** — all docs reflect current state, version numbers consistent
-8. **Version verify** — VERSION, cyrius.toml, CHANGELOG header all match
-9. **Full build from clean** — `rm -rf build && cyrius deps && cyrius build` passes clean
+8. **Version verify** — VERSION, cyrius.cyml, CHANGELOG header all match
+9. **Full build from clean** — `rm -rf build && cyrius lib sync && cyrius deps && cyrius build` passes clean
 
 ### Task Sizing
 
@@ -133,8 +135,8 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 - Research before implementation — check vidya for existing patterns
 - Study working programs (`cyrius/programs/*.cyr`) before writing new code
 - Programs must call main() at top level: `var exit_code = main(); syscall(60, exit_code);`
-- `cyrius build` handles everything — NEVER use raw `cat file | cc3`
-- Source files only need project includes — deps auto-resolve from cyrius.toml
+- `cyrius build` handles everything — NEVER use raw `cat file | cycc`
+- Source files only need project includes — deps resolve explicitly: `cyrius lib sync` then `cyrius deps` (from cyrius.cyml)
 - Every buffer declaration is a contract: `var buf[N]` = N BYTES, not N entries
 - **Own the stack.** If an AGNOS crate wraps an external lib, depend on the AGNOS crate.
 - **No magic.** Every operation is measurable, auditable, traceable.
@@ -168,9 +170,8 @@ docs/ (when earned):
 # Build
 /build/
 
-# Cyrius
-lib/*.cyr
-!lib/k*.cyr
+# Cyrius — /lib/ is the resolved-deps dir, never committed (dist/ + cyrius.lock ARE tracked)
+/lib/
 
 # Rust (preserved in rust-old/)
 rust-old/target/

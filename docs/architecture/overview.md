@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Last refresh: **2026-05-10** (v1.1.4).
+Last refresh: **2026-07-17** (v1.6.4).
 
 ## Design Philosophy
 
@@ -14,7 +14,7 @@ Key principles:
 - **Type safety over string templating.** Enum variants (per ADR-0008)
   for match types, verdicts, protocols, families, and hooks prevent
   invalid combinations at construction. The Cyrius type-check arc
-  (default-on at v5.10.26+) adds a second layer at the
+  (default-on since v5.10.26; current toolchain 6.4.x) adds a second layer at the
   `(s: cstring): i64` interface boundary on validators and
   constructors — a wrong-type arg fails the build, not the rule.
 - **Validate before apply.** All caller-supplied strings flow through
@@ -24,8 +24,7 @@ Key principles:
 - **Feature-gated modules** (per ADR-0003). Consumers pull in only what
   they need. Core types (rule, table, chain, set, validate) are always
   available; NAT, policy, bridge, engine, mesh, config, geoip, and netns
-  are optional. The `mcp` module is blocked on the bote Cyrius port
-  (roadmap v2.0.0).
+  are optional, along with `mcp` (shipped v1.6.0) and `sign` (v1.6.1).
 - **Render, don't execute** (per ADR-0001). Most of the library is pure
   rule generation. Only `src/lib/apply.cyr` shells out to `nft`.
   `firewall_render` is observable before any apply, so callers can size
@@ -57,6 +56,9 @@ src/
     netns.cyr         — Per-agent network namespace firewall builder
     apply.cyr         — nft execution layer (fork+pipe+execve)
     inspect.cyr       — Live firewall status parser
+    diff.cyr          — Live-rule diff + idempotent apply
+    sign.cyr          — Ed25519 ruleset signing (v1.6.1)
+    mcp.cyr           — MCP tool surface over bote (v1.6.0)
 ```
 
 Each `.cyr` file is `include`d from `src/main.cyr` in dependency order:
@@ -79,7 +81,7 @@ caller's Cyrius code (e.g. stiva, daimon, aegis, sutra)
   rendering:     firewall_render(fw)    ──→  Str of nftables syntax
         │
         ▼
-  apply:         apply_firewall(fw)     ──→  fork → pipe → execve /sbin/nft -f -
+  apply:         apply_firewall(fw)     ──→  fork → pipe → execve /usr/sbin/nft -f -
                                               │
                                               └─→ stderr drained, exit observed,
                                                   Ok(0) / Err(ERR_NFT_FAILED|PERMISSION_DENIED)
@@ -91,8 +93,8 @@ else is pure rendering and can run with no permissions.
 ## Type Boundary
 
 The public-fn surface is tracked in
-[`docs/api-surface.snapshot`](../api-surface.snapshot) (348 fns as of
-v1.1.3). The CI gate fails on unexplained adds or removes.
+[`docs/api-surface.snapshot`](../api-surface.snapshot) (383 fns as of
+v1.6.4). The CI gate fails on unexplained adds or removes.
 
 Conventions:
 
@@ -171,14 +173,16 @@ ecosystem, each pulling a subset of the module surface:
 | Consumer | Module surface | Purpose |
 |----------|---------------|---------|
 | **stiva** | bridge, nat | Container bridge networking, port mappings |
-| **daimon** | engine, mesh, policy | Service-mesh network policy, agent access control |
+| **daimon** | engine, mesh, policy, mcp, sign | Service-mesh network policy, agent access control, MCP host integration |
 | **aegis** | builder, geoip, firewall | Host firewall + GeoIP blocking |
 | **sutra** | config, builder | Fleet-wide firewall playbooks (blocked on full TOML, roadmap v2.0.0) |
 
-As of v1.1.4 none of these have wired the nein dep in their
-`cyrius.cyml` yet — the integration work is part of each consumer's
-own roadmap. The `dist/nein.cyr` single-file bundle (roadmap v1.2.0)
-will be the canonical consumption form.
+As of v1.6.4 the `dist/nein.cyr` single-file bundle is the canonical
+consumption form (bote/sigil-free), with an opt-in `dist/nein-mcp.cyr`
+bundle for MCP + signing (see
+[`docs/guides/mcp-host-integration.md`](../guides/mcp-host-integration.md)).
+Consumers pull via `[deps.nein]` tag = "1.6.4"; the paired daimon-side
+wiring PR is the last open 1.6.x integration item.
 
 ## Architectural Decisions
 

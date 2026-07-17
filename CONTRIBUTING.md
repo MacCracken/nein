@@ -4,7 +4,7 @@ Thank you for your interest in contributing to nein. This document covers
 the development workflow, code standards, and project conventions for the
 Cyrius-era codebase.
 
-Last refresh: **2026-05-10** (v1.1.4).
+Last refresh: **2026-07-17** (v1.6.4).
 
 ## Development Workflow
 
@@ -15,17 +15,17 @@ Last refresh: **2026-05-10** (v1.1.4).
 
 ## Prerequisites
 
-- Cyrius toolchain ≥ **5.10.34** (pinned in `cyrius.cyml`). Install
+- Cyrius toolchain ≥ **6.4.66** (pinned in `cyrius.cyml`). Install
   via the canonical release:
   ```sh
-  curl -sLO https://github.com/MacCracken/cyrius/releases/download/5.10.34/cyrius-5.10.34-x86_64-linux.tar.gz
-  tar xzf cyrius-5.10.34-x86_64-linux.tar.gz
-  # then copy bin/* and lib/* into ~/.cyrius/versions/5.10.34/
-  # and symlink ~/.cyrius/bin -> ~/.cyrius/versions/5.10.34/bin
+  curl -sLO https://github.com/MacCracken/cyrius/releases/download/6.4.66/cyrius-6.4.66-x86_64-linux.tar.gz
+  tar xzf cyrius-6.4.66-x86_64-linux.tar.gz
+  # then copy bin/* and lib/* into ~/.cyrius/versions/6.4.66/
+  # and symlink ~/.cyrius/bin -> ~/.cyrius/versions/6.4.66/bin
   ```
-- `nft` binary at `/usr/sbin/nft` (or `/sbin/nft`, `/usr/bin/nft`) for
-  any local apply-layer smoke testing. The library itself doesn't need
-  it at compile time.
+- `nft` binary at the pinned default `/usr/sbin/nft` (override elsewhere
+  at runtime via `nein_set_nft_path`) for any local apply-layer smoke
+  testing. The library itself doesn't need it at compile time.
 
 CI installs the same version from the GitHub release URL — see
 `.github/workflows/ci.yml`'s "Install Cyrius toolchain" step.
@@ -36,7 +36,8 @@ There is no Makefile — `cyrius` is the build tool. The full CI gate
 set reproduces with:
 
 ```sh
-cyrius deps                                       # resolve deps into ./lib/
+cyrius lib sync                                   # sync declared stdlib subset from pinned snapshot
+cyrius deps                                       # resolve git bundles into ./lib/
 cyrius deps --verify                              # confirm cyrius.lock hashes
 
 # Format / lint / vet
@@ -51,7 +52,7 @@ cyrius capacity --check src/main.cyr || true     # informational
 CYRIUS_DCE=1 cyrius build src/main.cyr build/nein
 CYRIUS_DCE=1 cyrius build --aarch64 src/main.cyr build/nein-aarch64
 
-# Type-check (cyrius v5.10.26+ default-on)
+# Type-check (cyrius 6.x default-on)
 CYRIUS_TYPE_CHECK=1 cyrius build src/main.cyr build/nein-tc
 
 # Test + bench
@@ -96,19 +97,18 @@ old — bump both in the same PR if shipping a release.
   Internal polymorphic constructors (e.g. `match_new(mtype, v1, v2, v3)`)
   may stay un-annotated where the args are intentionally heterogeneous.
 - **No comments that restate identifiers**. Comment WHY, not WHAT.
-- **No magic**: every syscall site is sakshi-traceable (roadmap
-  v1.2.0 will close the remaining gaps); no `sys_system`; no PATH
-  reliance in execve (use absolute paths only).
+- **No magic**: every syscall site is sakshi-traceable; no `sys_system`;
+  no PATH reliance in execve (use absolute paths only).
 
 ## Testing
 
 - Every new fn under `src/lib/` needs an assertion in `tests/nein.tcyr`.
 - Validators (the injection-safety surface) require fuzz coverage in
-  `tests/nein.fcyr` for both positive and negative cases.
+  `fuzz/*.fcyr` for both positive and negative cases.
 - Benchmark any fn likely to be called per-rule or per-packet-evaluation.
 - Integration tests against a real `nft` binary live behind the
-  `NEIN_INTEGRATION=1` env gate (harness not yet shipped — roadmap
-  v1.4.0).
+  `NEIN_INTEGRATION=1` env gate (`tests/integration/*.tcyr` — 16 tests:
+  6 apply_smoke + 10 mcp_consume_smoke).
 
 ## Performance
 

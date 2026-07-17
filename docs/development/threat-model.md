@@ -1,8 +1,11 @@
 # Threat Model
 
-Last refresh: **2026-05-10** (v1.4.0 — T-3 hardened to single pinned
-absolute path; integration test scaffold + inspect-parser hardening
-added).
+Last refresh: **2026-07-17** (v1.6.4 — T-8 dep set + toolchain pin
+brought current. **Gap:** the v1.6.1 `sign` (Ed25519 trust / key
+management) and v1.6.0 `mcp` (agent tool access-control) surfaces are
+not yet threat-modeled — a dedicated pass is pending. The v1.4.0
+refresh hardened T-3 to a single pinned absolute path and added the
+integration test scaffold + inspect-parser hardening).
 
 ## Scope
 
@@ -13,7 +16,7 @@ threat model covers:
 1. Inputs flowing from a caller into the rendered ruleset (injection)
 2. The handoff to the `nft` subprocess (subprocess hygiene, PATH attacks)
 3. The kernel-side surface nein touches (privilege model)
-4. Supply chain — Cyrius toolchain, agnosys dependency, lockfile
+4. Supply chain — Cyrius toolchain, git dependencies, lockfile
 
 Out of scope: the `nft` userspace tool's own attack surface, the kernel
 netfilter subsystem, and downstream callers (stiva, daimon, aegis,
@@ -170,18 +173,21 @@ the bump.
 ### T-8 — supply chain
 
 **Threat.** A compromised Cyrius toolchain release or a poisoned
-agnosys release could inject malicious code into the nein binary.
+git-dependency release could inject malicious code into the nein binary.
 
 **Mitigation.**
-- Cyrius version is pinned in `cyrius.cyml` (`cyrius = "5.10.34"`);
+- Cyrius version is pinned in `cyrius.cyml` (`cyrius = "6.4.66"`);
   CI installs from the version-pinned GitHub release URL — no `latest`,
   no floating tags.
 - `cyrius.lock` records sha256 of each resolved dep. CI's
   `cyrius deps --verify` step fails on hash mismatch.
-- nein's dep set is **deliberately minimal**: agnosys 1.2.4
-  (`dist/agnosys-core.cyr` profile only) is the sole `[deps.*]`
-  entry as of v1.1.1. The agnostik dep was dropped in v1.1.1 after
-  audit found zero call sites.
+- nein's `[deps.*]` set is pinned to explicit tags: libro 2.8.2,
+  majra 2.5.1, bote 3.1.4, sigil 3.12.1, patra 1.12.12, sakshi 2.4.6
+  (sigil + patra carry their own explicit `[deps.*]` pins). Deps do
+  **not** auto-resolve: `cyrius lib sync` pulls the declared stdlib
+  subset from the pinned snapshot, then `cyrius deps` fetches the git
+  bundles. The set grew from the 1.6.x MCP + Ed25519-signing surface
+  (bote/sigil); each addition is a git bundle with an audited call site.
 - No external `unsafe` paths — Cyrius doesn't have an `unsafe` block
   concept; all syscall surface is stdlib-mediated and surfaced through
   the security-scan CI gate.

@@ -7,9 +7,9 @@ small enough that a generator script isn't needed yet — agnosys's
 `scripts/gen-capability-map.sh` pattern would be the template if it
 gets one).
 
-**Last refresh:** 2026-05-10 (v1.5.0)
-**nein version:** 1.5.0
-**cyrius version:** 5.10.34
+**Last refresh:** 2026-07-17 (v1.6.4)
+**nein version:** 1.6.4
+**cyrius version:** 6.4.66
 
 ## How to read this
 
@@ -60,8 +60,8 @@ when wiring agent firewalls, integration tests) additionally see:
 - **`sys_*` wrappers:** `sys_pipe`, `sys_fork`, `sys_execve`,
   `sys_dup2`, `sys_close`, `sys_read`, `sys_write`, `sys_waitpid`,
   `sys_exit`
-- **Subprocess binaries:** `/usr/sbin/nft`, `/sbin/nft`, `/usr/bin/nft`
-  (tried in order; first hit wins)
+- **Subprocess binaries:** `/usr/sbin/nft` (single pinned absolute path;
+  override at runtime via `nein_set_nft_path`)
 - **Filesystem paths:** none (apply.cyr does not read/write any
   hard-coded fs paths; the nft binary itself reads kernel state via
   netlink — out of nein's surface)
@@ -140,6 +140,36 @@ the apply-layer wrappers below.
 PATH is not consulted; the v1.4.0 model removed the prior
 `/usr/sbin → /sbin → /usr/bin` fallback chain to close the multi-path
 race documented in threat model T-3.
+
+### `sign` (`src/lib/sign.cyr`)
+
+| | Count |
+|---|---|
+| Direct syscalls | 0 |
+| `sys_*` wrappers | 0 (Ed25519 keygen draws randomness inside sigil; `apply_signed_ruleset` transitively via apply) |
+| Subprocess binaries | 0 (transitively `nft` via apply) |
+| Filesystem paths | 0 |
+
+Signing + verification over the rendered nft body (Ed25519 via
+[sigil](https://github.com/MacCracken/sigil), v1.6.1). `sign_keygen` /
+`sign_ruleset` / `verify_ruleset` are computation-only; the syscall surface
+opens only when `apply_signed_ruleset` chains a verified body through the
+apply layer (fail-closed — verify or never touch nft).
+
+### `mcp` (`src/lib/mcp.cyr`)
+
+| | Count |
+|---|---|
+| Direct syscalls | 0 |
+| `sys_*` wrappers | 0 (transitively via apply when a mutating tool runs) |
+| Subprocess binaries | 0 (transitively `nft` via apply) |
+| Filesystem paths | 0 |
+
+MCP tool dispatch surface over [bote](https://github.com/MacCracken/bote)
+(v1.6.0). Handlers validate args and route to the inspect / builder / apply /
+diff functions; the read-only tools (`nein_status` / `nein_list` /
+`nein_validate`) have no syscall surface, and the mutating tools inherit
+apply's footprint above.
 
 ## Capabilities (Linux)
 

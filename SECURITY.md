@@ -1,6 +1,6 @@
 # Security Policy
 
-Last refresh: **2026-05-10** (v1.1.4).
+Last refresh: **2026-07-17** (v1.6.4).
 
 ## Scope
 
@@ -35,7 +35,7 @@ Issues mapped to a numbered threat in the threat model expedite triage
 
 | Version | Supported |
 | ------- | --------- |
-| 1.1.x   | Yes       |
+| 1.6.x   | Yes       |
 | 1.0.x   | Best-effort (security-only fixes) |
 | 0.9x.x  | No (Rust-era) |
 | < 0.9x  | No (Rust-era) |
@@ -43,7 +43,7 @@ Issues mapped to a numbered threat in the threat model expedite triage
 The Rust-era line (≤ 0.90.0) is preserved in `rust-old/` as a reference
 checkout — it is not maintained. The Cyrius port baseline is v1.0.0.
 
-## Security Properties (current, v1.1.x)
+## Security Properties (current, v1.6.x)
 
 The properties below are enforced today. Each ties back to a numbered
 threat in the threat model.
@@ -56,11 +56,12 @@ threat in the threat model.
   checks. As of v1.1.2, all validators carry `(s: cstring): i64` type
   annotations and the type-check CI gate confirms callers pass the
   right shape.
-- **No PATH-based execve** (T-3). The `nft` subprocess is invoked via
-  absolute paths only: `/usr/sbin/nft` → `/sbin/nft` → `/usr/bin/nft`.
-  The CI security-scan gate allowlists these three paths in
-  `src/lib/apply.cyr` and fails the build on any new hardcoded
-  `/etc/`, `/bin/`, or un-allowlisted `/sbin/` literal.
+- **No PATH-based execve** (T-3). The `nft` subprocess is invoked via a
+  single pinned absolute path (`/usr/sbin/nft`); PATH is never consulted.
+  A caller can override the path at runtime via `nein_set_nft_path`
+  (validated: absolute, ≤ 256 bytes, non-null). The CI security-scan gate
+  allowlists the pinned path in `src/lib/apply.cyr` and fails the build on
+  any new hardcoded `/etc/`, `/bin/`, or un-allowlisted `/sbin/` literal.
 - **Child-process hygiene** (T-4). `_run_nft_stdin` and
   `_run_nft_capture` always close unused pipe ends, drain stderr, and
   `sys_waitpid` regardless of stdin-write outcome. Execve failure
@@ -72,8 +73,11 @@ threat in the threat model.
 - **Lockfile-pinned deps** (T-8). `cyrius.lock` records the sha256 of
   each resolved dep. `cyrius deps --verify` in CI fails on hash
   mismatch. Cyrius itself is pinned in `cyrius.cyml`
-  (`cyrius = "5.10.34"`). nein's dep set is one entry as of v1.1.1:
-  agnosys 1.2.4 (`dist/agnosys-core.cyr` profile only).
+  (`cyrius = "6.4.66"`). nein's git dep set (`cyrius.cyml` `[deps.*]`):
+  libro 2.8.2, majra 2.5.1, bote 3.1.4, sigil 3.12.1, patra 1.12.12,
+  sakshi 2.4.6 — sigil + patra carry explicit pins. Deps do not
+  auto-resolve: `cyrius lib sync` pulls the declared stdlib subset, then
+  `cyrius deps` fetches the git bundles.
 - **Symbol-collision audit** (T-7). v1.1.1 renamed nein-side fns that
   collided with agnostik/stdlib (`network_policy_new` →
   `nein_network_policy_new`, `err_code` → `nein_err_code`). Future
@@ -81,8 +85,7 @@ threat in the threat model.
   build warnings — none in the current build.
 - **Buffer review** (T-4). CI security scan flags any fn-scope
   `var buf[N]` ≥ 4 KB (warn) or ≥ 64 KB (fail). Current 4 KB
-  warnings on `apply.cyr` (stderr/stdout capture) are review-acked;
-  the `str_builder` audit on roadmap v1.3.0 will retire them.
+  warnings on `apply.cyr` (stderr/stdout capture) are review-acked.
 
 ## Security-Adjacent Tooling
 

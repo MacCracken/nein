@@ -25,7 +25,7 @@ modules = ["dist/nein-mcp.cyr"]
 `dist/nein-mcp.deps` lists `bote-core`. Under cyrius 6.4.x `thread` /
 `thread_local` fold into the always-resolved `std` group, and since 1.6.3
 `sigil` is nein's own explicit `[deps.sigil]` git pin (full `dist/sigil.cyr`,
-mirroring bote 3.1.2) rather than a stdlib leave — so neither is emitted in
+mirroring bote 3.1.x) rather than a stdlib leave — so neither is emitted in
 the sidecar. The bundle body is unchanged: it still leaves **bote** and
 **sigil** (`ed25519` / `hex` / `sha256`) symbols unresolved, so include it
 **after** bote and sigil in the host's single-pass include chain (a bote+sigil
@@ -82,7 +82,7 @@ ungated variant.
 host owns agent identity (daimon's `agent.cyr`); nein just calls the gate
 before each tool acts and returns an "access denied" envelope on `0`,
 **never touching the firewall**. Today bote's `claims` is a reserved `0`
-(2.x ABI), so gate on the host's own agent context; the seam lights up for
+(3.x ABI), so gate on the host's own agent context; the seam lights up for
 free when claims populate.
 
 Classify by side-effect using the tool table:
