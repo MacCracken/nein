@@ -4,6 +4,58 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.3] — 2026-07-17
+
+**Toolchain 6.4.66 + full dependency refresh.** No nein source or API change
+(383 public fns unchanged) — the release moves every pin to its current tag,
+clears the manifest-pin drift, and (the one structural change) reworks how
+nein resolves sigil so libro 2.8.x's thinned sigil surface stops colliding
+with the full bundle. 664 unit + 16 integration assertions, 31 benches (no
+regressions), and 5 fuzz drivers stay green; `cyrius deps --verify` clean
+(56 files).
+
+### Changed
+
+- **cyrius pin `6.3.45` → `6.4.66`.** Clears the "manifest-pin: 6.3.45 (drift
+  — wrapper is 6.4.66)" warning. The 6.4.x line makes `cyrius lib sync`
+  default to the declared `[deps].stdlib` subset (`--full` for the whole
+  snapshot), adds a lib-freshness shadow check (6.4.63) that surfaces
+  registry-lag, and re-subsets per-profile distlib `.deps` sidecars. nein's
+  build, type-check, and aarch64 cross-build all pass clean under the new pin.
+- **Dependency refresh — every git dep to its latest tag:**
+  - **libro `2.7.10` → `2.8.1`** — banks the `patrastore_append` bound-INSERT
+    fix (a `'` in an audit field no longer silently drops the row). 2.8.0 also
+    *thinned* libro's sigil surface into per-primitive sub-bundles, which
+    forced the sigil rework below.
+  - **majra `2.5.0` → `2.5.1`** — dist body byte-identical (banner restamp);
+    toolchain/dep refresh only.
+  - **bote `3.0.0` → `3.1.2`** — no bote logic change, a toolchain + dependency
+    refresh. nein's consumed `jsonx` / dispatcher / `ToolAnnotations` surface
+    is unchanged, so `src/lib/mcp.cyr` needed no edits.
+  - **sigil `3.9.8` → `3.12.1`** — banks 3.9.9's crypto-bank thread-local slot
+    fix (slot 0 → 8): slot 0 collided with patra's SQL scratch, corrupting
+    banked crypto state in any process that links *both* — which nein does
+    (patra via libro's audit store + sigil via `src/lib/sign.cyr`). Defense in
+    depth for the 1.6.1 Ed25519 signing path.
+  - **patra `1.12.7` → `1.12.12`** — banks the SQL-quote escaping fix; matches
+    the 6.4.66 snapshot so no shadow-lib warning fires.
+  - **sakshi `2.4.3` → `2.4.6`** — arrives via bote's pin; custom headers +
+    W3C 128-bit trace-id.
+- **sigil moved from `[deps]` stdlib to an explicit `[deps.sigil]` full-bundle
+  pin** (`dist/sigil.cyr` @ 3.12.1), mirroring bote 3.1.2. libro 2.8.x's `.deps`
+  sidecar now vendors thin sigil sub-bundles (`sigil-mldsa` + `sha_ni` +
+  `sha256` + `hex`) transitively; layered under the full stdlib sigil bundle
+  they redefined every sha/hex/ed25519 fn (**226 duplicate-fn last-wins
+  warnings**). The top-level pin wins over the transitive thin bundles and
+  reaches the latest self-contained bundle (the stdlib registry lags). nein's
+  whole sigil surface is `sign.cyr`'s ed25519 + sha256 + hex; bote-core uses no
+  sigil crypto. An explicit `[deps.patra]` pin was added for the same reason —
+  keep the transitive audit dep current and snapshot-matched. The build is now
+  clean but for three pre-existing, benign upstream "last-definition-wins"
+  warnings (libro↔bote-core `ERR_JSON`/`ERR_IO`, majra `_sub_new`).
+- **`dist/nein.cyr` + `dist/nein-mcp.cyr` regenerated at 1.6.3** (version banner
+  only — the `[lib]` module bodies are unchanged).
+
 ## [1.6.2] — 2026-07-04
 
 **nein's half of the daimon firewall-MCP joint ship:** a consumable bundle

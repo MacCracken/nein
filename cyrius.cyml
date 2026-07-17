@@ -5,7 +5,7 @@ description = "nein — programmatic nftables firewall"
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/nein"
 language = "cyrius"
-cyrius = "6.3.45"
+cyrius = "6.4.66"
 
 [build]
 entry = "src/main.cyr"
@@ -102,12 +102,22 @@ stdlib = [
     "sakshi",
     # Transitive stdlib for the git-dep bote-core/sigil stack (1.6.1).
     # `cyrius lib sync` copies this declared subset into ./lib/ so the git
-    # deps' requirements resolve. sigil (Ed25519 signing) needs ct/keccak/
+    # deps' requirements resolve. The Ed25519 sign path needs ct/keccak/
     # random/slice/thread/thread_local; libro/majra/patra add sync/atomic.
-    # sigil resolves as a git bundle via the stdlib registry. This is the
-    # MINIMAL set for the transport-free bote-core — ws_server / tls /
-    # sandhi (bote's full-transport deps) are deliberately NOT declared.
-    # Order: ct/keccak/random before sigil, thread before thread_local.
+    # This is the MINIMAL set for the transport-free bote-core — ws_server /
+    # tls / sandhi (bote's full-transport deps) are deliberately NOT declared.
+    #
+    # sigil is NOT a stdlib entry — it's an explicit deps.sigil git pin
+    # (full dist/sigil.cyr, below), mirroring bote 3.1.2 (1.6.3). That
+    # top-level pin reaches the latest self-contained bundle (the stdlib
+    # registry lags) AND wins over libro 2.8.x's transitive thin sigil
+    # sub-bundles (sigil-mldsa + sha_ni + sha256 + hex); without it the full
+    # and thin surfaces co-exist and collide (226 duplicate-fn last-wins
+    # warnings, since the full bundle re-defines every sha/hex/ed25519 fn the
+    # thin set carries). nein's whole sigil surface is sign.cyr's ed25519 +
+    # sha256 + hex; bote-core uses no sigil crypto. ct/keccak/random precede
+    # sigil for the single-pass forward refs, thread before thread_local for
+    # sigil's TLS crypto_scratch path.
     "ct",
     "keccak",
     "random",
@@ -116,7 +126,6 @@ stdlib = [
     "thread_local",
     "sync",
     "atomic",
-    "sigil",
 ]
 
 # [deps.agnosys] dropped at the agnosys → agnodrm decomposition (2026-06-19).
@@ -130,19 +139,47 @@ stdlib = [
 # not auto-resolve): `cyrius lib sync` copies the declared [deps] stdlib
 # above into ./lib/, THEN `cyrius deps` clones these bundles at their tags
 # and copies each dist/*.cyr into ./lib/. libro + majra are declared before
-# bote (bote's graph references them; Cyrius single-pass). sigil comes from
-# [deps] stdlib above. Retired the vendored src/vendor/bote-core.cyr at 1.6.1.
+# bote (bote's graph references them; Cyrius single-pass). sigil is an
+# explicit deps.sigil pin below (full dist/sigil.cyr, mirrors bote 3.1.2 —
+# see the stdlib note above). Retired the vendored src/vendor/bote-core.cyr
+# at 1.6.1.
 [deps.libro]
 git = "https://github.com/MacCracken/libro.git"
-tag = "2.7.10"
+tag = "2.8.1"
 modules = ["dist/libro.cyr"]
 
 [deps.majra]
 git = "https://github.com/MacCracken/majra.git"
-tag = "2.5.0"
+tag = "2.5.1"
 modules = ["dist/majra.cyr"]
 
 [deps.bote]
 git = "https://github.com/MacCracken/bote.git"
-tag = "3.0.0"
+tag = "3.1.2"
 modules = ["dist/bote-core.cyr"]
+
+# sigil crypto — explicit pin to the self-contained single-file dist bundle
+# (same pattern as libro / majra, mirrors bote 3.1.2). Added at 1.6.3 when
+# the sigil surface moved out of the deps stdlib list. Two jobs: (1) reach the
+# latest self-contained bundle — the stdlib registry lags the toolchain
+# snapshot; (2) win over libro 2.8.x's transitive thin sigil sub-bundles
+# (sigil-mldsa + sha_ni + sha256 + hex), which otherwise co-exist with this
+# full bundle and collide (226 duplicate-fn last-definition-wins warnings).
+# nein consumes ed25519 + sha256 + hex (src/lib/sign.cyr); ct / keccak /
+# random precede it via [deps] stdlib for the single-pass forward refs, and
+# thread_local precedes sigil for its TLS crypto_scratch path.
+[deps.sigil]
+git = "https://github.com/MacCracken/sigil.git"
+tag = "3.12.1"
+modules = ["dist/sigil.cyr"]
+
+# patra sqlite — libro 2.8.x's audit store links it, and libro's .deps
+# sidecar pulls it transitively at 1.12.9. Pinned explicitly at 1.12.12
+# (latest; libro 2.8.1 supports 1.12.9+) so ./lib/ matches the 6.4.66
+# toolchain snapshot's bundled patra and no shadow-lib warning fires. nein
+# calls no patra symbol directly; this pin only keeps the transitive audit
+# dep current. Banks 1.12.10's SQL-quote escaping fix along the way.
+[deps.patra]
+git = "https://github.com/MacCracken/patra.git"
+tag = "1.12.12"
+modules = ["dist/patra.cyr"]

@@ -18,14 +18,18 @@ exactly as it already does for the full bote bundle.
 # host cyrius.cyml
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
-tag = "1.6.2"
+tag = "1.6.3"
 modules = ["dist/nein-mcp.cyr"]
 ```
 
-`dist/nein-mcp.deps` lists what the host must already provide: `thread`,
-`thread_local`, `sigil`, `bote-core` (all of which a bote+sigil host has).
-Include the bundle **after** bote and sigil in the host's single-pass
-include chain.
+`dist/nein-mcp.deps` lists `bote-core`. Under cyrius 6.4.x `thread` /
+`thread_local` fold into the always-resolved `std` group, and since 1.6.3
+`sigil` is nein's own explicit `[deps.sigil]` git pin (full `dist/sigil.cyr`,
+mirroring bote 3.1.2) rather than a stdlib leave — so neither is emitted in
+the sidecar. The bundle body is unchanged: it still leaves **bote** and
+**sigil** (`ed25519` / `hex` / `sha256`) symbols unresolved, so include it
+**after** bote and sigil in the host's single-pass include chain (a bote+sigil
+host — e.g. daimon — already has both).
 
 ## Wire the tools — two paths
 
