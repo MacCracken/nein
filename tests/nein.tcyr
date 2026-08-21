@@ -1973,6 +1973,119 @@ fn _cstr_to_str(c) {
     return str_builder_build(sb);
 }
 
+fn test_ct_state_validation() {
+    test_group("ct_state_validation");
+
+    # Legitimate list forms
+    assert(is_ok(validate_ct_state_list("established")) == 1, "single state");
+    assert(is_ok(validate_ct_state_list("established, related")) == 1, "comma-space list");
+    assert(is_ok(validate_ct_state_list("new,established,related")) == 1, "no-space list");
+    assert(is_ok(validate_ct_state_list("  established ,  related  ")) == 1, "padded list");
+
+    # Rejections
+    assert(is_err_result(validate_ct_state_list("")) == 1, "empty rejected");
+    assert(is_err_result(validate_ct_state_list("bogus")) == 1, "unknown state rejected");
+    assert(is_err_result(validate_ct_state_list("established, bogus")) == 1, "one bad token fails all");
+    assert(is_err_result(validate_ct_state_list("established,")) == 1, "trailing comma rejected");
+    assert(is_err_result(validate_ct_state_list("estab lished")) == 1, "internal space rejected");
+
+    # The actual escape: close the brace and append statements.
+    assert(is_err_result(validate_ct_state_list("established }")) == 1,
+      "brace-close rejected");
+    assert(is_err_result(validate_ct_state_list("established }\n    accept\n    ct state { new")) == 1,
+      "brace-close + injected statements rejected");
+
+    # And through rule_validate — the branch that did not exist before 1.6.9.
+    var r = rule_new(verdict_drop());
+    rule_add_match(r, match_ct_state("established }\n    accept\n    ct state { new"));
+    assert(is_err_result(rule_validate(r)) == 1, "rule_validate rejects ct_state injection");
+
+    var good = rule_new(verdict_accept());
+    rule_add_match(good, match_ct_state("established, related"));
+    assert(is_ok(rule_validate(good)) == 1, "rule_validate accepts a legitimate ct_state list");
+
+    # allow_established() is the in-tree caller — it must still validate.
+    assert(is_ok(rule_validate(allow_established())) == 1, "allow_established still valid");
+
+    return 0;
+}
+
+fn test_diff_validates_target() {
+    test_group("diff_validates_target");
+
+    # diff_target_rules must DROP a rule that fails validation rather than
+    # render it into an `add rule` op. Before 1.6.9 nothing on the diff path
+    # validated at all.
+    var fw = firewall_new();
+    var t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+
+    var good = allow_tcp(22);
+    var bad = allow_tcp(80);
+    rule_set_comment(bad, "evil\" ; flush ruleset ; #");
+
+    chain_add_rule(c, good);
+    chain_add_rule(c, bad);
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+
+    var targets = diff_target_rules(fw);
+    assert_eq(vec_len(targets), 1, "invalid rule dropped from target set");
+    assert(_cstr_contains(live_rule_body(vec_get(targets, 0)), "dport 22") == 1,
+      "the surviving target rule is the valid one");
+
+    # And the whole-tree gate: a firewall containing it must not validate.
+    assert(is_err_result(firewall_validate(fw)) == 1, "firewall_validate rejects it");
+
+    return 0;
+}
+
+fn test_parser_block_desync() {
+    test_group("parser_block_desync");
+
+    # A table-level `counter` block: its opener was unrecognised, so it pushed
+    # nothing while its closing `}` still popped — dropping the brace depth to
+    # 0 inside the table, zeroing family/table, and segfaulting on the next
+    # rule via streq(NULL). Reproduced as exit 139 before 1.6.9.
+    var raw = "table inet filter {\n\tcounter c1 {\n\t\tpackets 0 bytes 0\n\t}\n\tchain input {\n\t\ttype filter hook input priority 0; policy accept;\n\t\ttcp dport 22 accept # handle 4\n\t}\n}\n";
+    var rules = diff_parse_live(_cstr_to_str(raw));
+
+    assert_eq(vec_len(rules), 1, "the one real rule is parsed");
+    var lr = vec_get(rules, 0);
+    assert(live_rule_family(lr) != 0, "family is not NULL");
+    assert(live_rule_table(lr) != 0, "table is not NULL");
+    assert(live_rule_chain(lr) != 0, "chain is not NULL");
+    assert(streq(live_rule_family(lr), "inet") == 1, "family survived the counter block");
+    assert(streq(live_rule_table(lr), "filter") == 1, "table survived the counter block");
+    assert(streq(live_rule_chain(lr), "input") == 1, "chain captured");
+    assert_eq(live_rule_handle(lr), 4, "handle captured");
+
+    # Every other table-level opener nft emits, same shape.
+    var raw2 = "table inet f {\n\tquota q {\n\t\tover 1 mbytes\n\t}\n\tct helper h {\n\t\ttype \"ftp\" protocol tcp\n\t}\n\tchain c {\n\t\tip saddr 10.0.0.1 drop # handle 9\n\t}\n}\n";
+    var rules2 = diff_parse_live(_cstr_to_str(raw2));
+    assert_eq(vec_len(rules2), 1, "quota + ct helper blocks skipped, rule still found");
+    assert(streq(live_rule_table(vec_get(rules2, 0)), "f") == 1, "table context intact");
+
+    return 0;
+}
+
+fn test_diff_del_op_requires_handle() {
+    test_group("diff_del_op_requires_handle");
+
+    # A live rule parsed without a `# handle N` suffix gets handle 0. Emitting
+    # `delete rule ... handle 0` made nft reject the entire batch, silently
+    # discarding every add in the same transaction.
+    var no_handle = _live_rule_new("inet", "filter", "input", "tcp dport 22 accept", 0);
+    assert_eq(_emit_del_rule(no_handle), 0, "handle 0 produces no delete op");
+
+    var with_handle = _live_rule_new("inet", "filter", "input", "tcp dport 22 accept", 7);
+    var op = _emit_del_rule(with_handle);
+    assert(op != 0, "real handle produces an op");
+    assert(_cstr_contains(op, "handle 7") == 1, "op carries the real handle");
+
+    return 0;
+}
+
 fn test_firewall_deduplicate() {
     test_group("firewall_deduplicate");
 
@@ -2536,6 +2649,12 @@ fn main() {
 
     # netns
     test_netns();
+
+    # P(-1) hardening fixes (1.6.9)
+    test_ct_state_validation();
+    test_diff_validates_target();
+    test_diff_del_op_requires_handle();
+    test_parser_block_desync();
 
     # port-completeness additions (1.6.7)
     test_firewall_deduplicate();

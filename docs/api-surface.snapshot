@@ -384,6 +384,7 @@ table::table_sets/1
 validate::validate_addr/1
 validate::validate_comment/1
 validate::validate_ct_state/1
+validate::validate_ct_state_list/1
 validate::validate_family/1
 validate::validate_identifier/1
 validate::validate_iface/1

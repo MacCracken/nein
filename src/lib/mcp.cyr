@@ -313,7 +313,9 @@ fn _nein_diff_handler(args: cstring, claims: i64): cstring {
     table_add_chain(t, c);
     firewall_add_table(fw, t);
 
-    var live = list_ruleset();
+    # `-a` required — without the handle suffixes every live rule parses with
+    # handle 0 and no delete op can be emitted (1.6.9; same fix as diff.cyr).
+    var live = list_ruleset_with_handles();
     if (is_err_result(live) == 1) {
         return _mcp_err("nein_diff: nft query failed (needs root + nft installed)");
     }

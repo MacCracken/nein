@@ -4,6 +4,105 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.9] — 2026-08-21
+
+**P(-1) scaffold-hardening review, and the two remaining quality gates.** A
+seven-area security and correctness audit of v1.6.8, with every MEDIUM+ finding
+handed to a separate adversarial verifier instructed to refute it. 53 findings
+reported, 8 refuted or downgraded: **1 CRITICAL, 6 HIGH, 10 MEDIUM, 17 LOW
+confirmed**. Five of the seven CRITICAL/HIGH are fixed here. Full report:
+[`docs/audit/2026-08-21-audit.md`](docs/audit/2026-08-21-audit.md). 729 unit +
+18 integration assertions (was 699), 48 benches, 392 public fns.
+
+### Security
+
+- **CRITICAL — the diff apply path performed no validation at all.**
+  `nein_diff` → `diff_compute` → `diff_apply` reached `nft -f -` without ever
+  calling `firewall_validate` or `chain_rule_validate`. `apply_firewall` has
+  always validated the whole tree first; the diff path — added at 1.5.0 and
+  documented in the README as the idempotent-apply entry point — did not, so
+  every T-1 validator was bypassed on it. A rule comment of
+  `evil" ; flush ruleset ; #` renders verbatim and closes its own quote.
+  `nein_diff` now validates the target tree first, and `diff_target_rules`
+  independently drops any rule failing `chain_rule_validate`, so the
+  lower-level `diff_compute` + `diff_apply` pair is gated too.
+
+- **HIGH — `MATCH_CT_STATE` was rendered into nft grammar unvalidated.**
+  `rule_validate` had no branch for it, so the caller's string went straight
+  into `ct state { … }`. `validate_ct_state` existed and **threat-model T-1
+  named it as the mitigation covering this field** — but it had zero
+  production callers. The documented control did not exist.
+  `match_ct_state("established }\n accept\n ct state { new")` passed
+  validation and turned a deny rule into an allow. Added
+  `validate_ct_state_list` (the single-token validator could not be wired in
+  directly — every real caller passes `"established, related"`) and a
+  `MATCH_CT_STATE` branch in `rule_validate`.
+
+- **HIGH — unrecognised nft block types desynced the brace stack (SIGSEGV).**
+  `_classify_block_open` knew six openers; nft also emits `counter`, `quota`,
+  `limit`, `synproxy`, `secmark`, `ct helper` and `ct expectation` at table
+  level. Such a block pushed nothing but its closing `}` still popped, so the
+  depth hit 0 *inside* the table, zeroing the current family/table and feeding
+  NULL to `streq` → `strlen(0)`. **Reproduced as exit 139** from an ordinary
+  ruleset containing a `counter` block. Fixed twice over: the classifier now
+  knows all seven, and the rule-push site refuses to build a `LiveRule` with a
+  NULL family/table/chain — so an opener added by a future nft release
+  degrades to a dropped rule rather than a crash.
+
+### Fixed
+
+- **`nein_diff` listed the live ruleset without `-a`** (`diff.cyr:418`,
+  `mcp.cyr:316`), so every parsed rule got handle 0 and every delete op was
+  emitted as `delete rule … handle 0`. Since `diff_apply` batches all ops into
+  one `nft -f -` transaction, nft rejected the **whole batch** — every add in
+  the same run silently discarded, and the firewall never converged. Both now
+  use the `list_ruleset_with_handles()` that already sat beside them.
+- **A delete op could still be built with handle 0** from any line the parser
+  failed to attribute. `_emit_del_rule` now returns nothing and logs, and the
+  caller skips it — pushing a NULL would have hit `strlen(0)` in
+  `str_builder_add_cstr`, the same crash class as the desync above.
+
+### Added
+
+- **`scripts/test-coverage.sh`** — API test-coverage gate, floor **64%**
+  (251/392 public fns called by a test). This is what CLAUDE.md's long-standing
+  "80%+ coverage target" was reaching for. **Not `cyrius coverage --min`:** that
+  measures *reference* coverage (a dead-code metric, as its own output says),
+  and on this tree its default mode walks only `src/main.cyr` and reports
+  1/1 = **100%** — so `cyrius coverage --min 80` would pass vacuously while
+  measuring nothing, making the claim look enforced when it is not.
+- **`scripts/doc-coverage.sh`** — doc-coverage gate, floor **17%** (69/392).
+  `cyrius doc --check` does the analysis but **exits 0 regardless** (verified
+  against a file with 3/3 undocumented) and only examines the one file it is
+  handed; this sums it across all modules and supplies the exit code.
+- Both floors are **ratchets at the measured figure**, not targets — the
+  test-coverage floor was raised 63% → 64% in this release when the hardening
+  tests landed, which is the mechanism working.
+- **`docs/audit/2026-08-21-audit.md`** — the P(-1) report: method, every
+  confirmed finding with severity and failure path, what was fixed, what
+  remains open, and the areas audited and found clean.
+- **30 assertions** covering the fixes, including `test_parser_block_desync`
+  replaying the exact input that produced exit 139.
+
+### Changed
+
+- **CLAUDE.md's "minimum 80%+ coverage target" reconciled with reality.** It
+  was aspirational — no gate ever enforced it. Replaced with the two measured,
+  gated figures and a note that 80% remains the direction of travel for API
+  test coverage.
+
+### Known issues
+
+Recorded in the audit, not fixed here: `diff_compute` ignores rule **position**
+(a re-added deny rule is appended *after* the accept it was meant to precede —
+`diff.cyr`'s header comment calling the strategy "always correct" is wrong);
+`_strip_handle_suffix` has no quote awareness; and **SIGPIPE is never ignored,
+so writing to a dead nft terminates the whole calling process** (reproduced,
+exit 141 — this also falsifies T-4's stated claim). Plus 10 MEDIUM, including
+`sys_waitpid`'s unchecked return letting a failed apply report success, and `#`
+missing from the dangerous-character set (verified against nftables 1.1.6:
+`… accept # drop` applies as **accept**).
+
 ## [1.6.8] — 2026-08-21
 
 **`rust-old/` deleted.** The preserved Rust tree (1,013 files, 9,338 lines)

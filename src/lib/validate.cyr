@@ -179,6 +179,58 @@ fn validate_ct_state(s: cstring): i64 {
     return nein_err(ERR_INVALID_RULE);
 }
 
+# Validate a ct-state LIST, as carried by MATCH_CT_STATE and rendered into
+# `ct state { ... }`.
+#
+# `validate_ct_state` above accepts exactly one bare state, but the Match
+# variant carries a comma-separated list — `match_ct_state("established,
+# related")` is the shape every in-tree caller uses. So a list-aware check is
+# what the render path actually needs.
+#
+# Added at 1.6.9 to close a real hole: `rule_validate` had NO MATCH_CT_STATE
+# branch at all, so the string was interpolated straight into nft grammar
+# unchecked, while threat-model T-1 listed `validate_ct_state` as the
+# mitigation covering this field. That validator had zero production callers —
+# the documented control did not exist.
+#
+# Each token is trimmed of surrounding spaces and checked against the closed
+# set. Anything else — including a `}` that would close the brace and start a
+# new statement — is rejected.
+fn validate_ct_state_list(s: cstring): i64 {
+    var len = strlen(s);
+    if (len == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (len > 128) { return nein_err(ERR_INVALID_RULE); }
+
+    var buf = alloc(len + 1);
+    var out = 0;
+    var i = 0;
+
+    while (i <= len) {
+        var c = 0;
+        if (i < len) { c = load8(s + i); }
+
+        if (i == len || c == 44) {
+            # End of a token (',' = 44, or end of string). Trim trailing
+            # spaces, then check the token against the closed set.
+            while (out > 0 && load8(buf + out - 1) == 32) { out = out - 1; }
+            store8(buf + out, 0);
+            if (out == 0) { return nein_err(ERR_INVALID_RULE); }
+            var vr = validate_ct_state(buf);
+            if (is_err_result(vr) == 1) { return vr; }
+            out = 0;
+        } elif (c == 32 && out == 0) {
+            # Leading space before a token — skip. An INTERNAL space is copied
+            # through and will fail the closed-set check, which is intended.
+        } else {
+            store8(buf + out, c);
+            out = out + 1;
+        }
+        i = i + 1;
+    }
+
+    return nein_ok();
+}
+
 # Validate a comment string.
 # Rejects double quotes and dangerous chars. Max 128 chars.
 fn validate_comment(s: cstring): i64 {

@@ -712,6 +712,12 @@ fn rule_validate(r: i64): i64 {
         } elif (mt == MATCH_TCP_FLAGS) {
             vr = validate_nft_element(v1);
             if (is_err_result(vr) == 1) { return vr; }
+        } elif (mt == MATCH_CT_STATE) {
+            # Was MISSING entirely before 1.6.9 — _render_match interpolates
+            # this straight into `ct state { ... }`, so an unchecked value
+            # could close the brace and append arbitrary nft statements.
+            vr = validate_ct_state_list(v1);
+            if (is_err_result(vr) == 1) { return vr; }
         } elif (mt == MATCH_DSCP) {
             if (v1 > 63) { return nein_err(ERR_INVALID_RULE); }
         } elif (mt == MATCH_VLAN_ID) {

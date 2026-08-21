@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-08-21 (post v1.6.8 — `rust-old/` deleted. v1.6.7 closed
+Last refresh: 2026-08-21 (post v1.6.9 — P(-1) hardening review; 5 of 7 confirmed CRITICAL/HIGH findings fixed, the rest tracked below. v1.6.8 deleted `rust-old/`. v1.6.7 closed
 every functional gap the Rust→Cyrius port-completeness audit turned up,
 including one shipped bug where `dry_run` was write-only; v1.6.8 lifted the
 Rust tree's supply-chain policy into a first-party gate and removed the tree.
@@ -16,45 +16,77 @@ decision is preserved there, not duplicated here. This file tracks
 
 ---
 
-## P1 — wire the remaining unenforced quality gates
+## Quality gates — complete as of 1.6.9
 
-The Rust `Makefile` ran `cargo deny`, `cargo vet`, and an 80% coverage gate on
-every check. Two of the four Cyrius-side equivalents were wired at v1.6.8; two
-remain:
+All four Cyrius-side successors to the Rust `Makefile`'s `cargo deny` /
+`cargo vet` / coverage gates are now wired:
 
-| Gate | Command | Status |
-|------|---------|--------|
-| Supply-chain policy | `scripts/supply-chain.sh` | ✅ wired at 1.6.8 |
-| Include-path policy | `cyrius deny src/main.cyr` | ✅ wired at 1.6.8 |
-| Coverage floor | `cyrius coverage --min <N>` | exists, not wired |
-| Doc coverage | `cyrius doc --check src/main.cyr` | exists, not wired |
+| Gate | Command | Wired |
+|------|---------|-------|
+| Supply-chain policy | `scripts/supply-chain.sh` | 1.6.8 |
+| Include-path policy | `cyrius deny src/main.cyr` | 1.6.8 |
+| API test coverage | `scripts/test-coverage.sh` (floor 63%) | 1.6.9 |
+| Doc coverage | `scripts/doc-coverage.sh` (floor 17%) | 1.6.9 |
 
-**Correction to the v1.6.7 version of this entry:** it said `cyrius deny`
-needed "a policy decision (which sources/licences are allowed)" and suggested
-mirroring `rust-old/deny.toml`'s allow-list into it. That was wrong. Despite
-the name, `cyrius deny` is an **include-path checker** — it rejects absolute
-paths and `../` traversal in `include` directives and takes no configuration
-at all. `cyrius vet`'s trusted-prefix set is likewise compiled into the
-toolchain. Neither can carry a licence or source allow-list. The deny.toml
-policy is enforced by [`scripts/supply-chain.sh`](../../scripts/supply-chain.sh)
-instead; see [`supply-chain-policy.md`](supply-chain-policy.md).
+Two of the four are first-party scripts rather than toolchain subcommands,
+for the same reason in both cases — the subcommand exists but cannot gate:
 
-### What is left
+- **`cyrius deny`** is an include-path checker (absolute paths, `../`
+  traversal) with no allow-list; it cannot express a licence or source policy.
+- **`cyrius coverage --min`** measures *reference* coverage from an entry
+  point — a dead-code metric, as its own output says. On this tree its default
+  mode walks only `src/main.cyr` and reports 1/1 = **100%**, so
+  `cyrius coverage --min 80` would pass vacuously while measuring nothing.
+  `--full` reports 2%, dominated by unreferenced vendored stdlib. Neither
+  number is about nein's tests.
+- **`cyrius doc --check`** does the right analysis but exits 0 regardless, and
+  only examines the one file it is handed. `scripts/doc-coverage.sh` sums it
+  across all modules and supplies the exit code.
 
-**Coverage floor.** CLAUDE.md states a "minimum 80%+ coverage target" that
-nothing enforces — the number is aspirational until `--min` gates it.
-Establish the real figure first (`cyrius coverage` on the current tree), then
-set `--min` at or just under it so the gate ratchets rather than fails on day
-one. If the real figure is well under 80%, the honest move is to gate at the
-real number and either raise it deliberately or amend the CLAUDE.md claim —
-not to leave a target in the docs that no gate backs.
+Both new floors are **ratchets at the measured figure**, not targets. The
+direction of travel for API test coverage is 80%; the 141 currently-uncalled
+public fns are listed by `scripts/test-coverage.sh --list`, and the
+crypto surface (`verify_ruleset_hex`, `apply_signed_ruleset_hex`,
+`signed_body`) is the most worth closing first.
 
-**Doc coverage.** `cyrius doc --check src/main.cyr` has never been run against
-this tree; establish what it reports before deciding whether it gates or
-merely informs.
+---
 
-Do these one at a time, each as its own change, each verified against a clean
-`rm -rf build lib` run before the next.
+## P1 — open findings from the 2026-08-21 P(-1) audit
+
+Full report: [`../audit/2026-08-21-audit.md`](../audit/2026-08-21-audit.md).
+Five of seven confirmed CRITICAL/HIGH were fixed in 1.6.9. These remain:
+
+**H-5 — `diff_compute` ignores rule position.** The diff treats a chain as an
+unordered set, and every missing rule becomes `add rule …`, which nft appends.
+Rule order *is* nftables' evaluation semantics, so a partial diff can leave a
+chain matching neither the old nor the target ruleset: a re-added deny rule
+lands after the accept it was meant to precede, and the host stays permitted.
+`diff.cyr`'s header comment calls the strategy "conservative but always
+correct" — that is false and should be corrected in the same change. Fix by
+comparing position as well as body and emitting ordered ops
+(`add_rule_after_live` already exists); or, cheaper, delete and re-add a whole
+chain in order whenever any rule in it differs.
+
+**H-6 — `_strip_handle_suffix` has no quote awareness.** A rule comment
+containing the literal ` # handle ` is mistaken for the handle suffix, so body
+and handle both parse wrong and then drive add/delete decisions.
+
+**H-7 — SIGPIPE is never ignored.** Writing a ruleset to a dead nft terminates
+the **whole calling process** (reproduced, exit 141). The stdlib ships the fix:
+`signal_ignore(13)` at `lib/syscalls.cyr:98`, called once before the write
+loop, then treat `-EPIPE` as a hard error. This also falsifies T-4's claim that
+the parent observes the child's exit status on execve failure — update the
+threat model in the same change.
+
+Ten MEDIUM findings are recorded in the audit. The two worth pulling forward:
+`sys_waitpid`'s unchecked return (a failed wait leaves `status` at 0, which
+decodes as a clean success, so a failed apply reports `Ok`), and `#` missing
+from the dangerous-character set (verified against nftables 1.1.6:
+`… accept # drop` applies as **accept**).
+
+Also owed: the six confirmed documentation errors in the audit's LOW table,
+including `SECURITY.md` claiming 8 threats when the model has 11, and
+ADR-0003 describing Cargo feature flags that have not existed since the port.
 
 ---
 
@@ -95,11 +127,11 @@ of `cfg_parse_*`.
 
 ---
 
-## Current state — v1.6.8
+## Current state — v1.6.9
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 21 modules
-(mcp at 1.6.0, sign at 1.6.1), 699 test assertions + a bundle-consume
+(mcp at 1.6.0, sign at 1.6.1), 729 test assertions + a bundle-consume
 integration guard, 48 benchmarks, 5 per-target fuzz drivers, single-file
 `dist/nein.cyr` bundle (still bote/sigil-free) plus the opt-in
 `dist/nein-mcp.cyr` (`[lib.mcp]`) for MCP hosts. Type-check end-to-end

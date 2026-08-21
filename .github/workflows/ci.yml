@@ -235,6 +235,30 @@ jobs:
           done
           [ $fail -eq 0 ] || { echo "integration: test failures"; exit 1; }
 
+      - name: Doc-coverage gate
+        # `cyrius doc --check` does the analysis but exits 0 regardless — it
+        # reports "N documented, M undocumented" and never sets a failing
+        # status (verified at 6.5.33 against a file with 3/3 undocumented).
+        # It also only examines the single file it is handed. This script sums
+        # it across src/main.cyr + src/lib/*.cyr and supplies the exit code.
+        #
+        # The floor is a RATCHET at the currently-measured figure, not a
+        # target: it stops the number sliding backwards. Raise it when
+        # coverage improves. Wired at 1.6.9.
+        run: scripts/doc-coverage.sh
+
+      - name: Test-coverage gate
+        # What fraction of the public API surface is called by the test suite.
+        # This is the gate CLAUDE.md's "80%+ coverage target" was reaching for.
+        #
+        # NOT `cyrius coverage --min`: that measures *reference* coverage (a
+        # dead-code metric, as its own output says), and on this tree its
+        # default mode walks only src/main.cyr and reports 1/1 = 100% — so
+        # `cyrius coverage --min 80` would pass vacuously while measuring
+        # nothing, making the CLAUDE.md claim look enforced when it is not.
+        # See the header of scripts/test-coverage.sh. Wired at 1.6.9.
+        run: scripts/test-coverage.sh
+
       - name: Supply-chain policy gate
         # Successor to the Rust tree's deny.toml (cargo-deny), retired with
         # rust-old/ at 1.6.8. Enforces allowed sources, exact-tag pinning,

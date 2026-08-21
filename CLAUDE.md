@@ -8,7 +8,7 @@
 - **License**: GPL-3.0-only
 - **Language**: Cyrius (sovereign systems language, compiled by cycc; pinned `cyrius = "6.5.33"` in `cyrius.cyml`)
 - **Version**: SemVer, version file at `VERSION`
-- **Status**: 1.6.8 — Cyrius port complete + MCP/Ed25519-signing surface (mcp 1.6.0, sign 1.6.1, daimon dispatch adapter 1.6.2; toolchain + dependency refreshes 1.6.3–1.6.5, sidecar packaging fix 1.6.6, port-completeness closeout 1.6.7, rust-old/ deleted 1.6.8, currently cyrius 6.5.33). 699 unit + 18 integration assertions, 48 benchmarks, 5 fuzz drivers, 391 public fns. CI gates: fmt/lint/vet/deny/capacity/type-check/aarch64-cross/security-scan/supply-chain/api-surface/bench-regression/fuzz/integration/dist-staleness
+- **Status**: 1.6.9 — Cyrius port complete + MCP/Ed25519-signing surface (mcp 1.6.0, sign 1.6.1, daimon dispatch adapter 1.6.2; toolchain + dependency refreshes 1.6.3–1.6.5, sidecar packaging fix 1.6.6, port-completeness closeout 1.6.7, rust-old/ deleted 1.6.8, P(-1) hardening 1.6.9, currently cyrius 6.5.33). 729 unit + 18 integration assertions, 48 benchmarks, 5 fuzz drivers, 392 public fns. CI gates: fmt/lint/vet/deny/capacity/type-check/aarch64-cross/security-scan/doc-coverage/test-coverage/supply-chain/api-surface/bench-regression/fuzz/integration/dist-staleness
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)
@@ -128,7 +128,23 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 
 - **Correctness is the optimum sovereignty** — if it's wrong, you don't own it, the bugs own you
 - **Never skip benchmarks.** Numbers don't lie. The CSV history is the proof.
-- **Tests + benchmarks are the way.** Minimum 80%+ coverage target.
+- **Tests + benchmarks are the way.** Two coverage gates, both ratchets at the
+  currently-measured figure — raise them as coverage improves, never lower them
+  to make a build pass:
+  - **API test coverage** — `scripts/test-coverage.sh`, floor **63%** (250/391
+    public fns called by a test). This is reference coverage: a fn called once
+    counts. It catches "shipped an API, never tested it" — the exact failure that
+    let the v1.6.7 `dry_run` bug through.
+  - **Doc coverage** — `scripts/doc-coverage.sh`, floor **17%** (68/391). Low by
+    design of the surface, not neglect: the logic-carrying modules are at or near
+    100% (config 17/17, validate 8/8, error 3/3) and the deficit is one-line
+    accessors under section comments.
+
+  The long-standing "80%+ coverage target" in this file was aspirational — no gate
+  ever enforced it, and `cyrius coverage --min` cannot (it measures reference
+  coverage from an entry point and reports 1/1 = 100% on this tree, so it passes
+  vacuously). Measured and gated at 1.6.9; 80% is still the direction of travel
+  for API test coverage.
 - Test after EVERY change, not after the feature is done
 - ONE change at a time — never bundle unrelated changes
 - Research before implementation — check vidya for existing patterns

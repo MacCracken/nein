@@ -92,6 +92,7 @@ enum BlockKind {
     BLOCK_MAP = 4;
     BLOCK_FLOWTABLE = 5;
     BLOCK_CT_TIMEOUT = 6;
+    BLOCK_OTHER = 7;
 }
 
 # Classify the opening line of a block. Returns BLOCK_NONE if the line
@@ -103,6 +104,18 @@ fn _classify_block_open(trimmed: cstring): i64 {
     if (_cstr_starts_with(trimmed, "map ") == 1) { return BLOCK_MAP; }
     if (_cstr_starts_with(trimmed, "flowtable ") == 1) { return BLOCK_FLOWTABLE; }
     if (_cstr_starts_with(trimmed, "ct timeout ") == 1) { return BLOCK_CT_TIMEOUT; }
+    # Remaining table-level block openers nft can emit (1.6.9). Before this,
+    # an unrecognised opener pushed nothing while its closing `}` still
+    # popped, so the brace depth fell to 0 *inside* the table — which zeroed
+    # the current family/table and fed NULL pointers to streq(), segfaulting
+    # the caller. Reproduced with a `counter` block; nft emits all of these.
+    if (_cstr_starts_with(trimmed, "counter ") == 1) { return BLOCK_OTHER; }
+    if (_cstr_starts_with(trimmed, "quota ") == 1) { return BLOCK_OTHER; }
+    if (_cstr_starts_with(trimmed, "limit ") == 1) { return BLOCK_OTHER; }
+    if (_cstr_starts_with(trimmed, "synproxy ") == 1) { return BLOCK_OTHER; }
+    if (_cstr_starts_with(trimmed, "secmark ") == 1) { return BLOCK_OTHER; }
+    if (_cstr_starts_with(trimmed, "ct helper ") == 1) { return BLOCK_OTHER; }
+    if (_cstr_starts_with(trimmed, "ct expectation ") == 1) { return BLOCK_OTHER; }
     return BLOCK_NONE;
 }
 

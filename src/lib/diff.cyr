@@ -215,13 +215,28 @@ fn diff_parse_live(raw_str: Str): i64 {
                         } elif (load8(trimmed) == 35) {
                             # comment line
                         } else {
-                            var bh = _strip_handle_suffix(trimmed);
-                            var lr = _live_rule_new(current_family,
-                              current_table,
-                              current_chain,
-                              load64(bh),
-                              load64(bh + 8));
-                            vec_push(rules, lr);
+                            # Defence in depth (1.6.9): never build a LiveRule
+                            # with a NULL family/table/chain. Those are zeroed
+                            # whenever the brace stack unwinds to 0, and every
+                            # consumer hands them to streq() -> strlen(NULL),
+                            # which segfaults the calling process. The
+                            # classifier now knows every block opener nft
+                            # emits, but an unrecognised one in a future nft
+                            # release would desync the stack again — this
+                            # turns that into a dropped rule, not a crash.
+                            if (current_family == 0 || current_table == 0
+                              || current_chain == 0) {
+                                var sk_ds = "nein.diff: parser desync — rule skipped (no table context)";
+                                sakshi_warn(sk_ds, strlen(sk_ds));
+                            } else {
+                                var bh = _strip_handle_suffix(trimmed);
+                                var lr = _live_rule_new(current_family,
+                                  current_table,
+                                  current_chain,
+                                  load64(bh),
+                                  load64(bh + 8));
+                                vec_push(rules, lr);
+                            }
                         }
                     }
                 }
@@ -276,6 +291,19 @@ fn diff_target_rules(fw: i64): i64 {
             var ri = 0;
             while (ri < rlen) {
                 var cr = vec_get(crules, ri);
+                # FAIL CLOSED (1.6.9). Until now this rendered straight to text
+                # with no validation anywhere on the diff path, so nein_diff
+                # piped un-validated rule bodies to `nft -f -` while
+                # apply_firewall validated the same tree first. A rule that
+                # cannot be validated is DROPPED from the target set rather
+                # than emitted: refusing to add a rule is always safer than
+                # adding one whose contents were never checked.
+                if (is_err_result(chain_rule_validate(cr)) == 1) {
+                    var sk_inv = "nein.diff: target rule failed validation — not emitted";
+                    sakshi_error(sk_inv, strlen(sk_inv));
+                    ri = ri + 1;
+                    continue;
+                }
                 var rendered = chain_rule_render(cr);
                 var body = _render_to_cstr(rendered);
                 vec_push(rules, _live_rule_new(family_cstr, table_name,
@@ -339,6 +367,16 @@ fn _emit_add_rule(rule: i64): cstring {
 
 # Build "delete rule FAM TAB CHN handle N\n"
 fn _emit_del_rule(rule: i64): cstring {
+    # Handle 0 is not a real nft handle — it is what _strip_handle_suffix
+    # returns when a line carried no `# handle N` suffix at all. Emitting
+    # `delete rule ... handle 0` makes nft reject the ENTIRE batch, so a
+    # single unparsed line silently discarded every add in the same
+    # transaction. Refuse to build the op instead (1.6.9).
+    if (live_rule_handle(rule) == 0) {
+        var sk_h0 = "nein.diff: live rule has no handle — delete op suppressed";
+        sakshi_error(sk_h0, strlen(sk_h0));
+        return 0;
+    }
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "delete rule ");
     str_builder_add_cstr(sb, live_rule_family(rule));
@@ -376,7 +414,11 @@ fn diff_compute(target_fw: i64, live_raw: Str): i64 {
     while (l < ln) {
         var lr = vec_get(live_rules, l);
         if (_live_in_target(lr, target_rules) == 0) {
-            vec_push(ops, _emit_del_rule(lr));
+            # _emit_del_rule returns 0 when the live rule carries no handle.
+            # Never push a NULL into ops — diff_apply feeds every entry to
+            # str_builder_add_cstr, whose strlen(0) would segfault.
+            var del_op = _emit_del_rule(lr);
+            if (del_op != 0) { vec_push(ops, del_op); }
         }
         l = l + 1;
     }
@@ -415,7 +457,16 @@ fn diff_apply(ops: i64): i64 {
 # ================================================================
 
 fn nein_diff(target_fw: i64): i64 {
-    var live_res = list_ruleset();
+    # Validate the whole target tree before anything is rendered or applied.
+    # apply_firewall has always done this; the diff path did not, which made
+    # nein_diff a way to reach `nft -f -` with un-validated rule text (1.6.9).
+    var vr = firewall_validate(target_fw);
+    if (is_err_result(vr) == 1) { return vr; }
+
+    # `-a` is required: without it nft omits the `# handle N` suffixes and
+    # every parsed live rule gets handle 0, so every delete op was emitted as
+    # `delete rule ... handle 0` and nft rejected the whole batch (1.6.9).
+    var live_res = list_ruleset_with_handles();
     if (is_err_result(live_res) == 1) { return live_res; }
     var live_raw = payload(live_res);
     var ops = diff_compute(target_fw, live_raw);
