@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Last refresh: **2026-08-21** (v1.6.5).
+Last refresh: **2026-08-21** (v1.6.10).
 
 ## Design Philosophy
 
@@ -14,17 +14,19 @@ Key principles:
 - **Type safety over string templating.** Enum variants (per ADR-0008)
   for match types, verdicts, protocols, families, and hooks prevent
   invalid combinations at construction. The Cyrius type-check arc
-  (default-on since v5.10.26; current toolchain 6.4.x) adds a second layer at the
+  (default-on since v5.10.26; current toolchain 6.5.33) adds a second layer at the
   `(s: cstring): i64` interface boundary on validators and
   constructors — a wrong-type arg fails the build, not the rule.
 - **Validate before apply.** All caller-supplied strings flow through
   `validate_*` in `src/lib/validate.cyr` before rendering. `apply_firewall`
   calls `firewall_validate` automatically; `add_rule_live` and friends
   validate each parameter before interpolation.
-- **Feature-gated modules** (per ADR-0003). Consumers pull in only what
-  they need. Core types (rule, table, chain, set, validate) are always
-  available; NAT, policy, bridge, engine, mesh, config, geoip, and netns
-  are optional, along with `mcp` (shipped v1.6.0) and `sign` (v1.6.1).
+- **Bundle-selected modules** (ADR-0003, superseded). Consumers pull in
+  only what they need — but not via feature flags: ADR-0003 described Cargo
+  features that have not existed since the port, and `grep -rn '#ifdef' src/`
+  returns zero hits. All 21 modules are included unconditionally, and a
+  consumer instead picks a **bundle**: `dist/nein.cyr` (the 19-module core,
+  bote/sigil-free) or `dist/nein-mcp.cyr` (core + `sign` + `mcp`).
 - **Render, don't execute** (per ADR-0001). Most of the library is pure
   rule generation. Only `src/lib/apply.cyr` shells out to `nft`.
   `firewall_render` is observable before any apply, so callers can size
@@ -39,7 +41,7 @@ src/
   main.cyr            — top-level include graph + main() entry
   lib/
     error.cyr         — NeinError enum + nein_ok/nein_err/nein_err_code
-    validate.cyr      — 8 public validators (security boundary)
+    validate.cyr      — 9 public validators (security boundary)
     rule.cyr          — Match (30 variants), Verdict (13 variants), Rule
     set.cyr           — NftSet, NftMap (named sets + verdict maps)
     nat.cyr           — DNAT, SNAT, masquerade, redirect, DnatRange
@@ -93,7 +95,7 @@ else is pure rendering and can run with no permissions.
 ## Type Boundary
 
 The public-fn surface is tracked in
-[`docs/api-surface.snapshot`](../api-surface.snapshot) (383 fns as of
+[`docs/api-surface.snapshot`](../api-surface.snapshot) (394 fns as of
 v1.6.4). The CI gate fails on unexplained adds or removes.
 
 Conventions:
@@ -182,12 +184,13 @@ ecosystem, each pulling a subset of the module surface:
 | **aegis** | builder, geoip, firewall | Host firewall + GeoIP blocking |
 | **sutra** | config, builder | Fleet-wide firewall playbooks (blocked on full TOML, roadmap v2.0.0) |
 
-As of v1.6.4 the `dist/nein.cyr` single-file bundle is the canonical
-consumption form (bote/sigil-free), with an opt-in `dist/nein-mcp.cyr`
-bundle for MCP + signing (see
+The `dist/nein.cyr` single-file bundle is the canonical consumption form
+(bote/sigil-free), with an opt-in `dist/nein-mcp.cyr` bundle for MCP +
+signing (see
 [`docs/guides/mcp-host-integration.md`](../guides/mcp-host-integration.md)).
-Consumers pull via `[deps.nein]` tag = "1.6.4"; the paired daimon-side
-wiring PR is the last open 1.6.x integration item.
+Consumers pull via `[deps.nein]` tag = "1.6.10" — **pin at or above 1.6.9**,
+which is where the P(-1) audit's CRITICAL/HIGH security fixes landed. The
+paired daimon-side wiring PR is the last open 1.6.x integration item.
 
 ## Architectural Decisions
 

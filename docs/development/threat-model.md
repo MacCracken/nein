@@ -1,6 +1,6 @@
 # Threat Model
 
-Last refresh: **2026-08-21** (v1.6.5 — modeled the two 1.6.x
+Last refresh: **2026-08-21** (v1.6.10 — T-4 rewritten and T-7 corrected after the P(-1) audit; T-1's ct-state row now names the validator that actually runs. Prior pass at v1.6.5 modeled the two 1.6.x
 security-relevant surfaces: added **T-9** (Ed25519 signed-ruleset
 trust / integrity, `sign.cyr` v1.6.1), **T-10** (MCP destructive-tool
 access control, `mcp.cyr` v1.6.0), and **T-11** (MCP tool-argument
@@ -46,7 +46,7 @@ render call. Validators reject the dangerous-char set `; { } | \n \r \0
 | `validate_addr` | hex + `.` + `:` + `/`, must contain a digit and at least one of `.`/`:` (IPv4/IPv6/CIDR) |
 | `validate_iface` | alnum + `_` + `-` + `.`, 1–15 chars (Linux `IFNAMSIZ`) |
 | `validate_family` | closed set: `inet`/`ip`/`ip6`/`arp`/`bridge`/`netdev` |
-| `validate_ct_state` | closed set: `new`/`established`/`related`/`invalid`/`untracked` |
+| `validate_ct_state_list` | comma-separated list, each token from the closed set `new`/`established`/`related`/`invalid`/`untracked` |
 | `validate_comment` | rejects `"` and dangerous chars; ≤ 128 chars |
 | `validate_log_prefix` | same as comment but ≤ 64 chars (nftables limit) |
 | `validate_nft_element` | rejects `"` and dangerous chars; non-empty |
@@ -117,18 +117,51 @@ nein's scope).
 ### T-4 — child-process hygiene
 
 **Threat.** The forked `nft` child could become a zombie, leak file
-descriptors, or hang the parent if stdin writes fail.
+descriptors, hang the parent, kill the parent, or let a failed apply be
+reported as a success.
 
-**Mitigation.** `_run_nft_stdin` and `_run_nft_capture` always close
-the unused pipe ends, drain stderr, and call `sys_waitpid` regardless
-of the stdin-write outcome. On execve failure the child falls through
-to `sys_exit(127)`; the parent observes that exit status and returns
-`Err(ERR_PERMISSION_DENIED)`.
+**Mitigation.** `_run_nft_stdin` and `_run_nft_capture` always close the
+unused pipe ends, drain stderr, and reap the child on every path
+including the short-write path.
 
-**Residual risk.** A pathological `nft` that never terminates would
-block the parent's `sys_waitpid`. Timeouts are not currently set on
-that call. Tracked as a future hardening item — low priority because
-nft itself is not adversarial.
+- **SIGPIPE is ignored** before the first write (`signal_ignore(13)`,
+  applied once and latched). Without it, writing to an `nft` that has
+  already exited raises SIGPIPE, whose default disposition **terminates
+  the whole calling process**. The write now returns `-EPIPE`, which is
+  treated as a hard error. Because this is process-wide state, it is
+  controllable: `nein_set_sigpipe_guard(0)` disables it for a host that
+  manages SIGPIPE itself.
+- **`sys_waitpid`'s return value is checked** in both helpers, with
+  `-EINTR` retried. An unchecked wait leaves `status` at 0, which
+  `WIFEXITED(0)==1` / `WEXITSTATUS(0)==0` decodes as a clean exit-zero
+  child — so a failed apply reported success.
+- **Short writes fail closed.** The write loop retries `-EINTR` and
+  compares `written` against the full length afterwards; a truncated
+  ruleset that happened to parse is no longer reported as applied.
+- **Child stdio redirection is guarded** — `_child_redirect` skips the
+  `dup2`/`close` pair when the source descriptor is already the target
+  (reachable on a daemonized host that closed fds 0/1/2), and checks the
+  `dup2` return rather than exec'ing with broken stdio.
+- On execve failure the child falls through to `sys_exit(127)`, which the
+  parent maps to `Err(NEIN_ERR_PERMISSION_DENIED)`.
+
+**Corrected at v1.6.10.** Through v1.6.9 this section claimed the parent
+"observes that exit status and returns `Err(ERR_PERMISSION_DENIED)`" on
+execve failure. That was **false**: the parent was killed by SIGPIPE
+before it ever reached `waitpid`. Reproduced as exit 141 by the
+2026-08-21 P(-1) audit; see
+[`../audit/2026-08-21-audit.md`](../audit/2026-08-21-audit.md) H-7. The
+four bullets above are what the mitigation actually consists of now.
+
+**Residual risk.** Two, both accepted:
+
+- A pathological `nft` that never terminates blocks the parent's
+  `sys_waitpid`. No timeout is set. Low priority — nft is not adversarial.
+- The whole ruleset is written to stdin before stderr is drained, so both
+  pipes can in principle fill and deadlock. The audit verified this is
+  **not reachable with real nft**, which would have to emit more than
+  64 KiB to stderr. Fixing it needs a poll loop over both descriptors;
+  deferred until something makes it reachable.
 
 ### T-5 — denial of service via rule explosion
 
@@ -169,10 +202,32 @@ semantics (e.g. agnostik 1.2.x's no-arg `network_policy_new` vs nein's
 - `network_policy_new` → `nein_network_policy_new`
 - `err_code` → `nein_err_code`
 
-CI's build step prints any `duplicate fn` warnings (the toolchain
-emits them on stdout); a green build implies zero collisions. Future
-deps that introduce new collisions surface on the first build after
-the bump.
+**Corrected at v1.6.10.** This section used to claim "CI's build step prints
+any `duplicate fn` warnings (the toolchain emits them on stdout); a green
+build implies zero collisions." Both halves were wrong:
+
+- The warnings go to **stderr**, not stdout.
+- `cyrius build` **exits 0** with duplicate definitions present, so a green
+  build implies nothing about collisions. Reproduced: a two-`fn dupe()` file
+  builds successfully and emits `warning:<source>:2:1: duplicate fn 'dupe'`.
+
+The gate that does catch them is the **type-check step**, which greps the
+combined output for nein-side `^warning:` lines and fails on any — a
+`duplicate fn` naming a `src/` symbol is not filtered by the `^warning:lib/`
+exclusion, so it fails the build. That step had its own defect, also fixed at
+v1.6.10: `cyrius` prints its `compile … [arch] ` progress line **without a
+trailing newline**, so the first warning of every build was concatenated onto
+it and invisible to `^warning:` (verified — 10 occurrences of `warning:` in
+the output, 9 visible to the grep). The step now normalizes embedded warnings
+onto their own lines first.
+
+One known collision is accepted and tracked: `_sub_new`, duplicated between
+`lib/libro.cyr` and `lib/majra.cyr`. It is a dependency-internal symbol nein
+does not call, and it is excluded by the `^warning:lib/` filter.
+
+**Residual risk.** A collision between two *dependency* symbols is filtered
+out by design and would not fail the build. Only collisions involving a
+`src/` symbol are gated.
 
 ### T-8 — supply chain
 
@@ -180,9 +235,18 @@ the bump.
 git-dependency release could inject malicious code into the nein binary.
 
 **Mitigation.**
-- Cyrius version is pinned in `cyrius.cyml` (`cyrius = "6.5.33"`);
-  CI installs from the version-pinned GitHub release URL — no `latest`,
-  no floating tags.
+- Cyrius version is pinned in `cyrius.cyml` (`cyrius = "6.5.33"`), and CI
+  passes that pin to the installer — the toolchain *payload* is
+  version-pinned, never `latest`.
+
+  **But the installer script itself is not pinned** (noted v1.6.10): CI runs
+  `curl … /MacCracken/cyrius/main/scripts/install.sh | sh`, fetching from the
+  **`main` branch** and piping it to a shell. Whoever can push to that branch
+  can run arbitrary code in every AGNOS repo's CI. This is a first-party
+  repository under the same ownership, which is why it is accepted rather
+  than blocking — but the earlier claim of "no floating tags" was not true of
+  the fetch path, only of the version it installs. Pinning the installer to a
+  tag or vendoring it would close the gap.
 - `cyrius.lock` records sha256 of each resolved dep. CI's
   `cyrius deps --verify` step fails on hash mismatch.
 - nein's `[deps.*]` set is pinned to explicit tags: libro 2.8.8,

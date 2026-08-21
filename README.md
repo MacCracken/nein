@@ -177,13 +177,21 @@ var ops = payload(nein_diff(fw));
 # Build the target firewall.
 var fw = basic_host_firewall();
 
-# Apply only the deltas — no full re-apply if already in sync.
+# Converge the live ruleset onto the target. A chain already in sync emits
+# no ops at all; a chain that differs is rebuilt — every live rule deleted and
+# every target rule re-added IN ORDER. Rule order is nftables' evaluation
+# semantics, so a minimal-delta append would silently reorder (fixed 1.6.10).
+# All ops go out as one atomic `nft -f -` batch.
 var r = nein_diff(fw);
 if (is_ok(r) == 1) {
     var ops = payload(r);
-    # vec_len(ops) is the number of nft commands that were applied.
+    # vec_len(ops) == 0 means the live ruleset already matched the target.
 }
 ```
+
+`nein_diff` validates the whole target firewall before rendering anything, and
+honors the dry-run flag — with `firewall_set_dry_run(fw, 1)` it returns the ops
+it *would* have applied without touching nft.
 
 ### Multi-agent policy engine
 
@@ -225,8 +233,8 @@ cyrius lib sync                        # sync declared stdlib subset from pinned
 cyrius deps                            # resolve git bundles into ./lib/
 cyrius build src/main.cyr build/nein   # compile (x86_64)
 cyrius build --aarch64 src/main.cyr build/nein-aarch64
-cyrius test tests/nein.tcyr            # run test suite (664 assertions)
-cyrius bench tests/nein.bcyr           # run benchmarks (31 benchmarks)
+cyrius tests                           # all suites (754 unit + 18 integration assertions)
+cyrius bench tests/nein.bcyr           # run benchmarks (48 benchmarks)
 cyrius fuzz                            # 5 per-target fuzz drivers
 ```
 

@@ -60,6 +60,11 @@ when wiring agent firewalls, integration tests) additionally see:
 - **`sys_*` wrappers:** `sys_pipe`, `sys_fork`, `sys_execve`,
   `sys_dup2`, `sys_close`, `sys_read`, `sys_write`, `sys_waitpid`,
   `sys_exit`
+- **`rt_sigaction`** (via the stdlib's `signal_ignore(13)`), called once
+  before the first write to set SIGPIPE to `SIG_IGN`. Added at v1.6.10 —
+  **a seccomp allowlist built from an earlier version of this map will kill
+  the first apply.** Disable with `nein_set_sigpipe_guard(0)` if the host
+  manages SIGPIPE itself and you want it out of the profile.
 - **Subprocess binaries:** `/usr/sbin/nft` (single pinned absolute path;
   override at runtime via `nein_set_nft_path`)
 - **Filesystem paths:** none (apply.cyr does not read/write any
@@ -114,7 +119,7 @@ the apply-layer wrappers below.
 
 | | Count |
 |---|---|
-| Direct syscalls | 0 |
+| Direct syscalls | 1 (`rt_sigaction`, via `signal_ignore`) |
 | `sys_*` wrappers | 9 |
 | Subprocess binaries | 1 |
 | Filesystem paths | 0 |
@@ -130,6 +135,12 @@ the apply-layer wrappers below.
 - `sys_write` — pipe rendered ruleset to child's stdin
 - `sys_waitpid` — observe child exit
 - `sys_exit` — child fallback after exec-chain failure
+
+**Direct syscall:**
+
+- `rt_sigaction(SIGPIPE, SIG_IGN)` — via the stdlib's `signal_ignore(13)`,
+  once before the first write (v1.6.10). Without it, writing to an `nft` that
+  has already exited terminates the whole calling process.
 
 **Subprocess binaries:**
 
@@ -161,15 +172,21 @@ apply layer (fail-closed — verify or never touch nft).
 | | Count |
 |---|---|
 | Direct syscalls | 0 |
-| `sys_*` wrappers | 0 (transitively via apply when a mutating tool runs) |
-| Subprocess binaries | 0 (transitively `nft` via apply) |
+| `sys_*` wrappers | 0 directly; apply's full set transitively — including from two READ-ONLY tools |
+| Subprocess binaries | 0 directly; `nft` transitively |
 | Filesystem paths | 0 |
 
 MCP tool dispatch surface over [bote](https://github.com/MacCracken/bote)
 (v1.6.0). Handlers validate args and route to the inspect / builder / apply /
-diff functions; the read-only tools (`nein_status` / `nein_list` /
-`nein_validate`) have no syscall surface, and the mutating tools inherit
-apply's footprint above.
+diff functions.
+
+**"Read-only" is about the firewall, not about syscalls** (corrected v1.6.10).
+`nein_status` and `nein_list` are annotated read-only because they do not
+*modify* the ruleset — but both fork and execve `nft` to read it
+(`list_ruleset` / `list_ruleset_with_handles`), so they carry apply's entire
+syscall footprint. Only `nein_validate` is genuinely syscall-free. A sandbox
+profile that grants the read-only tool set still needs fork + execve + the
+pipe syscalls.
 
 ## Capabilities (Linux)
 

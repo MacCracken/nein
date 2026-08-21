@@ -4,7 +4,7 @@ Thank you for your interest in contributing to nein. This document covers
 the development workflow, code standards, and project conventions for the
 Cyrius-era codebase.
 
-Last refresh: **2026-08-21** (v1.6.5).
+Last refresh: **2026-08-21** (v1.6.10).
 
 ## Development Workflow
 
@@ -50,6 +50,7 @@ for f in src/main.cyr src/lib/*.cyr tests/*.tcyr tests/*.bcyr \
 done
 for f in src/main.cyr src/lib/*.cyr fuzz/*.fcyr; do cyrius lint "$f"; done
 cyrius vet src/main.cyr
+cyrius deny src/main.cyr                          # include-path policy (1.6.8)
 cyrius capacity --check src/main.cyr              # real gate since 1.6.5
 
 # Build (DCE) on both arches
@@ -64,9 +65,12 @@ cyrius tests                                      # all .tcyr, incl. integration
 cyrius bench tests/nein.bcyr
 cyrius fuzz
 
-# Surface + regression gates
+# Surface, coverage + policy gates
 ./scripts/api-surface.sh check
 ./scripts/bench-regression.sh
+./scripts/supply-chain.sh          # dep sources / pins / licences (1.6.8)
+./scripts/doc-coverage.sh          # doc-comment floor (1.6.9)
+./scripts/test-coverage.sh         # API test-coverage floor (1.6.9)
 
 # Dist bundles must be regenerated and committed when src/lib/ or [lib] moves
 cyrius distlib && cyrius distlib mcp
@@ -115,9 +119,14 @@ old — bump both in the same PR if shipping a release.
 - Validators (the injection-safety surface) require fuzz coverage in
   `fuzz/*.fcyr` for both positive and negative cases.
 - Benchmark any fn likely to be called per-rule or per-packet-evaluation.
-- Integration tests against a real `nft` binary live behind the
-  `NEIN_INTEGRATION=1` env gate (`tests/integration/*.tcyr` — 16 tests:
-  6 apply_smoke + 10 mcp_consume_smoke).
+- Integration tests against a real `nft` binary live in
+  `tests/integration/*.tcyr` — 18 tests: 8 apply_smoke + 10
+  mcp_consume_smoke. **There is no `NEIN_INTEGRATION` env gate** (this
+  section claimed one through v1.6.9; nothing in the tree ever read that
+  variable). CI runs them unconditionally on every push: each test
+  classifies its own outcome, so on a non-permissive host the apply
+  assertions pass through the permission-denied branch while the
+  pure-function assertions still run.
 
 ## Performance
 

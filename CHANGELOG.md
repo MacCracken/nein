@@ -116,6 +116,64 @@ All six confirmed errors from the audit's LOW table:
 - `docs/guides/testing.md` still described `cyrius capacity --check` as
   informational; it has been a real gate since 1.6.5.
 
+### Documentation
+
+A **full staleness sweep** — the first since the v1.6.4 content pass. Four
+releases had shipped against docs last content-refreshed at v1.6.5, so most
+counts and several behavioural descriptions were wrong. Beyond the six audit
+errors listed above:
+
+- **`threat-model.md` T-7 was false on both halves, and hid a real gate gap.**
+  It claimed "CI's build step prints any `duplicate fn` warnings (the toolchain
+  emits them on stdout); a green build implies zero collisions." The warnings
+  go to **stderr**, and `cyrius build` **exits 0** with duplicates present —
+  reproduced with a two-`fn dupe()` file. The gate that does catch them is the
+  type-check step, which had its own defect: `cyrius` prints its
+  `compile … [arch] ` line **without a trailing newline**, so the first warning
+  of every build was concatenated onto it and invisible to `^warning:`
+  (verified — 10 occurrences of `warning:` in the output, 9 visible to the
+  grep). Today the swallowed one is a `lib/` warning the filter drops anyway;
+  that is luck, not design. **The gate now normalizes embedded warnings onto
+  their own lines before grepping.** T-4's refresh marker and T-1's ct-state
+  row (which still named the validator with no production callers) corrected
+  in the same pass.
+- **`threat-model.md` T-8's "no floating tags" was untrue of the fetch path.**
+  The toolchain *payload* is version-pinned, but CI pipes
+  `curl …/cyrius/main/scripts/install.sh | sh` — from the **`main` branch**.
+  First-party repo, so accepted rather than blocking, but now stated honestly.
+- **`capability-map.md` was missing the 1.6.10 `rt_sigaction` syscall.** It is
+  a seccomp reference: a profile built from the older map **kills the first
+  apply**. It also claimed the read-only MCP tools have no syscall surface —
+  `nein_status` and `nein_list` both fork+execve nft to read the ruleset; only
+  `nein_validate` is genuinely syscall-free.
+- **`overview.md` still described feature-gated modules per ADR-0003**, which
+  is superseded and describes Cargo features that have not existed since the
+  port (`grep -rn '#ifdef' src/` → zero hits). Also 383→394 fns, 8→9
+  validators, toolchain 6.4.x→6.5.33, consumer pin →1.6.10 with a "pin at or
+  above 1.6.9" note.
+- **`testing.md` documented a fuzz run that never existed** — "500 iterations
+  under a 10-second wall clock timeout per file". CI runs a bare `cyrius fuzz`
+  over fixed deterministic corpora. Its Coverage section still said coverage
+  was unmeasured, and its "What CI Runs" list omitted eight gates.
+- **`CONTRIBUTING.md` claimed integration tests sit behind a
+  `NEIN_INTEGRATION=1` env gate.** No code has ever read that variable; CI
+  runs them unconditionally. Its "full CI gate set" recipe was missing
+  `cyrius deny` and all three script gates.
+- **`README.md`**: 664→754 assertions, 31→48 benchmarks, and the
+  idempotent-apply section rewritten for 1.6.10's ordered-rebuild semantics.
+  All 47 fns used in its code examples were verified against the API snapshot.
+- **`doc-health.md`** described v1.6.10 as "the `.deps` sidecar packaging fix"
+  (that was v1.6.6) and carried five rows asserting counts "still accurate"
+  that were not.
+- **`roadmap.md` cleaned of completed work.** The v1.6.0/v1.6.1 shipped
+  sections were removed — they were history, which this file's own policy says
+  belongs in the CHANGELOG, and one still described the bote vendoring retired
+  at v1.6.1. The gate and audit sections were condensed into "Recently closed"
+  plus a "traps worth not re-stepping in" note. One forward principle was
+  **retracted**: "the v1.5.0 byte-equality match is correct-by-construction;
+  extend only when a consumer measures pain" — it was not correct, and no
+  consumer would have measured pain before a packet got through.
+
 ### Known issues
 
 Two MEDIUM findings remain open, both recorded in the audit: the pipe-ordering
