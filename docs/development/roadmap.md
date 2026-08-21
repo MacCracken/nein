@@ -58,6 +58,34 @@ Do these one at a time, each as its own change, each verified against a clean
 
 ---
 
+## P1 — stop comparing benchmarks across machines
+
+`scripts/bench-track.sh` records a baseline on whatever machine cuts the
+release; `scripts/bench-regression.sh` then compares it against a shared
+GitHub runner. Those are different machines, so every run carries a uniform
+offset that has nothing to do with the code.
+
+Measured on the 1.6.8 baseline: **all 16 ns-bracket benchmarks read 21.5% to
+57.8% slower on CI (median ~34%)**. The 1.6.8 stopgap raised the ns threshold
+to 90% and gave `validate_iface` a 120% band, which stops the false failures
+but also blunts the gate — a genuine 60% regression in a validator now passes.
+
+Two ways out, either of which is better than a wider band:
+
+1. **Record baselines on CI hardware.** A workflow on the release tag runs the
+   suite and commits the result. Removes the offset entirely; costs a CI job
+   and a bot commit.
+2. **Normalize against the run's own median delta.** Compute the median delta
+   across all checked benchmarks, treat that as the machine factor, and flag a
+   bench only when it exceeds the median by the threshold. A uniform shift
+   cancels out; a single bench that doubled still fires. No new
+   infrastructure, and it keeps a tight threshold — likely the better option.
+
+Whichever lands, drop the ns threshold back toward 50% and shrink or remove
+`BENCH_NS_THRESHOLD` in the same change.
+
+---
+
 ## Deferred — full TOML struct parsing
 
 `config.cyr` ships the string→enum dispatch layer; `from_toml` / `to_toml`
