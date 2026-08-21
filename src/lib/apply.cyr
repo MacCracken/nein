@@ -243,10 +243,24 @@ fn apply_ruleset_str(ruleset_str: Str): i64 {
     return _run_nft_stdin(str_data(ruleset_str), str_len(ruleset_str));
 }
 
+# Validate, render, and apply a Firewall.
+#
+# Honors the firewall's dry-run flag (`firewall_set_dry_run`): in dry-run the
+# ruleset is still validated AND rendered — so a caller gets the same errors a
+# real apply would raise — but nft is never spawned. Returns Ok(0).
+#
+# The flag is checked with `!= 0` rather than `== 1` deliberately: any non-zero
+# value means "do not touch the live firewall". Fail-safe direction — a
+# malformed flag skips the apply instead of performing one.
 fn apply_firewall(fw: i64): i64 {
     var vr = firewall_validate(fw);
     if (is_err_result(vr) == 1) { return vr; }
     var ruleset = firewall_render(fw);
+    if (firewall_dry_run(fw) != 0) {
+        var sk_dry = "nein.apply: dry-run set — rendered but not applied";
+        sakshi_info(sk_dry, strlen(sk_dry));
+        return nein_ok();
+    }
     return apply_ruleset_str(ruleset);
 }
 
@@ -429,5 +443,29 @@ fn list_ruleset_with_handles(): i64 {
     store64(argv + 16, "list");
     store64(argv + 24, "ruleset");
     store64(argv + 32, 0);
+    return _run_nft_capture(argv, 0);
+}
+
+# `nft -a list table FAMILY TABLE` — handles, scoped to one table.
+#
+# The scoped form matters for the comment-keyed handle lookup
+# (`find_rules_by_comment` in diff.cyr): listing one table instead of the whole
+# ruleset keeps the parse bounded and stops a match in an unrelated table from
+# ever entering the result set. Both names are validated before they reach
+# argv — they are operator-supplied and land in an execve argument vector.
+fn list_table_with_handles(family: cstring, table: cstring): i64 {
+    var vr = validate_family(family);
+    if (is_err_result(vr) == 1) { return vr; }
+    vr = validate_identifier(table);
+    if (is_err_result(vr) == 1) { return vr; }
+
+    var argv = alloc(56);
+    store64(argv, "nft");
+    store64(argv + 8, "-a");
+    store64(argv + 16, "list");
+    store64(argv + 24, "table");
+    store64(argv + 32, family);
+    store64(argv + 40, table);
+    store64(argv + 48, 0);
     return _run_nft_capture(argv, 0);
 }

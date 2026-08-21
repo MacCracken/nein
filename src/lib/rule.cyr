@@ -336,6 +336,96 @@ fn rule_set_comment(r: i64, c: cstring): i64 {
 }
 
 # ================================================================
+# Anonymous-set match helpers
+#
+# nftables lets a single expression carry a braced set literal —
+# `tcp dport { 80, 443 }` — which renders one rule where the naive
+# construction needs several. These three build that literal for the common
+# cases: a port list, an IPv4 source list, an IPv6 source list.
+#
+# All three go through match_raw, which `rule_validate` deliberately does NOT
+# inspect (ADR-0004: Raw is the caller's responsibility). That makes build-time
+# validation mandatory here — it is the only point at which these inputs are
+# ever checked.
+#
+# DELIBERATE DEVIATION FROM THE RUST ORIGINAL: `Rule::matching_addrs` filtered
+# invalid addresses out and logged a warning, keeping the rest. For a deny
+# rule that silently fails OPEN — the dropped address stops being denied and
+# nothing in the returned value says so. These return Err(ERR_INVALID_RULE)
+# on the first bad element instead, and leave the rule UNMODIFIED: every input
+# is checked before any match is pushed, so a rejected call cannot leave a
+# half-built rule behind.
+#
+# Each takes a Vec (ports: Vec<i64>, addrs: Vec<cstring>) and returns a packed
+# Result — Ok(rule) or Err(ERR_INVALID_RULE).
+# ================================================================
+
+fn _rule_addr_set(r: i64, addrs: i64, prefix: cstring): i64 {
+    var n = vec_len(addrs);
+    if (n == 0) { return nein_err(ERR_INVALID_RULE); }
+
+    # Validate every address BEFORE mutating the rule.
+    var i = 0;
+    while (i < n) {
+        var vr = validate_addr(vec_get(addrs, i));
+        if (is_err_result(vr) == 1) { return vr; }
+        i = i + 1;
+    }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prefix);
+    i = 0;
+    while (i < n) {
+        if (i > 0) { str_builder_add_cstr(sb, ", "); }
+        str_builder_add_cstr(sb, vec_get(addrs, i));
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, " }");
+
+    rule_add_match(r, match_raw(str_cstr(str_builder_build(sb))));
+    return Ok(r);
+}
+
+# `{proto} dport { p1, p2, ... }` — adds a protocol match plus the port set.
+fn rule_matching_ports(r: i64, proto: i64, ports: i64): i64 {
+    var n = vec_len(ports);
+    if (n == 0) { return nein_err(ERR_INVALID_RULE); }
+
+    # Bounds-check every port before mutating the rule.
+    var i = 0;
+    while (i < n) {
+        var p = vec_get(ports, i);
+        if (p < 0) { return nein_err(ERR_INVALID_RULE); }
+        if (p > 65535) { return nein_err(ERR_INVALID_RULE); }
+        i = i + 1;
+    }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "dport { ");
+    i = 0;
+    while (i < n) {
+        if (i > 0) { str_builder_add_cstr(sb, ", "); }
+        str_builder_add_int(sb, vec_get(ports, i));
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, " }");
+
+    rule_add_match(r, match_protocol(proto));
+    rule_add_match(r, match_raw(str_cstr(str_builder_build(sb))));
+    return Ok(r);
+}
+
+# `ip saddr { a1, a2, ... }`
+fn rule_matching_addrs(r: i64, addrs: i64): i64 {
+    return _rule_addr_set(r, addrs, "ip saddr { ");
+}
+
+# `ip6 saddr { a1, a2, ... }`
+fn rule_matching_addrs6(r: i64, addrs: i64): i64 {
+    return _rule_addr_set(r, addrs, "ip6 saddr { ");
+}
+
+# ================================================================
 # Hex rendering helper (stdlib lacks _sb_add_hex)
 # ================================================================
 

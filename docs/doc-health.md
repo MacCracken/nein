@@ -10,7 +10,7 @@ Pattern lifted from agnosys/agnostik 1.2.x. Refresh policy:
 - 🟠 **Yellow** — refreshed in the previous minor; due for a read-through
 - 🔴 **Red** — multiple minors stale; rewrite candidate
 
-Last refresh of this ledger: **2026-08-21** (post v1.6.6 — the `.deps`
+Last refresh of this ledger: **2026-08-21** (post v1.6.7 — the `.deps`
 sidecar packaging fix. Targeted, not a sweep: only the docs that made a
 now-false claim about the sidecars, or that state the current version, were
 touched. The v1.6.5 pass before it updated version/pin/dep-set refs across
@@ -61,6 +61,7 @@ Each ADR is dated at write-time; superseding ADRs reference the originals.
 | `docs/development/threat-model.md` | 2026-08-21 | ✅ | v1.6.5: T-8 pin list retagged (libro 2.8.8 / majra 2.6.7 / bote 3.3.2 / sigil 3.12.9 / patra 1.13.9), sakshi's move out of the git dep set noted, cyrius pin `6.5.33`. Prior v1.6.4 pass — 1.6.x security surfaces modeled: added T-9 (Ed25519 signed-ruleset trust/integrity — key-substitution, tamper, downgrade, replay/keygen residuals), T-10 (MCP destructive-tool access control — fail-closed gate primitive vs. ungated-default fail-open), T-11 (MCP tool-argument injection + output escaping). Scope list +2 surfaces; T-8 pin still current. |
 | `docs/development/capability-map.md` | 2026-08-21 | ✅ | v1.6.6: version block → 1.6.6. v1.6.5: version block → 1.6.5 / cyrius 6.5.33. Prior v1.6.4 sweep: Lens-2 single pinned nft path, added `sign` + `mcp` per-module entries (both transitive-only). |
 | `docs/development/dependencies.md` | 2026-08-21 | ✅ | v1.6.6: `[deps.*]` table row `bote`→`bote-core`; new section on why the section is named for the module, not the repo (the `distlib` basename==section-name rule that put `bote-core` in both sidecars as a stdlib leaf), and a sidecar rule note — a sidecar may name stdlib leaves only. **New at v1.6.5.** Prose home for the `[deps]` rationale removed from `cyrius.cyml` (the `.cyml` parser mis-resolves deps when comments sit inside the `stdlib` array). Covers the explicit build sequence, per-module justification, pin ordering, the sigil/patra top-level pins, and what was dropped (agnosys, vendored bote-core). |
+| `docs/development/port-completeness.md` | 2026-08-21 | ✅ | **New at v1.6.7.** Rust→Cyrius port-completeness audit: method, 172-fn and 22-enum disposition tables, the five intentional drops, the gaps closed at 1.6.7, and the verdict that `rust-old/` can be deleted. |
 
 ## Guides
 

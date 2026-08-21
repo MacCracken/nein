@@ -12,6 +12,7 @@ apply::flush_table/2
 apply::insert_rule_live/4
 apply::list_ruleset/0
 apply::list_ruleset_with_handles/0
+apply::list_table_with_handles/2
 apply::nein_nft_path/0
 apply::nein_set_nft_path/1
 apply::replace_rule_live/5
@@ -81,12 +82,14 @@ diff::diff_apply/1
 diff::diff_compute/2
 diff::diff_parse_live/1
 diff::diff_target_rules/1
+diff::find_rules_by_comment/3
 diff::live_rule_body/1
 diff::live_rule_chain/1
 diff::live_rule_family/1
 diff::live_rule_handle/1
 diff::live_rule_table/1
 diff::nein_diff/1
+diff::parse_rules_with_handles/2
 engine::agent_policy_new/2
 engine::ap_agent_addr/1
 engine::ap_agent_id/1
@@ -103,6 +106,7 @@ engine::ap_set_allow_loopback/2
 engine::ap_validate/1
 engine::pe_add_agent/2
 engine::pe_agent_count/1
+engine::pe_agent_ids/1
 engine::pe_agents/1
 engine::pe_get_agent/2
 engine::pe_remove_agent/2
@@ -124,6 +128,7 @@ error::nein_err/1
 error::nein_err_code/1
 error::nein_ok/0
 firewall::firewall_add_table/2
+firewall::firewall_deduplicate/1
 firewall::firewall_dry_run/1
 firewall::firewall_new/0
 firewall::firewall_render/1
@@ -283,6 +288,9 @@ rule::rate_limit_udp/3
 rule::rule_add_match/2
 rule::rule_comment/1
 rule::rule_matches/1
+rule::rule_matching_addrs/2
+rule::rule_matching_addrs6/2
+rule::rule_matching_ports/3
 rule::rule_new/1
 rule::rule_render/1
 rule::rule_set_comment/2

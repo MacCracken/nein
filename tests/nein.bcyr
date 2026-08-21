@@ -220,8 +220,161 @@ fn bench_set_render() {
     return 0;
 }
 
+
+# ================================================================
+# Scale + deep-protocol fixtures (ported from the Rust criterion suite
+# at 1.6.7). These are built ONCE in main() before any timing starts —
+# the point of a scale benchmark is to measure render/validate against a
+# large input, not to measure constructing it. The smaller benches above
+# deliberately keep construction inside the timed body; these do not.
+# ================================================================
+
+var _bench_fw_1000 = 0;
+var _bench_engine_fw_100 = 0;
+var _bench_set_1000 = 0;
+var _bench_table_20 = 0;
+var _bench_deep_rule = 0;
+var _bench_flowtable = 0;
+var _bench_ct_timeout = 0;
+var _bench_quota_rule = 0;
+var _bench_nat_range = 0;
+
+# int -> fresh cstring (the bench fixtures need generated names)
+fn _b_itoa(n: i64): cstring {
+    var sb = str_builder_new();
+    str_builder_add_int(sb, n);
+    return str_cstr(str_builder_build(sb));
+}
+
+fn _b_concat_int(prefix: cstring, n: i64): cstring {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add_int(sb, n);
+    return str_cstr(str_builder_build(sb));
+}
+
+# "A.B.C.D/MASK" built from parts
+fn _b_cidr(a: i64, b: i64, c: i64, d: i64, mask: i64): cstring {
+    var sb = str_builder_new();
+    str_builder_add_int(sb, a); str_builder_add_cstr(sb, ".");
+    str_builder_add_int(sb, b); str_builder_add_cstr(sb, ".");
+    str_builder_add_int(sb, c); str_builder_add_cstr(sb, ".");
+    str_builder_add_int(sb, d); str_builder_add_cstr(sb, "/");
+    str_builder_add_int(sb, mask);
+    return str_cstr(str_builder_build(sb));
+}
+
+fn _bench_setup_scale() {
+    # --- 1000-rule firewall ---
+    # Rust gave each rule a distinct `rule {i}` comment; here every rule
+    # carries the same comment text. Ports still differ (1000+i), so the
+    # rules are distinct and the comment-render path is still exercised.
+    var fw = firewall_new();
+    var t = table_new("scale", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    var i = 0;
+    while (i < 1000) {
+        var r = allow_tcp(1000 + i);
+        rule_set_comment(r, "scale rule");
+        chain_add_rule(c, r);
+        i = i + 1;
+    }
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+    _bench_fw_1000 = fw;
+
+    # --- 100-agent engine ---
+    var e = policy_engine_new();
+    i = 0;
+    while (i < 100) {
+        var ap = agent_policy_new(_b_concat_int("agent-", i),
+          _b_cidr(10, i / 256, i % 256, 2, 32));
+        ap_allow_inbound(ap, ps_tcp(80));
+        ap_allow_inbound(ap, ps_tcp(443));
+        ap_allow_outbound(ap, ps_tcp(8090));
+        ap_allow_outbound(ap, ps_udp(53));
+        ap_allow_outbound(ap, ps_quic(443));
+        pe_add_agent(e, ap);
+        i = i + 1;
+    }
+    _bench_engine_fw_100 = pe_to_firewall(e);
+
+    # --- 1000-element interval set ---
+    var st = nft_set_new("blocklist", SET_IPV4_ADDR);
+    nft_set_add_flag(st, SETFLAG_INTERVAL);
+    i = 0;
+    while (i < 1000) {
+        nft_set_add_element(st, _b_cidr(i / 256, i % 256, 0, 0, 16));
+        i = i + 1;
+    }
+    _bench_set_1000 = st;
+
+    # --- 20-define table ---
+    var t20 = table_new("filter", FAMILY_INET);
+    i = 0;
+    while (i < 20) {
+        table_add_define(t20, define_new(_b_concat_int("VAR_", i),
+            _b_cidr(10, 0, i, 0, 24)));
+        i = i + 1;
+    }
+    _bench_table_20 = t20;
+
+    # --- deep protocol rule (5 uncommon match variants + advanced log) ---
+    var dr = rule_new(verdict_log_advanced("DEEP: ", NFT_LOG_WARN, 0, 128));
+    rule_add_match(dr, match_pkt_type(PKT_BROADCAST));
+    rule_add_match(dr, match_vlan_id(100));
+    rule_add_match(dr, match_dscp(46));
+    rule_add_match(dr, match_ipv6_ext_hdr(EXT_FRAGMENT));
+    rule_add_match(dr, match_icmp_type_code("echo-request", 0));
+    rule_set_comment(dr, "deep protocol bench");
+    _bench_deep_rule = dr;
+
+    # --- flowtable with 4 devices ---
+    var devs = vec_new();
+    vec_push(devs, "eth0");
+    vec_push(devs, "eth1");
+    vec_push(devs, "eth2");
+    vec_push(devs, "eth3");
+    _bench_flowtable = flowtable_new("ft", 0, devs);
+
+    # --- ct timeout with 3 states ---
+    var ct = ct_timeout_new("tcp-long", PROTO_TCP);
+    ct_timeout_set_l3proto(ct, FAMILY_IP);
+    ct_timeout_add_timeout(ct, "established", 7200);
+    ct_timeout_add_timeout(ct, "close_wait", 60);
+    ct_timeout_add_timeout(ct, "time_wait", 120);
+    _bench_ct_timeout = ct;
+
+    # --- quota rule ---
+    var qr = rule_new(verdict_drop());
+    rule_add_match(qr, match_protocol(PROTO_TCP));
+    rule_add_match(qr, match_dport(80));
+    rule_add_match(qr, match_quota(QUOTA_OVER, 25, QUNIT_MBYTES));
+    rule_set_comment(qr, "rate limit");
+    _bench_quota_rule = qr;
+
+    # --- NAT port-range forward ---
+    _bench_nat_range = port_range_forward(80, 99, "172.17.0.2", 8080);
+
+    return 0;
+}
+
+fn bench_firewall_1000_rules_render() { firewall_render(_bench_fw_1000); return 0; }
+fn bench_firewall_1000_rules_validate() { firewall_validate(_bench_fw_1000); return 0; }
+fn bench_engine_100_agents_render() { firewall_render(_bench_engine_fw_100); return 0; }
+fn bench_engine_100_agents_validate() { firewall_validate(_bench_engine_fw_100); return 0; }
+fn bench_set_1000_elements_render() { nft_set_render(_bench_set_1000); return 0; }
+fn bench_table_20_defines_render() { table_render(_bench_table_20); return 0; }
+fn bench_deep_protocol_render() { rule_render(_bench_deep_rule); return 0; }
+fn bench_deep_protocol_validate() { rule_validate(_bench_deep_rule); return 0; }
+fn bench_flowtable_render() { flowtable_render(_bench_flowtable); return 0; }
+fn bench_ct_timeout_render() { ct_timeout_render(_bench_ct_timeout); return 0; }
+fn bench_quota_rule_render() { rule_render(_bench_quota_rule); return 0; }
+fn bench_nat_range_render() { nat_render(_bench_nat_range); return 0; }
+
 fn main() {
     alloc_init();
+    _bench_setup_scale();
     var all = vec_new();
     var b = 0;
 
@@ -263,6 +416,22 @@ fn main() {
     b = bench_new("bridge_render"); bench_run(b, &bench_bridge_render, 10000); vec_push(all, b);
     b = bench_new("engine_10_agents_render"); bench_run(b, &bench_engine_10_agents_render, 1000); vec_push(all, b);
     b = bench_new("netns_render"); bench_run(b, &bench_netns_render, 10000); vec_push(all, b);
+
+    # --- deep protocol + single-object renders (1.6.7) ---
+    b = bench_new("deep_protocol_render"); bench_run(b, &bench_deep_protocol_render, 100000); vec_push(all, b);
+    b = bench_new("deep_protocol_validate"); bench_run(b, &bench_deep_protocol_validate, 100000); vec_push(all, b);
+    b = bench_new("flowtable_render"); bench_run(b, &bench_flowtable_render, 100000); vec_push(all, b);
+    b = bench_new("ct_timeout_render"); bench_run(b, &bench_ct_timeout_render, 100000); vec_push(all, b);
+    b = bench_new("quota_rule_render"); bench_run(b, &bench_quota_rule_render, 100000); vec_push(all, b);
+    b = bench_new("nat_range_render"); bench_run(b, &bench_nat_range_render, 100000); vec_push(all, b);
+
+    # --- scale (1.6.7) — these are the ones that catch algorithmic drift ---
+    b = bench_new("table_20_defines_render"); bench_run(b, &bench_table_20_defines_render, 10000); vec_push(all, b);
+    b = bench_new("set_1000_elements_render"); bench_run(b, &bench_set_1000_elements_render, 1000); vec_push(all, b);
+    b = bench_new("firewall_1000_rules_render"); bench_run(b, &bench_firewall_1000_rules_render, 200); vec_push(all, b);
+    b = bench_new("firewall_1000_rules_validate"); bench_run(b, &bench_firewall_1000_rules_validate, 200); vec_push(all, b);
+    b = bench_new("engine_100_agents_render"); bench_run(b, &bench_engine_100_agents_render, 200); vec_push(all, b);
+    b = bench_new("engine_100_agents_validate"); bench_run(b, &bench_engine_100_agents_validate, 200); vec_push(all, b);
 
     bench_report_all(all);
     return 0;

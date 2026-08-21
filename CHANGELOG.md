@@ -4,6 +4,113 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.7] — 2026-08-21
+
+**Closes every functional gap the Rust→Cyrius port-completeness audit found,
+including one shipped bug.** A mechanical item-by-item comparison of the
+preserved `rust-old/` tree against the Cyrius surface — 172 Rust public fns,
+22 public enums, plus tests / benches / fuzz targets / examples — established
+what was ported, what was intentionally dropped, and what had been missed. The
+full record is [`docs/development/port-completeness.md`](docs/development/port-completeness.md),
+which is the justification for deleting `rust-old/`. Public surface 383 → 391
+fns (8 added, none removed); 699 unit + 18 integration assertions, 43 benches,
+5 fuzz drivers green.
+
+### Fixed
+
+- **`dry_run` was write-only — a firewall marked dry-run was applied for
+  real.** `firewall_set_dry_run()` / `firewall_dry_run()` existed and were
+  tested, but nothing ever read the flag: `apply_firewall` validated,
+  rendered, and applied unconditionally, and `nein_diff` did the same. A
+  consumer that set dry-run and called apply **wrote rules to the live
+  firewall**, while the API's shape promised the opposite. Rust's
+  `Firewall::apply` and `Firewall::flush` both short-circuited on it; the port
+  lost the behavior silently because Rust's `dry_run_does_not_apply`
+  integration test had no Cyrius equivalent.
+
+  Both apply paths now honor the flag. The check is `!= 0`, not `== 1` —
+  fail-safe, so any non-zero value skips the apply rather than performing one.
+  Dry-run still validates *and* renders, so a caller gets exactly the errors a
+  real apply would raise; `nein_diff` returns the op set it would have
+  applied. Covered by `test_dry_run_does_not_apply` and
+  `test_dry_run_still_validates`: on a non-permissive host a real apply
+  returns `Err` while a dry-run apply returns `Ok`, which is only possible if
+  nft was never spawned.
+
+### Added
+
+- **`firewall_deduplicate(fw)`** — ports `Firewall::deduplicate`. Returns the
+  number of rules removed. Duplicates are detected by comparing *rendered*
+  text rather than struct fields, which also catches rules assembled by
+  different code paths into the same line. Only **consecutive** duplicates
+  collapse, matching Rust's `Vec::dedup` — deliberate, since a non-terminal
+  rule (`counter`, bare `log`) appearing twice with rules in between is
+  counted twice on purpose and collapsing across a gap would silently change
+  packet accounting.
+- **`rule_matching_ports` / `rule_matching_addrs` / `rule_matching_addrs6`** —
+  port the anonymous-set builders (`tcp dport { 80, 443 }`,
+  `ip saddr { a, b }`). Without them the only path to a braced set literal was
+  hand-building `match_raw`, which `rule_validate` deliberately does not
+  inspect (ADR-0004) — so the ergonomic path was missing and the surviving one
+  was the unvalidated one.
+
+  **Deliberate deviation from Rust:** `Rule::matching_addrs` filtered invalid
+  addresses out and logged a warning, keeping the rest. In a deny rule that
+  fails **open** — the dropped address stops being denied and nothing in the
+  return value says so. These return `Err(ERR_INVALID_RULE)` on the first bad
+  element and leave the rule **unmodified**; every input is checked before any
+  match is pushed, so a rejected call cannot leave a half-built rule behind.
+- **`find_rules_by_comment(family, table, prefix)` +
+  `parse_rules_with_handles(raw, prefix)`** (`diff.cyr`) and
+  **`list_table_with_handles(family, table)`** (`apply.cyr`) — port the
+  comment-keyed live-rule lookup. `diff.cyr` already parsed handles but keyed
+  only on rule *body*, so nothing could produce the handle that
+  `add_rule_after_live` / `delete_rule_live` take from a rule's comment. The
+  needle is `comment "PREFIX` — the opening quote is part of it, so a prefix
+  cannot match inside another rule's operand text.
+  `parse_rules_with_handles` is pure, so it is testable against captured nft
+  output without root.
+- **`pe_agent_ids(pe)`** — ports `PolicyEngine::agent_ids`. Reconstructible
+  from `pe_agents` + `ap_agent_id`, added for parity.
+- **12 benchmarks, 31 → 43.** The Cyrius suite was not a superset of Rust's:
+  it added validator micro-benches but had dropped **every scale benchmark** —
+  precisely the ones that catch algorithmic regressions, which
+  `bench-regression.sh` therefore could not gate on. Ported
+  `firewall_1000_rules_render` / `_validate`, `engine_100_agents_render` /
+  `_validate`, `set_1000_elements_render`, `table_20_defines_render`,
+  `deep_protocol_render` / `_validate`, `flowtable_render`,
+  `ct_timeout_render`, `quota_rule_render`, `nat_range_render`. Fixtures are
+  built once before timing starts, matching the criterion originals.
+  `toml_parse_small` is not ported — there is no TOML parser to measure.
+- **[`docs/development/port-completeness.md`](docs/development/port-completeness.md)**
+  — the audit record: method, per-item disposition, and the verdict that
+  `rust-old/` can be deleted.
+- **README sections** for container-bridge-with-isolation-groups, GeoIP
+  blocking, anonymous-set matches, and dry-run. The first two were the only
+  `rust-old/examples/*.rs` without a documented Cyrius equivalent (all four
+  APIs were already covered by unit tests, so this was documentation loss, not
+  capability loss).
+- **35 unit assertions** covering the above, plus 2 integration tests for
+  dry-run.
+
+### Notes
+
+- **What stays unported, on purpose:** `config::from_toml` / `to_toml` (full
+  TOML struct parsing, deferred to sutra's port); `netns::apply_to_namespace`
+  and `NamespaceFirewall::for_agent` (both took agnosys types, dropped at the
+  agnosys → agnodrm decomposition); and `mcp::build_allow_rule` /
+  `build_deny_rule` / `tool_descriptors` (superseded by the six flat-arg tool
+  surface redesigned at 1.6.0). Every one is documented in the audit.
+- **All 22 public enums have exact variant parity** — 30 `Match` variants, 13
+  `Verdict`, 8 `LogLevel`, 6 each for `Family` / `Hook` / `RejectReason` /
+  `Ipv6ExtHdr` / `CmpOp`, and so on. Nothing was quietly dropped.
+- **One open item, tracked at the top of
+  [`roadmap.md`](docs/development/roadmap.md):** `cyrius deny`,
+  `cyrius coverage --min`, and `cyrius doc --check` all exist and none are
+  wired into CI, where the Rust `Makefile` ran all three equivalents.
+  CLAUDE.md's "minimum 80%+ coverage target" is aspirational until `--min`
+  gates it. Not a port gap and it does not block deleting `rust-old/`.
+
 ## [1.6.6] — 2026-08-21
 
 **Packaging fix: both `.deps` sidecars claimed `bote-core` ships in the cyrius

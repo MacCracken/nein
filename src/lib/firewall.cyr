@@ -23,6 +23,52 @@ fn firewall_add_table(fw: i64, t: i64): i64 {
     return fw;
 }
 
+# --- Remove consecutive duplicate rules within each chain ---
+#
+# Returns the number of rules removed. Two rules are duplicates when they
+# render to identical nft text — a stronger test than comparing fields, since
+# it also catches rules assembled by different code paths that collapse to the
+# same line (e.g. two builders both emitting `ct state { established, related }
+# accept`).
+#
+# Only CONSECUTIVE duplicates are collapsed, matching the Rust original's
+# `Vec::dedup`. This is deliberate, not a shortcut: rule order is semantic in
+# nftables, and a non-terminal rule (`counter`, bare `log`) that appears twice
+# with other rules between them is counted twice on purpose. Collapsing across
+# a gap would silently change packet accounting. Adjacent identical rules are
+# the unambiguous case — the second can never observe traffic the first did
+# not — so that is the only one collapsed here.
+fn firewall_deduplicate(fw: i64): i64 {
+    var removed = 0;
+    var tables = firewall_tables(fw);
+    var tlen = vec_len(tables);
+    var ti = 0;
+
+    while (ti < tlen) {
+        var chains = table_chains(vec_get(tables, ti));
+        var clen = vec_len(chains);
+        var ci = 0;
+        while (ci < clen) {
+            var rules = chain_rules(vec_get(chains, ci));
+            var i = 1;
+            while (i < vec_len(rules)) {
+                var prev = chain_rule_render(vec_get(rules, i - 1));
+                var cur = chain_rule_render(vec_get(rules, i));
+                if (str_eq(prev, cur) == 1) {
+                    vec_remove(rules, i);
+                    removed = removed + 1;
+                } else {
+                    i = i + 1;
+                }
+            }
+            ci = ci + 1;
+        }
+        ti = ti + 1;
+    }
+
+    return removed;
+}
+
 # --- Render: concatenate all tables with trailing newlines ---
 fn firewall_render(fw: i64): Str {
     var sb = str_builder_new();

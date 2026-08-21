@@ -1,6 +1,6 @@
 # Dependencies
 
-Last refresh: **2026-08-21** (v1.6.6).
+Last refresh: **2026-08-21** (v1.6.7).
 
 Why each entry in `cyrius.cyml`'s `[deps]` block exists, and why the
 resolution order is what it is. This file is the prose home for that
@@ -76,7 +76,7 @@ It is an explicit `[deps.sigil]` git pin instead — see below.
 
 ## `[deps.*]` — git pins
 
-| Dep | Tag (v1.6.6) | Bundle | Why |
+| Dep | Tag (v1.6.7) | Bundle | Why |
 |-----|--------------|--------|-----|
 | `libro` | 2.8.8 | `dist/libro.cyr` | bote's manifest graph references it |
 | `majra` | 2.6.7 | `dist/majra.cyr` | bote's manifest graph references it |

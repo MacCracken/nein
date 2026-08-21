@@ -299,6 +299,21 @@ fn pe_set_table_name(pe: i64, name: cstring): i64 {
 
 fn pe_agent_count(pe: i64): i64 { return vec_len(load64(pe)); }
 
+# Agent ids in registration order — Vec<cstring>. The ids are borrowed from
+# the AgentPolicy objects, not copied, so they stay valid exactly as long as
+# the engine does.
+fn pe_agent_ids(pe: i64): i64 {
+    var out = vec_new();
+    var agents = pe_agents(pe);
+    var n = vec_len(agents);
+    var i = 0;
+    while (i < n) {
+        vec_push(out, ap_agent_id(vec_get(agents, i)));
+        i = i + 1;
+    }
+    return out;
+}
+
 # Find agent index by id (returns 0-based index or -1)
 fn _pe_find_index(pe: i64, agent_id: cstring): i64 {
     var agents = load64(pe);

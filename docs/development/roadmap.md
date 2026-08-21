@@ -1,26 +1,61 @@
 # Roadmap
 
-Last refresh: 2026-08-21 (post v1.6.6 — the `.deps` sidecar packaging fix
-that unblocked every consumer's `cyrius deps` on cyrius 6.5.24+, on top of
-v1.6.5's toolchain 6.5.33 + full dependency refresh; no feature or API
-change in either, but the 6.5.x line changed `cyrius fmt` / `capacity` /
-`distlib` behaviour and the CI gates were reworked to match. v1.6.2 shipped
-nein's half of the daimon firewall-MCP joint ship: [lib.mcp] bundle +
-dispatch adapter, whose paired daimon-side PR is the only 1.6.x item left).
+Last refresh: 2026-08-21 (post v1.6.7 — closed every functional gap the
+Rust→Cyrius port-completeness audit turned up, including one shipped bug
+where `dry_run` was write-only. `rust-old/` is now cleared for deletion; see
+[`port-completeness.md`](port-completeness.md). v1.6.2 shipped nein's half of
+the daimon firewall-MCP joint ship: [lib.mcp] bundle + dispatch adapter, whose
+paired daimon-side PR is the only other item still open).
 
-Forward-looking only. The release history (v1.0.0 → v1.6.6) lives in
+Forward-looking only. The release history (v1.0.0 → v1.6.7) lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); the rationale for each shipped
 decision is preserved there, not duplicated here. This file tracks
 **what's next**.
 
 ---
 
-## Current state — v1.6.6
+## P1 — wire the three unenforced quality gates
+
+**The only open item from the port-completeness audit.** Independent of
+`rust-old/`; it does not block deleting that tree.
+
+The Rust `Makefile` ran `cargo deny`, `cargo vet`, and an 80% coverage gate on
+every check. Their Cyrius equivalents all exist in the toolchain and **none of
+them run in CI**:
+
+| Gate | Command | Status |
+|------|---------|--------|
+| Supply-chain policy | `cyrius deny src/main.cyr` | exists, not wired |
+| Coverage floor | `cyrius coverage --min 80` | exists, not wired |
+| Doc coverage | `cyrius doc --check src/main.cyr` | exists, not wired |
+
+CLAUDE.md states a "minimum 80%+ coverage target" that nothing currently
+enforces — the number is aspirational until `--min` gates it. Establish the
+real figure first: `cyrius coverage` on the current tree, then set `--min` at
+or just under it so the gate ratchets rather than fails on day one.
+
+Do these one at a time, each as its own change, each verified against a
+clean `rm -rf build lib` run before the next. `cyrius deny` needs a policy
+decision (which sources/licences are allowed) before it can gate anything —
+mirror `rust-old/deny.toml`'s allow-list as the starting point.
+
+---
+
+## Deferred — full TOML struct parsing
+
+`config.cyr` ships the string→enum dispatch layer; `from_toml` / `to_toml`
+were not ported. Scheduled for sutra's port start, when there is a consumer
+to shape the schema around. Until then a consumer layers its own TOML on top
+of `cfg_parse_*`.
+
+---
+
+## Current state — v1.6.7
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 21 modules
-(mcp at 1.6.0, sign at 1.6.1), 664 test assertions + a bundle-consume
-integration guard, 31 benchmarks, 5 per-target fuzz drivers, single-file
+(mcp at 1.6.0, sign at 1.6.1), 699 test assertions + a bundle-consume
+integration guard, 43 benchmarks, 5 per-target fuzz drivers, single-file
 `dist/nein.cyr` bundle (still bote/sigil-free) plus the opt-in
 `dist/nein-mcp.cyr` (`[lib.mcp]`) for MCP hosts. Type-check end-to-end
 clean; aarch64 cross-build green; `capacity --check` is a real gate again
@@ -33,9 +68,10 @@ bundle. Full `[deps]` rationale lives in
 mis-resolves deps when comments sit inside the `stdlib` array, so the
 manifest carries none.
 
-nein's side of the 1.6.x ecosystem work is done. The only open 1.6.x
-item is the **paired daimon-side PR** (below). Everything beyond stays
-consumer-driven — features a downstream asks for, not speculative additions.
+nein's side of the 1.6.x ecosystem work is done. Open items are the **P1
+quality gates** above and the **paired daimon-side PR** (below). Everything
+beyond stays consumer-driven — features a downstream asks for, not speculative
+additions.
 
 ---
 

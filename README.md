@@ -106,6 +106,71 @@ var dnat = port_forward(8080, "172.17.0.2", 80);
 var masq = container_masquerade("172.17.0.0/16", "eth0");
 ```
 
+### Container bridge with isolation groups
+
+```cyrius
+var bf = bridge_firewall_new(bridge_config_new("br0", "172.17.0.0/16", "eth0"));
+
+# Publish two containers
+bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
+bf_add_port_mapping(bf, pm_tcp(5432, "172.17.0.3", 5432));
+
+# O(1) set-based isolation between tiers
+var frontend = vec_new();
+vec_push(frontend, "172.17.1.0/24");
+bf_add_isolation_group(bf, isolation_group_new("frontend", frontend));
+
+if (is_ok(bf_validate(bf)) == 1) {
+    var out = firewall_render(bf_to_firewall(bf));
+}
+```
+
+### GeoIP country blocking
+
+```cyrius
+var bl = geoip_new();
+
+var xx = vec_new();
+vec_push(xx, "198.51.100.0/24");
+vec_push(xx, "203.0.113.0/24");
+geoip_block_country(bl, country_block_v4("XX", xx));
+
+# Dual-stack: IPv4 + IPv6 ranges for one country
+var yy4 = vec_new(); vec_push(yy4, "192.0.2.0/24");
+var yy6 = vec_new(); vec_push(yy6, "2001:db8::/32");
+geoip_block_country(bl, country_block_dual("YY", yy4, yy6));
+
+var out = firewall_render(geoip_to_firewall(bl));
+```
+
+### Anonymous set matches
+
+```cyrius
+# One rule, many ports: `tcp dport { 80, 443, 8080 }`
+var ports = vec_new();
+vec_push(ports, 80); vec_push(ports, 443); vec_push(ports, 8080);
+
+var r = rule_new(verdict_accept());
+var res = rule_matching_ports(r, PROTO_TCP, ports);
+
+# Every element is validated up front — one bad address fails the whole
+# call and leaves the rule untouched, rather than silently dropping it.
+if (is_err_result(res) == 1) { return 1; }
+```
+
+### Dry run
+
+```cyrius
+var fw = basic_host_firewall();
+firewall_set_dry_run(fw, 1);
+
+# Validates and renders, but never spawns nft.
+var r = apply_firewall(fw);
+
+# nein_diff honors the same flag — it returns the ops it WOULD have applied.
+var ops = payload(nein_diff(fw));
+```
+
 ### Idempotent apply (live-rule diff)
 
 ```cyrius

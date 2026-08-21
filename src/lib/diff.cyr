@@ -406,6 +406,12 @@ fn diff_apply(ops: i64): i64 {
 # ================================================================
 # Convenience: list live + compute diff + apply.
 # Returns Vec<cstring> of ops that WERE applied, or Err on failure.
+#
+# Honors the target firewall's dry-run flag: the live ruleset is still listed
+# and the op set still computed, but nothing is applied. The returned Vec is
+# then the set of ops that WOULD have been applied — which is exactly what a
+# dry-run caller wants to inspect. Same `!= 0` fail-safe check as
+# `apply_firewall`.
 # ================================================================
 
 fn nein_diff(target_fw: i64): i64 {
@@ -413,7 +419,83 @@ fn nein_diff(target_fw: i64): i64 {
     if (is_err_result(live_res) == 1) { return live_res; }
     var live_raw = payload(live_res);
     var ops = diff_compute(target_fw, live_raw);
+    if (firewall_dry_run(target_fw) != 0) {
+        var sk_dry = "nein.diff: dry-run set — ops computed but not applied";
+        sakshi_info(sk_dry, strlen(sk_dry));
+        return Ok(ops);
+    }
     var apply_res = diff_apply(ops);
     if (is_err_result(apply_res) == 1) { return apply_res; }
     return Ok(ops);
+}
+
+# ================================================================
+# Comment-keyed handle lookup
+#
+# The live-rule parser above keys on rule BODY. This pair keys on the rule's
+# nft comment instead, which is how a consumer finds "every rule I created for
+# agent X" without having to reconstruct the exact rendered text. That is the
+# input `add_rule_after_live` / `delete_rule_live` need: both take a handle,
+# and until now nothing produced one from a comment.
+#
+# The needle is `comment "PREFIX` — the opening quote is part of it, so a
+# prefix cannot match inside some other rule's operand text.
+# ================================================================
+
+# Substring search over cstrings. Returns 1 if haystack contains needle.
+fn _cstr_contains(haystack: cstring, needle: cstring): i64 {
+    var nlen = strlen(needle);
+    if (nlen == 0) { return 1; }
+    var hlen = strlen(haystack);
+    if (nlen > hlen) { return 0; }
+
+    var i = 0;
+    while (i <= hlen - nlen) {
+        var j = 0;
+        while (j < nlen && load8(haystack + i + j) == load8(needle + j)) {
+            j = j + 1;
+        }
+        if (j == nlen) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Pure function — parse `nft -a` output and keep only rules whose comment
+# starts with `comment_prefix`. Separated from the subprocess call so it is
+# testable against captured nft output without root. Returns Vec<LiveRule>.
+fn parse_rules_with_handles(raw_str: Str, comment_prefix: cstring): i64 {
+    var all = diff_parse_live(raw_str);
+    var out = vec_new();
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "comment \"");
+    str_builder_add_cstr(sb, comment_prefix);
+    var needle = str_cstr(str_builder_build(sb));
+
+    var n = vec_len(all);
+    var i = 0;
+    while (i < n) {
+        var lr = vec_get(all, i);
+        if (_cstr_contains(live_rule_body(lr), needle) == 1) {
+            vec_push(out, lr);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+# Find live rules in one table whose comment starts with `comment_prefix`.
+# Returns Ok(Vec<LiveRule>) or Err. All three arguments are validated before
+# any subprocess runs — comment_prefix goes through validate_comment because
+# it is operator input that reaches an execve argv via the table listing.
+fn find_rules_by_comment(family: cstring, table: cstring, comment_prefix: cstring): i64 {
+    var vr = validate_comment(comment_prefix);
+    if (is_err_result(vr) == 1) { return vr; }
+
+    # list_table_with_handles validates family + table itself.
+    var res = list_table_with_handles(family, table);
+    if (is_err_result(res) == 1) { return res; }
+
+    return Ok(parse_rules_with_handles(payload(res), comment_prefix));
 }
