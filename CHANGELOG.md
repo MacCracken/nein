@@ -61,6 +61,41 @@ long-documented `_sub_new` last-wins dup.
   continuation indents until this release.
 - **`dist/nein.cyr` + `dist/nein-mcp.cyr` regenerated at 1.6.5** — version
   banner plus the formatter's continuation indents; no `[lib]` body change.
+- **Release workflow gates both dist bundles, not just the default one.**
+  `dist/nein-mcp.cyr` shipped at 1.6.2, but `release.yml` only ever
+  regenerated, staleness-checked, and attached `dist/nein.cyr` — a tag could
+  ship a stale MCP bundle to daimon. Now both are regenerated
+  (`cyrius distlib` + `cyrius distlib mcp`), both are diffed against their
+  committed copies, and both are attached as release assets. The
+  **`.deps` sidecars are gated too** — 6.5.x rewrote them (see Breaking
+  below), and a stale sidecar breaks a consumer's `cyrius deps` exactly as
+  hard as a stale bundle while being much easier to miss.
+- **Release workflow runs `cyrius lib sync` before `cyrius deps`.** ci.yml has
+  always done this — Cyrius doesn't auto-resolve stdlib, so the declared
+  subset must land in `./lib/` before the git-dep bundles can resolve against
+  it — but release.yml went straight to `cyrius deps`. Also dropped a
+  `cyrius distlib || true` that masked generation failures, and a
+  `sha256sum … 2>/dev/null` that would have silently produced a short
+  `SHA256SUMS` if an asset were missing.
+- **Rust-era scripts rewritten for Cyrius.** Both had been dead since the
+  port and would have failed on first use:
+  - `scripts/version-bump.sh` `sed`-ed a `Cargo.toml` that no longer exists
+    and ran `cargo check`. Now moves `VERSION`, regenerates both dist bundles
+    (they bake a version banner), and reports what the bump still owes —
+    CHANGELOG entry, roadmap refresh recency, docs still naming the outgoing
+    version. `--check` reports without writing.
+  - `scripts/bench-track.sh` ran `cargo bench` against criterion and wrote
+    `benchmarks/history.tsv`. Now runs `cyrius bench` and appends a baseline
+    to `docs/benchmarks/history.csv` — the record `bench-regression.sh`
+    actually gates against, which until now had to be appended by hand.
+    Adds `--dry-run` and a `--compare` that diffs the last two baselines.
+- **Rust-era `benchmarks/` moved to `rust-old/benchmarks/`.** 975 files of
+  criterion output (raw runs 0.22.3 → 0.90.0, `history.tsv`, and a copied
+  `target/criterion` tree) that nothing had written to since the port. Moved
+  rather than deleted — the Rust era is preserved under `rust-old/` by
+  convention, and the data is intact. The live record is
+  `docs/benchmarks/history.csv`; the repo root now matches the layout
+  CLAUDE.md documents.
 
 ### Breaking
 

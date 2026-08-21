@@ -41,12 +41,16 @@ cyrius deps                                       # resolve git bundles into ./l
 cyrius deps --verify                              # confirm cyrius.lock hashes
 
 # Format / lint / vet
-for f in src/main.cyr src/lib/*.cyr; do
-  diff -q <(cyrius fmt "$f") "$f" >/dev/null || echo "drift: $f"
-  cyrius lint "$f"
+# NOTE (cyrius 6.5.x): `cyrius fmt <file>` formats IN PLACE and prints
+# nothing — `--check` is the drift check. Do not diff fmt's stdout; that
+# was the 6.4.x recipe and it now rewrites your tree as a side effect.
+for f in src/main.cyr src/lib/*.cyr tests/*.tcyr tests/*.bcyr \
+         tests/integration/*.tcyr fuzz/*.fcyr; do
+  cyrius fmt --check "$f" >/dev/null 2>&1 || echo "drift: $f"
 done
+for f in src/main.cyr src/lib/*.cyr fuzz/*.fcyr; do cyrius lint "$f"; done
 cyrius vet src/main.cyr
-cyrius capacity --check src/main.cyr || true     # informational
+cyrius capacity --check src/main.cyr              # real gate since 1.6.5
 
 # Build (DCE) on both arches
 CYRIUS_DCE=1 cyrius build src/main.cyr build/nein
@@ -55,13 +59,18 @@ CYRIUS_DCE=1 cyrius build --aarch64 src/main.cyr build/nein-aarch64
 # Type-check (cyrius 6.x default-on)
 CYRIUS_TYPE_CHECK=1 cyrius build src/main.cyr build/nein-tc
 
-# Test + bench
-cyrius test tests/nein.tcyr
+# Test + bench + fuzz
+cyrius tests                                      # all .tcyr, incl. integration
 cyrius bench tests/nein.bcyr
+cyrius fuzz
 
 # Surface + regression gates
 ./scripts/api-surface.sh check
 ./scripts/bench-regression.sh
+
+# Dist bundles must be regenerated and committed when src/lib/ or [lib] moves
+cyrius distlib && cyrius distlib mcp
+git diff --exit-code dist/                        # must be clean
 ```
 
 Before opening a PR, confirm every step exits 0. The `Currency check`
@@ -119,6 +128,29 @@ PR description. The CI `bench-regression` gate fires automatically on
 committed baseline in `docs/benchmarks/history.csv`. To deliberately
 ack a regression (correctness fix that costs perf), include
 `[bench-regression-ack]` in the HEAD commit message.
+
+Baselines are recorded with `./scripts/bench-track.sh`, which runs
+`cyrius bench` and appends a row set to `docs/benchmarks/history.csv`.
+Record deliberately — a new baseline moves the floor the gate compares
+against, so it belongs on a release commit, not mid-cycle. Use
+`--dry-run` to see the numbers without writing, and `--compare` to diff
+the last two baselines.
+
+## Cutting a Release
+
+`./scripts/version-bump.sh <x.y.z>` moves `VERSION` (which `cyrius.cyml`
+pulls through `${file:VERSION}`), regenerates both dist bundles — they
+bake a version banner, and CI's staleness gate fails on a stale one —
+and then reports what the bump still owes: the dated `CHANGELOG.md`
+entry, the roadmap's `Last refresh:` recency, and any doc still naming
+the outgoing version. `--check` reports without writing anything.
+
+Tagging `x.y.z` runs the full CI gate set, then `release.yml`
+regenerates and staleness-checks **both** `dist/nein.cyr` and
+`dist/nein-mcp.cyr` along with their `.deps` sidecars, and attaches all
+four as release assets alongside the source tarball and the x86_64
+binary. Commit the regenerated bundles before tagging or the release
+fails.
 
 ## Threat Model
 

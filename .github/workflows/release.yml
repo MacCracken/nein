@@ -51,6 +51,16 @@ jobs:
             CYRIUS_VERSION="$CYRIUS_VERSION" sh
           echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
 
+      - name: Sync stdlib
+        # Cyrius does not auto-resolve stdlib (supply-chain safety). The
+        # declared `[deps].stdlib` subset must be copied out of the pinned
+        # snapshot into ./lib/ BEFORE `cyrius deps`, or the git-dep bundles'
+        # own requirements have nothing to resolve against. ci.yml has always
+        # done this; release.yml was missing it and only worked because
+        # `cyrius deps` happened to find a pre-populated ./lib/ on the runner
+        # in the pre-6.4 layout. Added at 1.6.5.
+        run: cyrius lib sync
+
       - name: Resolve deps
         run: cyrius deps
 
@@ -68,22 +78,45 @@ jobs:
           cyrius build src/main.cyr build/nein
           echo "nein: $(wc -c < build/nein) bytes"
 
-      - name: Regenerate dist bundle (consumer distribution artifact)
-        # Downstream consumers (stiva / aegis / daimon / sutra) pull
-        # `dist/nein.cyr` via `[deps.nein] modules = ["dist/nein.cyr"]`.
-        # A tagged release without dist/nein.cyr = broken `cyrius deps`
-        # for every consumer. Mirrors bote / patra release flow.
+      - name: Regenerate dist bundles (consumer distribution artifacts)
+        # Downstream consumers pull these via `[deps.nein] modules = [...]`:
+        #   dist/nein.cyr      — stiva / aegis / sutra (bote/sigil-free core)
+        #   dist/nein-mcp.cyr  — daimon ([lib.mcp]: + sign + mcp), since 1.6.2
+        # A tagged release with either one missing or stale = broken
+        # `cyrius deps` for those consumers. Through 1.6.4 this step built
+        # only the default bundle, so a tag could ship a stale MCP bundle;
+        # both are regenerated and gated as of 1.6.5. Mirrors bote / patra.
+        #
+        # No `|| true` — distlib failing is a release-blocking error, not a
+        # warning. The old form masked it and let the weaker `test -s` check
+        # pass on a stale-but-present file.
         run: |
-          cyrius distlib || true
-          test -s dist/nein.cyr || { echo "FAIL: dist/nein.cyr not produced"; exit 1; }
-          echo "dist/nein.cyr: $(wc -l < dist/nein.cyr) lines, $(wc -c < dist/nein.cyr) bytes"
+          cyrius distlib
+          cyrius distlib mcp
+          for b in dist/nein.cyr dist/nein-mcp.cyr; do
+            test -s "$b" || { echo "FAIL: $b not produced"; exit 1; }
+            echo "$b: $(wc -l < "$b") lines, $(wc -c < "$b") bytes"
+          done
 
-      - name: Verify dist bundle matches committed copy
+      - name: Verify dist bundles match committed copies
+        # Covers the `.deps` sidecars too, not just the `.cyr` bodies: a
+        # sidecar names what a consumer must have in scope, and toolchain
+        # 6.5.x rewrote both of them (dist/nein.deps went 3 -> 32 entries).
+        # A stale sidecar breaks `cyrius deps` downstream just as hard as a
+        # stale bundle, and is far easier to miss. Added at 1.6.5.
         run: |
-          if ! git diff --exit-code dist/nein.cyr; then
-            echo "FAIL: dist/nein.cyr is stale. Regenerate via 'cyrius distlib' and commit before tagging."
+          stale=0
+          for b in dist/nein.cyr dist/nein-mcp.cyr dist/nein.deps dist/nein-mcp.deps; do
+            if ! git diff --exit-code "$b"; then
+              echo "FAIL: $b is stale."
+              stale=1
+            fi
+          done
+          if [ "$stale" -ne 0 ]; then
+            echo "Regenerate via 'cyrius distlib' + 'cyrius distlib mcp' and commit before tagging."
             exit 1
           fi
+          echo "dist bundles + .deps sidecars match the committed copies"
 
       - name: Smoke test
         run: |
@@ -91,13 +124,25 @@ jobs:
           grep -q "nein ready" /tmp/smoke || { echo "FAIL: smoke test"; exit 1; }
 
       - name: Archive
+        # Both bundles ship as assets, each with its `.deps` sidecar — a
+        # bundle downloaded without its sidecar doesn't tell the consumer
+        # what it needs in scope. Through 1.6.4 only dist/nein.cyr was
+        # attached, so daimon's bundle was release-invisible even though it
+        # shipped at 1.6.2.
         run: |
+          set -e
           TAG="${GITHUB_REF_NAME}"
-          rm -f nein-*.tar.gz nein-*.cyr
+          rm -f nein-*.tar.gz nein-*.cyr nein-*.deps
           git archive --format=tar.gz --prefix="nein-${TAG}/" -o "nein-${TAG}-src.tar.gz" HEAD
-          cp build/nein     "nein-${TAG}-x86_64-linux"
-          cp dist/nein.cyr  "nein-${TAG}.cyr"
-          sha256sum nein-*.tar.gz "nein-${TAG}-x86_64-linux" "nein-${TAG}.cyr" 2>/dev/null > SHA256SUMS
+          cp build/nein             "nein-${TAG}-x86_64-linux"
+          cp dist/nein.cyr          "nein-${TAG}.cyr"
+          cp dist/nein.deps         "nein-${TAG}.deps"
+          cp dist/nein-mcp.cyr      "nein-${TAG}-mcp.cyr"
+          cp dist/nein-mcp.deps     "nein-${TAG}-mcp.deps"
+          # No 2>/dev/null — a missing asset must fail the release, not
+          # silently produce a short SHA256SUMS.
+          sha256sum nein-*.tar.gz nein-*-x86_64-linux nein-*.cyr nein-*.deps > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Extract changelog
         run: |
@@ -113,5 +158,6 @@ jobs:
             nein-*.tar.gz
             nein-*-linux
             nein-*.cyr
+            nein-*.deps
             cyrius.lock
             SHA256SUMS

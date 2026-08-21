@@ -1,78 +1,117 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run criterion benchmarks and append a timestamped summary to the
-# historical record. Stores raw criterion output alongside a compact
-# TSV log for easy diffing across versions.
+# Run the Cyrius benchmark suite and append a timestamped baseline to
+# docs/benchmarks/history.csv — the record scripts/bench-regression.sh
+# gates against, and the CSV history CLAUDE.md calls "the proof".
+#
+# Replaces the Rust-era script (criterion via `cargo bench`, writing
+# benchmarks/history.tsv), retired at 1.6.5 along with that whole
+# directory — the Rust-era data is preserved under rust-old/benchmarks/.
+#
+# Baselines ride in on release commits. Recording one mid-cycle moves the
+# floor bench-regression.sh compares against, so record deliberately.
 #
 # Usage:
-#   ./scripts/bench-track.sh              # run and record
-#   ./scripts/bench-track.sh --compare    # show last two entries side-by-side
+#   ./scripts/bench-track.sh              # run and append a baseline
+#   ./scripts/bench-track.sh --dry-run    # run and print, append nothing
+#   ./scripts/bench-track.sh --compare    # last two baselines side by side
 
-BENCH_DIR="benchmarks"
-HISTORY_FILE="$BENCH_DIR/history.tsv"
-LATEST_DIR="$BENCH_DIR/latest"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
 
-mkdir -p "$BENCH_DIR" "$LATEST_DIR"
+HISTORY="docs/benchmarks/history.csv"
+BENCH_SRC="tests/nein.bcyr"
+MODE="${1:-record}"
 
-if [[ "${1:-}" == "--compare" ]]; then
-    if [[ ! -f "$HISTORY_FILE" ]]; then
-        echo "No history file found at $HISTORY_FILE"
+# --- --compare ---------------------------------------------------------
+if [[ "$MODE" == "--compare" ]]; then
+    [ -f "$HISTORY" ] || { echo "no history at $HISTORY" >&2; exit 1; }
+    # Baselines are grouped by timestamp; take the two most recent.
+    mapfile -t STAMPS < <(awk -F, 'NR>1 {print $1}' "$HISTORY" | sort -u | tail -2)
+    if [ "${#STAMPS[@]}" -lt 2 ]; then
+        echo "only one baseline recorded — nothing to compare" >&2
         exit 1
     fi
-    echo "=== Benchmark History ==="
-    echo ""
-    column -t -s $'\t' "$HISTORY_FILE" | tail -40
+    PREV="${STAMPS[0]}"; CURR="${STAMPS[1]}"
+    echo "=== $PREV  ->  $CURR ==="
+    awk -F, -v prev="$PREV" -v curr="$CURR" '
+        NR == 1 { next }
+        $1 == prev { p[$4] = $5; pv = $2 }
+        $1 == curr { c[$4] = $5; cv = $2; order[++n] = $4 }
+        END {
+            printf "%-32s %12s %12s %9s\n", "benchmark", pv, cv, "delta%"
+            printf "%-32s %12s %12s %9s\n", "---------", "----", "----", "------"
+            for (i = 1; i <= n; i++) {
+                b = order[i]
+                if (!(b in p)) { printf "%-32s %12s %12d %9s\n", b, "-", c[b], "new"; continue }
+                d = (p[b] == 0) ? 0 : (c[b] - p[b]) * 100.0 / p[b]
+                printf "%-32s %12d %12d %8.1f%%\n", b, p[b], c[b], d
+            }
+        }' "$HISTORY"
     exit 0
 fi
 
-VERSION=$(cat VERSION 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+if [[ "$MODE" != "record" && "$MODE" != "--dry-run" ]]; then
+    echo "Usage: $0 [--dry-run|--compare]" >&2
+    exit 1
+fi
+
+# --- run ---------------------------------------------------------------
+VERSION=$(tr -d '[:space:]' < VERSION)
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-RUN_ID="${VERSION}_${COMMIT}_${TIMESTAMP}"
 
-echo "Running benchmarks for $VERSION ($COMMIT)..."
+echo "running benchmarks for $VERSION ($COMMIT)..."
+BENCH_OUT=$(CYRIUS_NO_WARN_SHADOW_LIB=1 cyrius bench "$BENCH_SRC" 2>&1)
 
-# Run criterion benchmarks, capture output
-BENCH_OUTPUT=$(cargo bench --features full --bench benchmarks 2>&1)
-
-# Save raw criterion output
-RAW_FILE="$BENCH_DIR/${VERSION}_${COMMIT}.txt"
-echo "$BENCH_OUTPUT" > "$RAW_FILE"
-
-# Copy criterion results for baseline comparison
-if [[ -d "target/criterion" ]]; then
-    rm -rf "$LATEST_DIR"
-    cp -r target/criterion "$LATEST_DIR"
+if ! echo "$BENCH_OUT" | grep -q "passed, 0 failed"; then
+    echo "FAIL: benchmark run did not pass — not recording" >&2
+    echo "$BENCH_OUT" | tail -20 >&2
+    exit 1
 fi
 
-# Write header if history file is new
-if [[ ! -f "$HISTORY_FILE" ]]; then
-    printf "timestamp\tversion\tcommit\tbenchmark\ttime_ns\n" > "$HISTORY_FILE"
+# `cyrius bench` prints e.g. "  validate_family: 53ns avg (min=... max=...)"
+# with ns/us/ms units and optional decimals. Normalize every value to whole
+# nanoseconds so the CSV stays in one unit across toolchain versions.
+ROWS=$(echo "$BENCH_OUT" | awk -v ts="$TIMESTAMP" -v ver="$VERSION" -v commit="$COMMIT" '
+    match($0, /^[[:space:]]*[A-Za-z_/0-9]+:[[:space:]]*[0-9.]+(ns|us|ms)[[:space:]]+avg/) {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        colon = index(line, ":")
+        name  = substr(line, 1, colon - 1)
+        rest  = substr(line, colon + 1)
+        sub(/^[[:space:]]+/, "", rest)
+        val  = rest + 0                       # leading float
+        unit = "ns"
+        if (rest ~ /^[0-9.]+us/) unit = "us"
+        if (rest ~ /^[0-9.]+ms/) unit = "ms"
+        if (unit == "us") val *= 1000
+        if (unit == "ms") val *= 1000000
+        printf "%s,%s,%s,%s,%d\n", ts, ver, commit, name, (val + 0.5)
+    }')
+
+COUNT=$(echo "$ROWS" | grep -c . || true)
+if [ "$COUNT" -eq 0 ]; then
+    echo "FAIL: parsed 0 benchmarks from the run — output shape changed?" >&2
+    echo "$BENCH_OUT" | tail -20 >&2
+    exit 1
 fi
 
-# Parse criterion output and append to history
-echo "$BENCH_OUTPUT" | grep "time:" | while IFS= read -r line; do
-    # Extract benchmark name from preceding "Benchmarking <name>" line
-    # Criterion output format: "benchmark_name   time:   [low mid high]"
-    name=$(echo "$line" | sed -E 's/^([a-zA-Z_0-9]+)\s+time:.*/\1/' | tr -d ' ')
+echo "$BENCH_OUT" | grep -E "^[[:space:]]+[A-Za-z_/0-9]+:.*avg"
 
-    # Skip lines that don't start with a benchmark name (indented continuation lines)
-    if [[ -z "$name" || "$name" == "time:"* ]]; then
-        continue
-    fi
+if [[ "$MODE" == "--dry-run" ]]; then
+    echo ""
+    echo "--dry-run: $COUNT rows parsed, nothing written to $HISTORY"
+    exit 0
+fi
 
-    # Extract median time (middle value in [low median high])
-    median=$(echo "$line" | sed -E 's/.*time:\s+\[.*\s+(.*)\s+.+\]/\1/' | tr -d ' ')
+if [ ! -f "$HISTORY" ]; then
+    mkdir -p "$(dirname "$HISTORY")"
+    echo "timestamp,version,commit,benchmark,time_ns" > "$HISTORY"
+fi
 
-    if [[ -n "$median" && "$median" != *"time"* ]]; then
-        printf "%s\t%s\t%s\t%s\t%s\n" "$TIMESTAMP" "$VERSION" "$COMMIT" "$name" "$median" >> "$HISTORY_FILE"
-    fi
-done
-
+echo "$ROWS" >> "$HISTORY"
 echo ""
-echo "Results saved to $RAW_FILE"
-echo "History appended to $HISTORY_FILE"
-echo ""
-echo "Recent results:"
-tail -25 "$HISTORY_FILE" | column -t -s $'\t'
+echo "appended $COUNT rows to $HISTORY ($VERSION / $COMMIT / $TIMESTAMP)"
+echo "compare against the previous baseline: $0 --compare"
