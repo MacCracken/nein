@@ -61,20 +61,24 @@ jobs:
           fi
 
       - name: Format check
-        # `cyrius fmt <file>` writes formatted source to stdout; diff against
-        # the committed file catches drift. `--check` only sets the exit
-        # code without emitting output, so diffing its stdout always reports
-        # spurious drift — same workaround as agnosys/agnostik.
+        # Toolchain 6.5.x: `cyrius fmt <file>` formats IN PLACE and prints
+        # nothing, while `cyrius fmt --check <file>` reports drift purely via
+        # exit code. Through 6.4.x fmt streamed to stdout and --check was a
+        # no-op, so the gate diffed stdout against the committed file; that
+        # workaround now reports every file as drifted (empty stdout) AND
+        # rewrites the tree as a side effect. Use --check directly. Glob list
+        # covers tests/integration/*.tcyr too — it was outside the old loop.
         run: |
           fail=0
-          for f in src/main.cyr src/lib/*.cyr tests/*.tcyr tests/*.bcyr fuzz/*.fcyr; do
+          for f in src/main.cyr src/lib/*.cyr tests/*.tcyr tests/*.bcyr \
+                   tests/integration/*.tcyr fuzz/*.fcyr; do
             [ -f "$f" ] || continue
-            if ! diff -q <(cyrius fmt "$f" 2>/dev/null) "$f" > /dev/null; then
+            if ! cyrius fmt --check "$f" > /dev/null 2>&1; then
               echo "needs fmt: $f"
               fail=1
             fi
           done
-          [ $fail -eq 0 ] || { echo "fmt: drift detected"; exit 1; }
+          [ $fail -eq 0 ] || { echo "fmt: drift detected — run 'cyrius fmt <file>' to fix"; exit 1; }
 
       - name: Lint
         # Auto-discover src/ + fuzz/ modules. Treat any `warn ` line as a
@@ -102,13 +106,12 @@ jobs:
         run: cyrius vet src/main.cyr
 
       - name: Capacity
-        # `cyrius capacity --check` doesn't follow arch-peer includes the
-        # way `cyrius build` does, so it emits a false-positive
+        # Toolchain 6.5.x resolves arch-peer includes here the same way
+        # `cyrius build` does, so the old false-positive
         # `undefined variable 'SYS_EXIT'` on src/main.cyr's exit-syscall
-        # epilogue. The tool still exits 0 ("all caps under 85%"); treat
-        # this step as informational until upstream resolves arch-peer
-        # resolution.
-        run: cyrius capacity --check src/main.cyr || true
+        # epilogue is gone. Dropped the `|| true` at 1.6.5 — the step is
+        # now a real gate (fails if any cap crosses 85%).
+        run: cyrius capacity --check src/main.cyr
 
       - name: Build (x86_64, DCE)
         run: |
@@ -319,7 +322,7 @@ jobs:
       - name: Check required docs
         run: |
           MISSING=0
-          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE CLAUDE.md cyrius.cyml docs/doc-health.md docs/development/roadmap.md docs/development/threat-model.md docs/development/capability-map.md; do
+          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE CLAUDE.md cyrius.cyml docs/doc-health.md docs/development/roadmap.md docs/development/threat-model.md docs/development/capability-map.md docs/development/dependencies.md; do
             if [ -f "$doc" ]; then echo "  OK: $doc"; else echo "  MISSING: $doc"; MISSING=1; fi
           done
           exit $MISSING

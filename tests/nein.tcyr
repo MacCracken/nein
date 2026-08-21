@@ -2179,15 +2179,15 @@ fn test_mcp() {
 
     # --- annotations + profiles (daimon 1.6.2 gates on these) ---
     assert(ann_read_only_hint(tool_def_annotations(registry_get(reg, "nein_status"))) == 1,
-    "nein_status annotated read-only");
+      "nein_status annotated read-only");
     assert(ann_destructive_hint(tool_def_annotations(registry_get(reg, "nein_allow"))) == 1,
-    "nein_allow annotated destructive");
+      "nein_allow annotated destructive");
     assert(tool_def_has_profile(registry_get(reg, "nein_list"), "firewall") == 1,
-    "nein_list in firewall profile");
+      "nein_list in firewall profile");
     assert(tool_def_has_profile(registry_get(reg, "nein_deny"), "firewall_admin") == 1,
-    "nein_deny in firewall_admin profile");
+      "nein_deny in firewall_admin profile");
     assert(tool_def_has_profile(registry_get(reg, "nein_status"), "firewall_admin") == 0,
-    "nein_status NOT in firewall_admin profile");
+      "nein_status NOT in firewall_admin profile");
 
     # --- public envelope helpers (daimon reuses these) ---
     assert(str_contains_cstr(str_from(nein_mcp_ok("hi")), "\"isError\":false") == 1, "nein_mcp_ok envelope");

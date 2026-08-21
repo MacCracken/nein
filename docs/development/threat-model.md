@@ -1,6 +1,6 @@
 # Threat Model
 
-Last refresh: **2026-07-17** (v1.6.4 — modeled the two 1.6.x
+Last refresh: **2026-08-21** (v1.6.5 — modeled the two 1.6.x
 security-relevant surfaces: added **T-9** (Ed25519 signed-ruleset
 trust / integrity, `sign.cyr` v1.6.1), **T-10** (MCP destructive-tool
 access control, `mcp.cyr` v1.6.0), and **T-11** (MCP tool-argument
@@ -180,14 +180,16 @@ the bump.
 git-dependency release could inject malicious code into the nein binary.
 
 **Mitigation.**
-- Cyrius version is pinned in `cyrius.cyml` (`cyrius = "6.4.66"`);
+- Cyrius version is pinned in `cyrius.cyml` (`cyrius = "6.5.33"`);
   CI installs from the version-pinned GitHub release URL — no `latest`,
   no floating tags.
 - `cyrius.lock` records sha256 of each resolved dep. CI's
   `cyrius deps --verify` step fails on hash mismatch.
-- nein's `[deps.*]` set is pinned to explicit tags: libro 2.8.2,
-  majra 2.5.1, bote 3.1.4, sigil 3.12.1, patra 1.12.12, sakshi 2.4.6
-  (sigil + patra carry their own explicit `[deps.*]` pins). Deps do
+- nein's `[deps.*]` set is pinned to explicit tags: libro 2.8.8,
+  majra 2.6.7, bote 3.3.2, sigil 3.12.9, patra 1.13.9 (sigil + patra
+  carry their own explicit `[deps.*]` pins). sakshi left the git set at
+  1.6.5 — libro 2.8.8 stopped pulling it transitively, so it resolves
+  from the declared stdlib subset of the pinned snapshot. Deps do
   **not** auto-resolve: `cyrius lib sync` pulls the declared stdlib
   subset from the pinned snapshot, then `cyrius deps` fetches the git
   bundles. The set grew from the 1.6.x MCP + Ed25519-signing surface

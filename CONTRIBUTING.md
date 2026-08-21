@@ -4,7 +4,7 @@ Thank you for your interest in contributing to nein. This document covers
 the development workflow, code standards, and project conventions for the
 Cyrius-era codebase.
 
-Last refresh: **2026-07-17** (v1.6.4).
+Last refresh: **2026-08-21** (v1.6.5).
 
 ## Development Workflow
 
@@ -15,13 +15,13 @@ Last refresh: **2026-07-17** (v1.6.4).
 
 ## Prerequisites
 
-- Cyrius toolchain ≥ **6.4.66** (pinned in `cyrius.cyml`). Install
+- Cyrius toolchain ≥ **6.5.33** (pinned in `cyrius.cyml`). Install
   via the canonical release:
   ```sh
-  curl -sLO https://github.com/MacCracken/cyrius/releases/download/6.4.66/cyrius-6.4.66-x86_64-linux.tar.gz
-  tar xzf cyrius-6.4.66-x86_64-linux.tar.gz
-  # then copy bin/* and lib/* into ~/.cyrius/versions/6.4.66/
-  # and symlink ~/.cyrius/bin -> ~/.cyrius/versions/6.4.66/bin
+  curl -sLO https://github.com/MacCracken/cyrius/releases/download/6.5.33/cyrius-6.5.33-x86_64-linux.tar.gz
+  tar xzf cyrius-6.5.33-x86_64-linux.tar.gz
+  # then copy bin/* and lib/* into ~/.cyrius/versions/6.5.33/
+  # and symlink ~/.cyrius/bin -> ~/.cyrius/versions/6.5.33/bin
   ```
 - `nft` binary at the pinned default `/usr/sbin/nft` (override elsewhere
   at runtime via `nein_set_nft_path`) for any local apply-layer smoke

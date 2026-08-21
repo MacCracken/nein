@@ -165,6 +165,12 @@ cyrius bench tests/nein.bcyr           # run benchmarks (31 benchmarks)
 cyrius fuzz                            # 5 per-target fuzz drivers
 ```
 
+Dependencies do not auto-resolve — `cyrius lib sync` copies the declared
+`[deps].stdlib` subset out of the pinned toolchain snapshot, then
+`cyrius deps` clones the git bundles. Why each entry is declared, and why
+the order matters, is written up in
+[docs/development/dependencies.md](docs/development/dependencies.md).
+
 Integration tests against a real nftables / netns live in
 `tests/integration/` — run via `cyrius test tests/integration/*.tcyr`.
 The pure-function assertions (path-pinning validation, parser shape)

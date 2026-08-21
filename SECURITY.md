@@ -1,6 +1,6 @@
 # Security Policy
 
-Last refresh: **2026-07-17** (v1.6.4).
+Last refresh: **2026-08-21** (v1.6.5).
 
 ## Scope
 
@@ -73,11 +73,14 @@ threat in the threat model.
 - **Lockfile-pinned deps** (T-8). `cyrius.lock` records the sha256 of
   each resolved dep. `cyrius deps --verify` in CI fails on hash
   mismatch. Cyrius itself is pinned in `cyrius.cyml`
-  (`cyrius = "6.4.66"`). nein's git dep set (`cyrius.cyml` `[deps.*]`):
-  libro 2.8.2, majra 2.5.1, bote 3.1.4, sigil 3.12.1, patra 1.12.12,
-  sakshi 2.4.6 — sigil + patra carry explicit pins. Deps do not
-  auto-resolve: `cyrius lib sync` pulls the declared stdlib subset, then
-  `cyrius deps` fetches the git bundles.
+  (`cyrius = "6.5.33"`). nein's git dep set (`cyrius.cyml` `[deps.*]`):
+  libro 2.8.8, majra 2.6.7, bote 3.3.2, sigil 3.12.9, patra 1.13.9 —
+  sigil + patra carry explicit pins. sakshi dropped out of the git set at
+  1.6.5 (libro 2.8.8 no longer pulls it transitively); it now resolves
+  from the declared `[deps].stdlib` list against the pinned toolchain
+  snapshot. Deps do not auto-resolve: `cyrius lib sync` pulls the declared
+  stdlib subset, then `cyrius deps` fetches the git bundles. Rationale for
+  every entry: [`docs/development/dependencies.md`](docs/development/dependencies.md).
 - **Symbol-collision audit** (T-7). v1.1.1 renamed nein-side fns that
   collided with agnostik/stdlib (`network_policy_new` →
   `nein_network_policy_new`, `err_code` → `nein_err_code`). Future

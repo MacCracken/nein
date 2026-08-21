@@ -18,7 +18,7 @@ exactly as it already does for the full bote bundle.
 # host cyrius.cyml
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
-tag = "1.6.4"
+tag = "1.6.5"
 modules = ["dist/nein-mcp.cyr"]
 ```
 

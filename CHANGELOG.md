@@ -4,6 +4,103 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.5] — 2026-08-21
+
+**Toolchain 6.5.33 + full dependency refresh.** No nein source-logic or API
+change (383 public fns unchanged) — the release moves every pin to its current
+tag, clears the manifest-pin drift, and absorbs three toolchain behaviour
+changes that the CI gates had encoded assumptions about (`cyrius fmt`,
+`cyrius capacity`, `cyrius distlib` sidecars). 664 unit + 16 integration
+assertions, 31 benches, and 5 fuzz drivers stay green; `cyrius deps --verify`
+clean (74 files). The only warning left in a clean build is majra's
+long-documented `_sub_new` last-wins dup.
+
+### Changed
+
+- **cyrius pin `6.4.66` → `6.5.33`.** Clears the "manifest-pin: 6.4.66 (drift
+  — wrapper is 6.5.33)" warning. Three behaviour changes land with it:
+  - `cyrius fmt <file>` now formats **in place** and prints nothing;
+    `cyrius fmt --check <file>` reports drift via exit code. Through 6.4.x fmt
+    streamed to stdout and `--check` was a no-op, so the CI gate diffed fmt's
+    stdout against the committed file. That workaround now flags every file as
+    drifted (empty stdout) *and* rewrites the tree as a side effect — the gate
+    was rewritten to call `--check` directly.
+  - `cyrius capacity --check` follows arch-peer includes the way `cyrius build`
+    does, so the false-positive `undefined variable 'SYS_EXIT'` on
+    `src/main.cyr`'s exit-syscall epilogue is gone. The CI step dropped its
+    `|| true` and is now a real gate.
+  - `cyrius distlib` widened `dist/nein.deps` from a computed leaf set to the
+    full declared `[deps].stdlib` list (32 entries, was 3). See **Breaking**.
+- **Dependency refresh — every git dep to its latest tag:**
+  - **libro `2.8.2` → `2.8.8`**
+  - **majra `2.5.1` → `2.6.7`**
+  - **bote `3.1.4` → `3.3.2`** — nein's consumed `jsonx` / dispatcher /
+    `ToolAnnotations` surface is unchanged, so `src/lib/mcp.cyr` needed no
+    edits; the six MCP tool descriptors and their annotations are byte-identical.
+  - **sigil `3.12.1` → `3.12.9`** — `src/lib/sign.cyr`'s ed25519 / sha256 / hex
+    surface unchanged.
+  - **patra `1.13.9`** (was 1.12.12) — transitive only; nein calls no patra
+    symbol directly.
+- **sakshi is no longer a git dep.** Through 1.6.4 it resolved transitively at
+  tag 2.4.6 via libro; libro 2.8.8 no longer pulls it that way, so sakshi now
+  resolves purely from the declared `[deps].stdlib` list against the 6.5.33
+  toolchain snapshot. `cyrius.lock` goes 57 → 74 files locked, 6 → 5
+  commit-pinned. The structured-tracing surface nein calls is unchanged.
+- **`cyrius.cyml` — comments removed from inside the `[deps].stdlib` array.**
+  The `.cyml` parser scans `#` comment text for quoted tokens and
+  `[section.name]` headers and mis-resolves deps when it finds them inside an
+  array. The rationale those comments carried (and the per-git-dep rationale
+  blocks, condensed to pointers) now lives in
+  [`docs/development/dependencies.md`](docs/development/dependencies.md).
+- **Reformatted under the 6.5.x formatter** — `src/lib/{bridge,diff,nat,rule}.cyr`,
+  `tests/nein.tcyr`, `tests/integration/apply_smoke.tcyr`. Whitespace only:
+  continuation lines in wrapped call/signature/condition expressions now indent
+  by two columns instead of aligning to the statement. No token changes.
+- **CI fmt gate now covers `tests/integration/*.tcyr`** — the old glob list
+  omitted it, which is why `apply_smoke.tcyr` carried un-normalized
+  continuation indents until this release.
+- **`dist/nein.cyr` + `dist/nein-mcp.cyr` regenerated at 1.6.5** — version
+  banner plus the formatter's continuation indents; no `[lib]` body change.
+
+### Breaking
+
+- **`dist/nein.deps` widened.** Consumers of `dist/nein.cyr` that declared a
+  narrower `[deps].stdlib` will now see `cyrius deps` demand the full list:
+  `string`, `fmt`, `alloc`, `vec`, `str`, `syscalls`, `io`, `args`, `assert`,
+  `tagged`, `result`, `hashmap`, `bayan`, `process`, `bench`, `fnptr`,
+  `callback`, `freelist`, `fs`, `net`, `regex`, `chrono`, `sakshi`, `ct`,
+  `keccak`, `random`, `slice`, `thread`, `thread_local`, `sync`, `atomic`.
+  `dist/nein-mcp.deps` likewise gains 11 entries on top of `bote-core`.
+
+  *Migration:* every added name is a stdlib module, so widening the consumer's
+  `[deps].stdlib` to match and re-running `cyrius lib sync` is the whole fix —
+  no new git deps, no source change. This is a `cyrius distlib` output change,
+  not a change in what `dist/nein.cyr` actually references.
+
+### Performance
+
+- **Static data in the built binary: 13,402,240 → 802,496 bytes** (−94%,
+  16.7×), measured by the `large static data` build warning under
+  `CYRIUS_DCE=1`. Falls out of the toolchain + sigil/libro/patra refresh; no
+  nein source change contributed.
+- **Benchmark harness overhead removed.** Every micro-benchmark previously sat
+  at a ~1.4 µs floor regardless of the work it measured
+  (`validate_family` 1.454 µs, `nein_err` 1.399 µs, `nein_ok` 1.432 µs — a
+  constant, not a cost). Under 6.5.33 the floor is gone and the same benches
+  report 55 ns / 16 ns / 15 ns. Real-work benches moved only marginally
+  (`engine_10_agents_render` 246.5 → 253.6 µs, `bridge_render` 29.5 →
+  29.3 µs), confirming the delta was measurement overhead rather than a nein
+  speedup. **No code got faster — the ruler got accurate.** A fresh 1.6.5
+  baseline is recorded in `docs/benchmarks/history.csv`; the 1.1.2 baseline it
+  replaces was inflated by the same floor.
+
+### Added
+
+- **[`docs/development/dependencies.md`](docs/development/dependencies.md)** —
+  prose home for the `[deps]` rationale: build sequence, why each stdlib module
+  is declared, why the order matters, why sigil and patra carry top-level git
+  pins, and what was dropped (agnosys, the vendored bote-core).
+
 ## [1.6.4] — 2026-07-17
 
 **Banks the upstream bare-error-enum repairs.** bote and libro both

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Last refresh: **2026-07-17** (v1.6.4).
+Last refresh: **2026-08-21** (v1.6.5).
 
 ## Design Philosophy
 

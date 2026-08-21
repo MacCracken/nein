@@ -28,7 +28,7 @@
 # ================================================================
 
 fn _live_rule_new(family: cstring, table: cstring, chain: cstring,
-body: cstring, handle: i64): i64 {
+  body: cstring, handle: i64): i64 {
     var lr = alloc(40);
     store64(lr, family);
     store64(lr + 8, table);
@@ -205,7 +205,7 @@ fn diff_parse_live(raw_str: Str): i64 {
                         if (bs_depth < 15) {
                             bs_depth = bs_depth + 1;
                             store64(&diff_bstack + bs_depth * 8,
-                            _classify_block_open(trimmed));
+                              _classify_block_open(trimmed));
                         }
                     } elif (current_block == BLOCK_CHAIN) {
                         if (_cstr_starts_with(trimmed, "type ") == 1) {
@@ -217,10 +217,10 @@ fn diff_parse_live(raw_str: Str): i64 {
                         } else {
                             var bh = _strip_handle_suffix(trimmed);
                             var lr = _live_rule_new(current_family,
-                            current_table,
-                            current_chain,
-                            load64(bh),
-                            load64(bh + 8));
+                              current_table,
+                              current_chain,
+                              load64(bh),
+                              load64(bh + 8));
                             vec_push(rules, lr);
                         }
                     }
@@ -279,7 +279,7 @@ fn diff_target_rules(fw: i64): i64 {
                 var rendered = chain_rule_render(cr);
                 var body = _render_to_cstr(rendered);
                 vec_push(rules, _live_rule_new(family_cstr, table_name,
-                chain_name, body, 0));
+                    chain_name, body, 0));
                 ri = ri + 1;
             }
             ci = ci + 1;
@@ -307,9 +307,9 @@ fn _target_in_live(target_rule: i64, live_rules: i64): i64 {
     while (i < n) {
         var lr = vec_get(live_rules, i);
         if (streq(live_rule_family(lr), fam) == 1
-        && streq(live_rule_table(lr), tab) == 1
-        && streq(live_rule_chain(lr), chn) == 1
-        && streq(live_rule_body(lr), body) == 1) {
+          && streq(live_rule_table(lr), tab) == 1
+          && streq(live_rule_chain(lr), chn) == 1
+          && streq(live_rule_body(lr), body) == 1) {
             return 1;
         }
         i = i + 1;

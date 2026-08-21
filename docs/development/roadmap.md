@@ -1,19 +1,20 @@
 # Roadmap
 
-Last refresh: 2026-07-17 (post v1.6.4 — banked bote 3.1.4 + libro 2.8.2's
-bare-error-enum repairs on top of v1.6.3's toolchain 6.4.66 + full
-dependency refresh; no feature or API change. v1.6.2 shipped nein's half
-of the daimon firewall-MCP joint ship: [lib.mcp] bundle + dispatch
-adapter, whose paired daimon-side PR is the only 1.6.x item left).
+Last refresh: 2026-08-21 (post v1.6.5 — toolchain 6.5.33 + full dependency
+refresh on top of v1.6.3/v1.6.4's; no feature or API change, but the 6.5.x
+line changed `cyrius fmt` / `capacity` / `distlib` behaviour and the CI
+gates were reworked to match. v1.6.2 shipped nein's half of the daimon
+firewall-MCP joint ship: [lib.mcp] bundle + dispatch adapter, whose paired
+daimon-side PR is the only 1.6.x item left).
 
-Forward-looking only. The release history (v1.0.0 → v1.6.4) lives in
+Forward-looking only. The release history (v1.0.0 → v1.6.5) lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); the rationale for each shipped
 decision is preserved there, not duplicated here. This file tracks
 **what's next**.
 
 ---
 
-## Current state — v1.6.4
+## Current state — v1.6.5
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 21 modules
@@ -21,11 +22,15 @@ identified at port time (stiva / daimon / aegis / sutra). 21 modules
 integration guard, 31 benchmarks, 5 per-target fuzz drivers, single-file
 `dist/nein.cyr` bundle (still bote/sigil-free) plus the opt-in
 `dist/nein-mcp.cyr` (`[lib.mcp]`) for MCP hosts. Type-check end-to-end
-clean; aarch64 cross-build green. libro / majra / bote / sigil / patra
-consumed as git deps (daimon recipe) via `cyrius lib sync` + `cyrius deps`;
-no vendored bundles. As of 1.6.3 sigil + patra carry explicit `[deps.*]`
-pins (full `dist/sigil.cyr`, mirroring bote 3.1.x) so libro 2.8.x's thin
-sigil sub-bundles don't collide with the full crypto bundle.
+clean; aarch64 cross-build green; `capacity --check` is a real gate again
+as of 1.6.5. libro / majra / bote / sigil / patra consumed as git deps
+(daimon recipe) via `cyrius lib sync` + `cyrius deps`; no vendored bundles.
+sigil + patra carry explicit `[deps.*]` pins (full `dist/sigil.cyr`) so
+libro 2.8.x's thin sigil sub-bundles don't collide with the full crypto
+bundle. Full `[deps]` rationale lives in
+[`dependencies.md`](dependencies.md) as of 1.6.5 — the `.cyml` parser
+mis-resolves deps when comments sit inside the `stdlib` array, so the
+manifest carries none.
 
 nein's side of the 1.6.x ecosystem work is done. The only open 1.6.x
 item is the **paired daimon-side PR** (below). Everything beyond stays

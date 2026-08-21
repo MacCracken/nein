@@ -1,6 +1,6 @@
 # Testing Guide
 
-Last refresh: **2026-07-17** (v1.6.4). Replaces the Rust-era guide that
+Last refresh: **2026-08-21** (v1.6.5). Replaces the Rust-era guide that
 shipped with the v1.0.0 port.
 
 ## Unit Tests

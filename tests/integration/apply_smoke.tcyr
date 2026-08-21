@@ -45,7 +45,7 @@ fn _cstr_to_str(c: cstring): Str {
 
 fn test_path_pinning_default() {
     assert(streq(nein_nft_path(), "/usr/sbin/nft") == 1,
-    "default nft path is /usr/sbin/nft");
+      "default nft path is /usr/sbin/nft");
     return 0;
 }
 
@@ -85,7 +85,7 @@ fn test_apply_smoke_inside_netns() {
     if (is_err_result(r) == 1) {
         var code = payload(r);
         assert(code == NEIN_ERR_PERMISSION_DENIED || code == ERR_NFT_FAILED,
-        "apply failure is permission or nft-failed (got expected error class)");
+          "apply failure is permission or nft-failed (got expected error class)");
         return 0;
     }
 

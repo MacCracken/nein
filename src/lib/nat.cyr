@@ -65,8 +65,8 @@ fn nat_redirect(protocol: i64, dest_port: i64, to_port: i64, comment: cstring): 
 }
 
 fn nat_dnat_range(protocol: i64, dest_port_start: i64, dest_port_end: i64,
-to_addr: cstring, to_port_start: i64, to_port_end: i64,
-comment: cstring): i64 {
+  to_addr: cstring, to_port_start: i64, to_port_end: i64,
+  comment: cstring): i64 {
     var n = nat_new(NAT_DNAT_RANGE, protocol, dest_port_start, dest_port_end, to_addr, to_port_start, to_port_end);
     nat_set_v7(n, comment);
     return n;
@@ -238,7 +238,7 @@ fn port_range_forward(host_start: i64, host_end: i64, container_addr: cstring, c
     var range_size = host_end - host_start;
     var container_end = container_start + range_size;
     return nat_dnat_range(PROTO_TCP, host_start, host_end, container_addr,
-    container_start, container_end, "container port range fwd");
+      container_start, container_end, "container port range fwd");
 }
 
 fn container_masquerade(subnet: cstring, outbound_iface: cstring): i64 {
