@@ -1,6 +1,6 @@
 # Dependencies
 
-Last refresh: **2026-08-21** (v1.6.7).
+Last refresh: **2026-08-21** (v1.6.8).
 
 Why each entry in `cyrius.cyml`'s `[deps]` block exists, and why the
 resolution order is what it is. This file is the prose home for that
@@ -68,6 +68,17 @@ full-transport deps — `ws_server`, `tls`, `sandhi` — are deliberately
 **not** declared. nein renders and applies rules; it terminates no
 sockets.
 
+> **Correction (1.6.8).** Through 1.6.7 this section stopped at the
+> sentence above, which was true about the *declaration* and misleading
+> about the *tree*. Declaring nothing does not keep a module out of
+> `./lib/`: `cyrius deps` also honours each git dep's own `.deps`
+> sidecar, and **`dist/majra.deps` requires `tls`, `dynlib`, `fdlopen`,
+> `async` and `sandhi`** — so a full TLS stack (`tls` plus seven
+> `tls_native_*` modules) resolves into the tree via majra, not bote.
+> nein declares none of them and calls none of them, but they are there
+> and are hash-pinned in `cyrius.lock` like everything else. See
+> **Undeclared transitives** below.
+
 ### `sigil` is not a stdlib entry
 
 It is an explicit `[deps.sigil]` git pin instead — see below.
@@ -76,7 +87,7 @@ It is an explicit `[deps.sigil]` git pin instead — see below.
 
 ## `[deps.*]` — git pins
 
-| Dep | Tag (v1.6.7) | Bundle | Why |
+| Dep | Tag (v1.6.8) | Bundle | Why |
 |-----|--------------|--------|-----|
 | `libro` | 2.8.8 | `dist/libro.cyr` | bote's manifest graph references it |
 | `majra` | 2.6.7 | `dist/majra.cyr` | bote's manifest graph references it |
@@ -156,6 +167,34 @@ transitively by libro. As of the 1.6.5 refresh libro 2.8.8 no longer
 requires it that way, so sakshi resolves purely from the declared
 `[deps].stdlib` list against the 6.5.33 toolchain snapshot. Dep count
 dropped 6 → 5 commit-pinned.
+
+---
+
+## Undeclared transitives
+
+`cyrius lib sync` copies the declared `[deps].stdlib` subset into
+`./lib/`. `cyrius deps` then adds whatever each git dep's `.deps`
+sidecar requires on top. That second set appears nowhere in
+`cyrius.cyml`, so at v1.6.8 there were **74 files in `lib/` against 31
+declared stdlib modules**.
+
+Collapsing arch/platform variants, 14 base modules arrive undeclared:
+
+| Module(s) | Pulled by | Notes |
+|---|---|---|
+| `tls`, `tls_native`, `tls_native_{conn,ctx,hs12,hs13,keysched,lowlevel}` | majra | Full TLS stack. nein calls none of it. |
+| `dynlib`, `fdlopen` | majra | Dynamic loading. |
+| `async`, `sandhi` | majra | Async runtime + transport. |
+| `mmap` | toolchain snapshot | |
+| `test` | libro | |
+
+nein cannot control a dependency's own sidecar, so these are recorded
+rather than removed. They are enumerated in
+[`scripts/supply-chain.sh`](../../scripts/supply-chain.sh)'s
+`ACCEPTED_TRANSITIVES`, and its check 8 **fails the build if a module
+appears in `lib/` that is neither declared nor on that list** — so the
+next arrival is noticed instead of slipping in the way this one did.
+See [`supply-chain-policy.md`](supply-chain-policy.md).
 
 ---
 

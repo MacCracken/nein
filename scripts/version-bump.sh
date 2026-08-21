@@ -87,7 +87,7 @@ fi
 STALE=""
 if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
     STALE=$(grep -rlF "$OLD_VERSION" --include="*.md" . 2>/dev/null \
-        | grep -vE '^\./(CHANGELOG\.md|rust-old/)' | sort || true)
+        | grep -vE '^\./CHANGELOG\.md' | sort || true)
 fi
 if [ -n "$STALE" ]; then
     echo "  TODO docs still naming $OLD_VERSION (check each — some refs are historical):"

@@ -103,7 +103,18 @@ jobs:
           done
 
       - name: Vet (include-graph audit)
+        # Every include must resolve and sit under a trusted prefix
+        # (lib/ src/ programs/ cbt/ kernel/ — compiled into the toolchain,
+        # not configurable). Anything else reports UNTRUST.
         run: cyrius vet src/main.cyr
+
+      - name: Deny (include-path policy)
+        # Rejects `include` directives using absolute paths or ../ parent
+        # traversal. Despite the name this is NOT a supply-chain gate — the
+        # licence/source policy that rust-old/deny.toml carried lives in
+        # scripts/supply-chain.sh (see the Supply-chain policy step below).
+        # Wired at 1.6.8; it had never run in CI.
+        run: cyrius deny src/main.cyr
 
       - name: Capacity
         # Toolchain 6.5.x resolves arch-peer includes here the same way
@@ -224,6 +235,22 @@ jobs:
           done
           [ $fail -eq 0 ] || { echo "integration: test failures"; exit 1; }
 
+      - name: Supply-chain policy gate
+        # Successor to the Rust tree's deny.toml (cargo-deny), retired with
+        # rust-old/ at 1.6.8. Enforces allowed sources, exact-tag pinning,
+        # lockfile coverage, no duplicate declarations, and the licence
+        # allow-list against cyrius.cyml + cyrius.lock.
+        #
+        # Despite the name, `cyrius deny` cannot carry this policy — it is an
+        # include-path checker (absolute paths / ../ traversal), and
+        # `cyrius vet`'s trusted-prefix set is compiled into the toolchain.
+        # Both still run above; neither takes an allow-list.
+        #
+        # Must run AFTER `cyrius deps`: the licence check reads each dep's own
+        # cyrius.cyml out of the resolved clone rather than trusting a value
+        # restated in nein's tree.
+        run: scripts/supply-chain.sh
+
       - name: API surface snapshot gate
         # Diffs docs/api-surface.snapshot against the current nein public-fn
         # surface across src/main.cyr + src/lib/*.cyr. Fails on unexplained
@@ -322,7 +349,7 @@ jobs:
       - name: Check required docs
         run: |
           MISSING=0
-          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE CLAUDE.md cyrius.cyml docs/doc-health.md docs/development/roadmap.md docs/development/threat-model.md docs/development/capability-map.md docs/development/dependencies.md docs/development/port-completeness.md; do
+          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE CLAUDE.md cyrius.cyml docs/doc-health.md docs/development/roadmap.md docs/development/threat-model.md docs/development/capability-map.md docs/development/dependencies.md docs/development/port-completeness.md docs/development/supply-chain-policy.md; do
             if [ -f "$doc" ]; then echo "  OK: $doc"; else echo "  MISSING: $doc"; MISSING=1; fi
           done
           exit $MISSING

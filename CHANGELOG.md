@@ -4,6 +4,107 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.8] — 2026-08-21
+
+**`rust-old/` deleted.** The preserved Rust tree (1,013 files, 9,338 lines)
+that the Cyrius port kept for reference since v1.0.0 is gone, along with
+`.cargo/config.toml`. Everything it held is in the Cyrius tree, intentionally
+dropped with a documented reason, or in git history — see
+[`docs/development/port-completeness.md`](docs/development/port-completeness.md).
+The one thing with ongoing operational value, its `deny.toml` supply-chain
+policy, was lifted into a first-party gate first. No source-logic or API
+change (391 public fns unchanged); 699 unit + 18 integration assertions,
+48 benches, 5 fuzz drivers green.
+
+### Added
+
+- **`scripts/supply-chain.sh` + [`docs/development/supply-chain-policy.md`](docs/development/supply-chain-policy.md)**
+  — the Cyrius-side successor to `rust-old/deny.toml` (cargo-deny), wired as
+  a CI gate. Eight checks against `cyrius.cyml` + `cyrius.lock`: allowed
+  source prefixes, exact-tag pinning, no `path`/`branch`/`rev` deps, lockfile
+  coverage with tag agreement, the 12-entry SPDX licence allow-list carried
+  forward verbatim, no duplicate declarations, nein's own licence, and no
+  undeclared modules in the resolved tree. Every check was negative-tested
+  against a mutated manifest — a policy gate that cannot fail is decoration.
+
+  **This did not go into `cyrius deny`, and the v1.6.7 roadmap entry saying it
+  should was wrong.** Despite the name, `cyrius deny` is an include-path
+  checker (it rejects absolute paths and `../` traversal) and takes no
+  configuration; `cyrius vet`'s trusted-prefix set is compiled into the
+  toolchain. Neither can express "only these sources, only these licences".
+  The roadmap entry has been corrected.
+
+- **`cyrius deny` wired into CI** — the real one, for what it actually does.
+  It had never run; it passes (25 deps, 0 violations).
+
+- **Six benchmarks, 43 → 48.** See **Fixed** — these close a gap the v1.6.7
+  entry wrongly claimed was already closed.
+
+### Fixed
+
+- **Correction to v1.6.7: the scale-benchmark port was incomplete.** That
+  entry claimed the suite had recovered *every* scale benchmark. A
+  name-by-name diff at 1.6.8 found six that had not been ported:
+  `bridge_large_render` / `bridge_large_to_firewall` (a real scale fixture —
+  50 port mappings + 5 isolation groups; the Cyrius `bridge_render` used the
+  *small* fixture, so the bridge path had no scale coverage at all), plus the
+  `*_to_firewall` conversion family (`engine_100_agents_to_firewall`,
+  `geoip_10_countries_to_firewall`, `mesh_to_firewall`), which times the build
+  step apart from the render — an O(n²) assembly bug hides behind a linear
+  render if only the render is measured. All six ported. Every one of the 33
+  Rust benchmarks now maps to a Cyrius counterpart except `toml_parse_small`,
+  which has no parser to measure.
+
+- **Correction to `dependencies.md`: nein does pull a TLS stack.** The
+  document stated bote's full-transport deps (`ws_server`, `tls`, `sandhi`)
+  were "deliberately not declared" and that nein "terminates no sockets" —
+  true about the declaration, misleading about the tree. Declaring nothing
+  does not keep a module out of `./lib/`: `cyrius deps` also honours each git
+  dep's `.deps` sidecar, and **`dist/majra.deps` requires `tls`, `dynlib`,
+  `fdlopen`, `async` and `sandhi`**. A full TLS stack (`tls` plus seven
+  `tls_native_*` modules) resolves into the tree via majra, not bote — 74
+  files in `lib/` against 31 declared stdlib modules.
+
+  nein declares none of them and calls none of them, and they are hash-pinned
+  in `cyrius.lock` like everything else, so integrity was never in question —
+  what was missing is anyone noticing. The 14 undeclared transitives are now
+  enumerated in `supply-chain.sh`'s `ACCEPTED_TRANSITIVES` and documented in
+  `dependencies.md`, and check 8 **fails the build on any module in `lib/`
+  that is neither declared nor accepted**, so the next arrival is caught.
+
+### Removed
+
+- **`rust-old/`** — 1,013 tracked files. Recoverable via
+  `git show <rev>:rust-old/...` at any commit through the v1.6.7 tag.
+- **`.cargo/config.toml`** — a tracked, dead Cargo `[patch]` pointing
+  `agnosys` at `../agnosys`, a dependency dropped at the agnosys → agnodrm
+  decomposition and a path the docs already recorded as broken. It sat
+  *outside* `rust-old/` and would have survived the removal. Its own comment
+  claimed the file was gitignored; it was not.
+- **Dead `.gitignore` entries** (`rust-old/target/`, `rust-old/Cargo.lock`)
+  and their duplicate in CLAUDE.md's required-`.gitignore` template, which
+  would otherwise have re-seeded them on the next scaffold check.
+
+### Changed
+
+- `docs/development/port-completeness.md` amended rather than deleted: the
+  verdict is now past tense, the benchmark claim is corrected in place, and
+  `rust-old/Cargo.toml` — skipped entirely by the v1.6.7 disposition table —
+  is now judged (its `[features]` map is the one part with a live counterpart:
+  the `#ifdef` module gating, one module per feature).
+- `scripts/bench-track.sh` and `scripts/version-bump.sh` no longer reference
+  the deleted tree; `SECURITY.md` and CLAUDE.md's architecture tree updated.
+
+### Notes
+
+- **What is NOT carried forward: `supply-chain/` (cargo-vet).** Those
+  `audits.toml` records attested to crates.io packages (`serde`, `cfg-if`,
+  `criterion`, …) that are not in nein's dependency graph — none survived the
+  port. Re-creating them would mean attesting to packages nein does not use.
+  Dependency integrity is `cyrius.lock` + `cyrius deps --verify`.
+- **`[advisories]` has no successor either**, deliberately: there is no
+  advisory database for AGNOS bundles to consume.
+
 ## [1.6.7] — 2026-08-21
 
 **Closes every functional gap the Rust→Cyrius port-completeness audit found,

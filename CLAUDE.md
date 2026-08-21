@@ -8,7 +8,7 @@
 - **License**: GPL-3.0-only
 - **Language**: Cyrius (sovereign systems language, compiled by cycc; pinned `cyrius = "6.5.33"` in `cyrius.cyml`)
 - **Version**: SemVer, version file at `VERSION`
-- **Status**: 1.6.7 — Cyrius port complete + MCP/Ed25519-signing surface (mcp 1.6.0, sign 1.6.1, daimon dispatch adapter 1.6.2; toolchain + dependency refreshes 1.6.3–1.6.5, sidecar packaging fix 1.6.6, port-completeness closeout 1.6.7, currently cyrius 6.5.33). 699 unit + 18 integration assertions, 43 benchmarks, 5 fuzz drivers, 391 public fns. CI gates: fmt/lint/vet/capacity/type-check/aarch64-cross/security-scan/api-surface/bench-regression/fuzz/integration/dist-staleness
+- **Status**: 1.6.8 — Cyrius port complete + MCP/Ed25519-signing surface (mcp 1.6.0, sign 1.6.1, daimon dispatch adapter 1.6.2; toolchain + dependency refreshes 1.6.3–1.6.5, sidecar packaging fix 1.6.6, port-completeness closeout 1.6.7, rust-old/ deleted 1.6.8, currently cyrius 6.5.33). 699 unit + 18 integration assertions, 48 benchmarks, 5 fuzz drivers, 391 public fns. CI gates: fmt/lint/vet/deny/capacity/type-check/aarch64-cross/security-scan/supply-chain/api-surface/bench-regression/fuzz/integration/dist-staleness
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)
@@ -57,7 +57,6 @@ src/
     sign.cyr       — Ed25519-signed rulesets (v1.6.1)
     mcp.cyr        — MCP tool surface over bote (v1.6.0)
 
-rust-old/          — preserved Rust source (9,338 lines, reference only)
 ```
 
 ## Development Process
@@ -173,9 +172,6 @@ docs/ (when earned):
 # Cyrius — /lib/ is the resolved-deps dir, never committed (dist/ + cyrius.lock ARE tracked)
 /lib/
 
-# Rust (preserved in rust-old/)
-rust-old/target/
-rust-old/Cargo.lock
 
 # IDE
 .idea/

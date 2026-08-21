@@ -1,8 +1,11 @@
 # Rust → Cyrius Port Completeness Audit
 
-Last refresh: **2026-08-21** (v1.6.7).
+Last refresh: **2026-08-21** (v1.6.8 — `rust-old/` deleted).
 
-The record justifying deletion of `rust-old/`. Every public item in the
+The record that justified deletion of `rust-old/`, which happened at
+**v1.6.8**. The tree is recoverable from git history at any commit up to
+and including the v1.6.7 tag; nothing below has been rewritten to hide
+that it once existed. Every public item in the
 preserved Rust tree (9,338 lines, 19 modules) was checked against the
 Cyrius surface: ported, intentionally dropped with a reason, or a gap.
 Gaps found by this audit were closed in **v1.6.7** except the one
@@ -163,6 +166,24 @@ then could not gate on.
 `ct_timeout_render`, `quota_rule_render`, `nat_range_render`. Fixtures are
 built once before timing starts, matching the criterion originals.
 
+> **Correction (1.6.8).** The 1.6.7 version of this section — and the
+> v1.6.7 CHANGELOG entry — claimed the port had covered *every* scale
+> benchmark. It had not. A name-by-name diff at 1.6.8 found six still
+> unported:
+>
+> - **`bridge_large_render` / `bridge_large_to_firewall`** — a genuine
+>   scale fixture (50 port mappings + 5 isolation groups). The Cyrius
+>   `bridge_render` used the *small* fixture, so the bridge path had no
+>   scale coverage at all.
+> - **`engine_100_agents_to_firewall`, `geoip_10_countries_to_firewall`,
+>   `mesh_to_firewall`** — the `*_to_firewall` conversion family, which
+>   times the *build* step apart from the render. An O(n²) assembly bug
+>   hides behind a linear render if only the render is measured.
+>
+> All six were ported at 1.6.8, taking the suite to **48**. Every one of
+> the 33 Rust benchmarks now maps to a Cyrius counterpart, directly or
+> through a documented rename, with the single exception below.
+
 `toml_parse_small` is not ported — there is no TOML parser to measure.
 
 ### P2 — Example coverage
@@ -183,11 +204,12 @@ sections at 1.6.7.
 |---|---|
 | `tests/integration.rs` (7 tests) | Covered by `tests/integration/*.tcyr`, now 8 tests. `dry_run_does_not_apply` was the notable miss — restored at 1.6.7. The Cyrius side adds path-pinning and bundle-consume tests Rust never had. |
 | `fuzz/fuzz_targets/` (3) | Superset: 5 `fuzz/*.fcyr` drivers. `fuzz_toml_config` is N/A. |
-| `benches/benchmarks.rs` (33) | 43 Cyrius benches as of 1.6.7 (see above). |
+| `benches/benchmarks.rs` (33) | 48 Cyrius benches as of 1.6.8. Full name-for-name parity except `toml_parse_small` (see the 1.6.8 correction above). |
 | `examples/` (4) | README sections (see above). |
+| `Cargo.toml` | Package metadata (name, keywords, categories, `[features]`, dependency list) — superseded by `cyrius.cyml`. The `[features]` map is the one part with a live counterpart: it became the `#ifdef` module gating described in CLAUDE.md, and every feature listed (`nat` `policy` `inspect` `apply` `builder` `bridge` `engine` `mesh` `mcp` `config` `geoip` `netns`) has a module of the same name in `src/lib/`. Not covered by the v1.6.7 table — added at 1.6.8. |
 | `Makefile` | Superseded by `cyrius` subcommands + CI. |
 | `rust-toolchain.toml` | Superseded by the `[package].cyrius` pin. |
-| `deny.toml` (cargo-deny) | Partly superseded — see **Unenforced** below. |
+| `deny.toml` (cargo-deny) | **Lifted at 1.6.8** into [`scripts/supply-chain.sh`](../../scripts/supply-chain.sh) + [`supply-chain-policy.md`](supply-chain-policy.md), wired as a CI gate. Not into `cyrius deny`, which despite the name is an include-path checker with no allow-list. |
 | `codecov.yml` (80% target) | Partly superseded — see **Unenforced** below. |
 | `supply-chain/` (cargo-vet) | N/A. The audited crates are not dependencies any more; dep integrity is `cyrius.lock` + `cyrius deps --verify`. |
 | `benchmarks/` (975 criterion files) | Rust-era archive, moved under `rust-old/` at 1.6.5. Nothing reads it. |
@@ -195,19 +217,30 @@ sections at 1.6.7.
 ### Unenforced quality gates
 
 Not a port gap — a CI gap the port surfaced. The Rust `Makefile` ran
-`cargo deny`, `cargo vet`, and an 80% coverage gate. `cyrius deny`,
-`cyrius coverage --min`, and `cyrius doc --check` all exist and **none
-are wired into `ci.yml`**, while CLAUDE.md still states an 80% coverage
-target that nothing enforces. Tracked at the top of
-[`roadmap.md`](roadmap.md).
+`cargo deny`, `cargo vet`, and an 80% coverage gate. At 1.6.8 two of the
+four Cyrius-side equivalents were wired (`scripts/supply-chain.sh` and
+`cyrius deny`); `cyrius coverage --min` and `cyrius doc --check` remain,
+and CLAUDE.md still states an 80% coverage target that nothing enforces.
+Tracked at the top of [`roadmap.md`](roadmap.md).
 
 ---
 
-## Verdict
+## Verdict — acted on at v1.6.8
 
-With the 1.6.7 work above, `rust-old/` holds nothing that is not either
-in the Cyrius tree, intentionally dropped with a documented reason, or
-preserved in git history. **It can be deleted.**
+`rust-old/` held nothing that was not either in the Cyrius tree,
+intentionally dropped with a documented reason, or preserved in git
+history. It was deleted at **v1.6.8**, along with `.cargo/config.toml` —
+a tracked, dead Cargo `[patch]` for `agnosys` (dropped at the
+agnosys → agnodrm decomposition) that sat *outside* `rust-old/` and
+would otherwise have survived the removal. Its own comment claimed it
+was gitignored; it was not.
 
-The one open item — wiring the three quality gates — is independent of
-the Rust tree and does not block deletion.
+1,014 files left the working tree. Every one is recoverable via
+`git show <rev>:rust-old/...` at any commit through the v1.6.7 tag.
+
+Two things were lifted out of the tree first, rather than lost with it:
+
+- **`deny.toml`'s supply-chain policy** → `scripts/supply-chain.sh` +
+  [`supply-chain-policy.md`](supply-chain-policy.md), now a CI gate.
+- **Six unported benchmarks** → `tests/nein.bcyr` (see the 1.6.8
+  correction above), taking the suite to 48.

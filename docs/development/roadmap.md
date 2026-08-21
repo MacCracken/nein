@@ -1,43 +1,60 @@
 # Roadmap
 
-Last refresh: 2026-08-21 (post v1.6.7 — closed every functional gap the
-Rust→Cyrius port-completeness audit turned up, including one shipped bug
-where `dry_run` was write-only. `rust-old/` is now cleared for deletion; see
-[`port-completeness.md`](port-completeness.md). v1.6.2 shipped nein's half of
-the daimon firewall-MCP joint ship: [lib.mcp] bundle + dispatch adapter, whose
-paired daimon-side PR is the only other item still open).
+Last refresh: 2026-08-21 (post v1.6.8 — `rust-old/` deleted. v1.6.7 closed
+every functional gap the Rust→Cyrius port-completeness audit turned up,
+including one shipped bug where `dry_run` was write-only; v1.6.8 lifted the
+Rust tree's supply-chain policy into a first-party gate and removed the tree.
+The audit that cleared it is [`port-completeness.md`](port-completeness.md).
+v1.6.2 shipped nein's half of the daimon firewall-MCP joint ship: [lib.mcp]
+bundle + dispatch adapter, whose paired daimon-side PR is the only other item
+still open).
 
-Forward-looking only. The release history (v1.0.0 → v1.6.7) lives in
+Forward-looking only. The release history (v1.0.0 → v1.6.8) lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); the rationale for each shipped
 decision is preserved there, not duplicated here. This file tracks
 **what's next**.
 
 ---
 
-## P1 — wire the three unenforced quality gates
-
-**The only open item from the port-completeness audit.** Independent of
-`rust-old/`; it does not block deleting that tree.
+## P1 — wire the remaining unenforced quality gates
 
 The Rust `Makefile` ran `cargo deny`, `cargo vet`, and an 80% coverage gate on
-every check. Their Cyrius equivalents all exist in the toolchain and **none of
-them run in CI**:
+every check. Two of the four Cyrius-side equivalents were wired at v1.6.8; two
+remain:
 
 | Gate | Command | Status |
 |------|---------|--------|
-| Supply-chain policy | `cyrius deny src/main.cyr` | exists, not wired |
-| Coverage floor | `cyrius coverage --min 80` | exists, not wired |
+| Supply-chain policy | `scripts/supply-chain.sh` | ✅ wired at 1.6.8 |
+| Include-path policy | `cyrius deny src/main.cyr` | ✅ wired at 1.6.8 |
+| Coverage floor | `cyrius coverage --min <N>` | exists, not wired |
 | Doc coverage | `cyrius doc --check src/main.cyr` | exists, not wired |
 
-CLAUDE.md states a "minimum 80%+ coverage target" that nothing currently
-enforces — the number is aspirational until `--min` gates it. Establish the
-real figure first: `cyrius coverage` on the current tree, then set `--min` at
-or just under it so the gate ratchets rather than fails on day one.
+**Correction to the v1.6.7 version of this entry:** it said `cyrius deny`
+needed "a policy decision (which sources/licences are allowed)" and suggested
+mirroring `rust-old/deny.toml`'s allow-list into it. That was wrong. Despite
+the name, `cyrius deny` is an **include-path checker** — it rejects absolute
+paths and `../` traversal in `include` directives and takes no configuration
+at all. `cyrius vet`'s trusted-prefix set is likewise compiled into the
+toolchain. Neither can carry a licence or source allow-list. The deny.toml
+policy is enforced by [`scripts/supply-chain.sh`](../../scripts/supply-chain.sh)
+instead; see [`supply-chain-policy.md`](supply-chain-policy.md).
 
-Do these one at a time, each as its own change, each verified against a
-clean `rm -rf build lib` run before the next. `cyrius deny` needs a policy
-decision (which sources/licences are allowed) before it can gate anything —
-mirror `rust-old/deny.toml`'s allow-list as the starting point.
+### What is left
+
+**Coverage floor.** CLAUDE.md states a "minimum 80%+ coverage target" that
+nothing enforces — the number is aspirational until `--min` gates it.
+Establish the real figure first (`cyrius coverage` on the current tree), then
+set `--min` at or just under it so the gate ratchets rather than fails on day
+one. If the real figure is well under 80%, the honest move is to gate at the
+real number and either raise it deliberately or amend the CLAUDE.md claim —
+not to leave a target in the docs that no gate backs.
+
+**Doc coverage.** `cyrius doc --check src/main.cyr` has never been run against
+this tree; establish what it reports before deciding whether it gates or
+merely informs.
+
+Do these one at a time, each as its own change, each verified against a clean
+`rm -rf build lib` run before the next.
 
 ---
 
@@ -50,12 +67,12 @@ of `cfg_parse_*`.
 
 ---
 
-## Current state — v1.6.7
+## Current state — v1.6.8
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 21 modules
 (mcp at 1.6.0, sign at 1.6.1), 699 test assertions + a bundle-consume
-integration guard, 43 benchmarks, 5 per-target fuzz drivers, single-file
+integration guard, 48 benchmarks, 5 per-target fuzz drivers, single-file
 `dist/nein.cyr` bundle (still bote/sigil-free) plus the opt-in
 `dist/nein-mcp.cyr` (`[lib.mcp]`) for MCP hosts. Type-check end-to-end
 clean; aarch64 cross-build green; `capacity --check` is a real gate again

@@ -10,9 +10,6 @@
 #   dist/nein.cyr is the single-file consumer bundle (CI staleness gate)
 #   cyrius.lock holds sha256 of each resolved dep (CI hash-verify gate)
 
-# Rust (preserved in rust-old/)
-rust-old/target/
-rust-old/Cargo.lock
 
 # IDE
 .idea/

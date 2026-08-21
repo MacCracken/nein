@@ -6,8 +6,9 @@ set -euo pipefail
 # gates against, and the CSV history CLAUDE.md calls "the proof".
 #
 # Replaces the Rust-era script (criterion via `cargo bench`, writing
-# benchmarks/history.tsv), retired at 1.6.5 along with that whole
-# directory — the Rust-era data is preserved under rust-old/benchmarks/.
+# benchmarks/history.tsv), retired at 1.6.5. That directory moved under
+# rust-old/ at 1.6.5 and was deleted with it at 1.6.8 — the criterion archive
+# lives in git history only.
 #
 # Baselines ride in on release commits. Recording one mid-cycle moves the
 # floor bench-regression.sh compares against, so record deliberately.

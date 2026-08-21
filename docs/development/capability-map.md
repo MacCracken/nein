@@ -7,8 +7,8 @@ small enough that a generator script isn't needed yet — agnosys's
 `scripts/gen-capability-map.sh` pattern would be the template if it
 gets one).
 
-**Last refresh:** 2026-08-21 (v1.6.7)
-**nein version:** 1.6.7
+**Last refresh:** 2026-08-21 (v1.6.8)
+**nein version:** 1.6.8
 **cyrius version:** 6.5.33
 
 ## How to read this

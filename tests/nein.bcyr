@@ -238,6 +238,11 @@ var _bench_flowtable = 0;
 var _bench_ct_timeout = 0;
 var _bench_quota_rule = 0;
 var _bench_nat_range = 0;
+var _bench_bridge_large = 0;
+var _bench_bridge_large_fw = 0;
+var _bench_engine_100 = 0;
+var _bench_geoip_10 = 0;
+var _bench_mesh_cfg = 0;
 
 # int -> fresh cstring (the bench fixtures need generated names)
 fn _b_itoa(n: i64): cstring {
@@ -262,6 +267,20 @@ fn _b_cidr(a: i64, b: i64, c: i64, d: i64, mask: i64): cstring {
     str_builder_add_int(sb, d); str_builder_add_cstr(sb, "/");
     str_builder_add_int(sb, mask);
     return str_cstr(str_builder_build(sb));
+}
+
+# 10-country geoip blocklist, 2 CIDRs each — the conversion-bench input.
+fn _bench_setup_geoip10(): i64 {
+    var bl = geoip_new();
+    var i = 0;
+    while (i < 10) {
+        var c = vec_new();
+        vec_push(c, _b_cidr(i + 1, 0, 0, 0, 8));
+        vec_push(c, _b_cidr(i + 101, 0, 0, 0, 8));
+        geoip_block_country(bl, country_block_v4(_b_concat_int("C", i), c));
+        i = i + 1;
+    }
+    return bl;
 }
 
 fn _bench_setup_scale() {
@@ -356,6 +375,29 @@ fn _bench_setup_scale() {
     # --- NAT port-range forward ---
     _bench_nat_range = port_range_forward(80, 99, "172.17.0.2", 8080);
 
+    # --- large container bridge: 50 port mappings + 5 isolation groups ---
+    var bf = bridge_firewall_new(bridge_config_new("br0", "172.17.0.0/16", "eth0"));
+    i = 0;
+    while (i < 50) {
+        bf_add_port_mapping(bf, pm_tcp(8000 + i,
+            _b_cidr(172, 17, 0, 2 + (i % 250), 32), 80));
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 5) {
+        var g = vec_new();
+        vec_push(g, _b_cidr(172, 17, i + 1, 0, 24));
+        bf_add_isolation_group(bf, isolation_group_new(_b_concat_int("group", i), g));
+        i = i + 1;
+    }
+    _bench_bridge_large = bf;
+    _bench_bridge_large_fw = bf_to_firewall(bf);
+
+    # --- conversion-bench inputs (the *_to_firewall family) ---
+    _bench_engine_100 = e;
+    _bench_geoip_10 = _bench_setup_geoip10();
+    _bench_mesh_cfg = mesh_envoy();
+
     return 0;
 }
 
@@ -371,6 +413,17 @@ fn bench_flowtable_render() { flowtable_render(_bench_flowtable); return 0; }
 fn bench_ct_timeout_render() { ct_timeout_render(_bench_ct_timeout); return 0; }
 fn bench_quota_rule_render() { rule_render(_bench_quota_rule); return 0; }
 fn bench_nat_range_render() { nat_render(_bench_nat_range); return 0; }
+
+# Large-bridge scale pair.
+fn bench_bridge_large_to_firewall() { bf_to_firewall(_bench_bridge_large); return 0; }
+fn bench_bridge_large_render() { firewall_render(_bench_bridge_large_fw); return 0; }
+
+# Conversion benches — these time the BUILD step (module config -> Firewall)
+# separately from rendering it, which is where an O(n^2) assembly bug would
+# hide behind a linear render.
+fn bench_engine_100_agents_to_firewall() { pe_to_firewall(_bench_engine_100); return 0; }
+fn bench_geoip_10_countries_to_firewall() { geoip_to_firewall(_bench_geoip_10); return 0; }
+fn bench_mesh_to_firewall() { mesh_to_firewall(_bench_mesh_cfg); return 0; }
 
 fn main() {
     alloc_init();
@@ -432,6 +485,13 @@ fn main() {
     b = bench_new("firewall_1000_rules_validate"); bench_run(b, &bench_firewall_1000_rules_validate, 200); vec_push(all, b);
     b = bench_new("engine_100_agents_render"); bench_run(b, &bench_engine_100_agents_render, 200); vec_push(all, b);
     b = bench_new("engine_100_agents_validate"); bench_run(b, &bench_engine_100_agents_validate, 200); vec_push(all, b);
+    b = bench_new("bridge_large_render"); bench_run(b, &bench_bridge_large_render, 1000); vec_push(all, b);
+
+    # --- conversion benches (1.6.8) — build step, timed apart from render ---
+    b = bench_new("bridge_large_to_firewall"); bench_run(b, &bench_bridge_large_to_firewall, 1000); vec_push(all, b);
+    b = bench_new("engine_100_agents_to_firewall"); bench_run(b, &bench_engine_100_agents_to_firewall, 200); vec_push(all, b);
+    b = bench_new("geoip_10_countries_to_firewall"); bench_run(b, &bench_geoip_10_countries_to_firewall, 10000); vec_push(all, b);
+    b = bench_new("mesh_to_firewall"); bench_run(b, &bench_mesh_to_firewall, 10000); vec_push(all, b);
 
     bench_report_all(all);
     return 0;

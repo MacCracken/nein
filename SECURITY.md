@@ -40,7 +40,7 @@ Issues mapped to a numbered threat in the threat model expedite triage
 | 0.9x.x  | No (Rust-era) |
 | < 0.9x  | No (Rust-era) |
 
-The Rust-era line (≤ 0.90.0) is preserved in `rust-old/` as a reference
+The Rust-era line (≤ 0.90.0) lived in `rust-old/` as a reference
 checkout — it is not maintained. The Cyrius port baseline is v1.0.0.
 
 ## Security Properties (current, v1.6.x)
