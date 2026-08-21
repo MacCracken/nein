@@ -7,8 +7,8 @@ small enough that a generator script isn't needed yet — agnosys's
 `scripts/gen-capability-map.sh` pattern would be the template if it
 gets one).
 
-**Last refresh:** 2026-08-21 (v1.6.9)
-**nein version:** 1.6.9
+**Last refresh:** 2026-08-21 (v1.6.10)
+**nein version:** 1.6.10
 **cyrius version:** 6.5.33
 
 ## How to read this
@@ -116,7 +116,7 @@ the apply-layer wrappers below.
 |---|---|
 | Direct syscalls | 0 |
 | `sys_*` wrappers | 9 |
-| Subprocess binaries | 3 |
+| Subprocess binaries | 1 |
 | Filesystem paths | 0 |
 
 **`sys_*` wrappers:**

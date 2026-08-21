@@ -102,8 +102,9 @@ Conventions:
   for caller-supplied identifiers (table/chain names, addresses,
   interface names, comments, raw nftables fragments).
 - **`Str`** — Cyrius value type (data ptr + length pair). Used
-  internally for built rulesets and string-builder outputs. The only
-  public fn taking `Str` is `apply_ruleset_str`.
+  internally for built rulesets and string-builder outputs. Five public
+  fns take a `Str`: `apply_ruleset_str`, `diff_compute`, `diff_parse_live`,
+  `parse_rules_with_handles`, and `sign_ruleset_body`.
 - **`i64`** — port numbers, handles, enum discriminants, struct
   pointers (Cyrius doesn't distinguish pointer types).
 
@@ -131,13 +132,17 @@ Modules with zero `str_builder` usage — `validate`, `config`, `builder`
 — don't render strings: validate scans bytes, config dispatches enums,
 builder composes pre-built values. The match holds.
 
-Three legitimate `var buf[N]` patterns remain:
+Four legitimate `var buf[N]` patterns remain:
 - `pipe_in/err/out[16]` in `apply.cyr` — fd pairs returned by
   `sys_pipe` (4 bytes × 2 fds; required syscall ABI shape)
 - `errbuf/buf[4096]` in `apply.cyr` — `sys_read` capture targets for
   stderr/stdout draining (required for pipe semantics)
 - `buf[20]` in `_sb_add_hex` (`rule.cyr`) — reverse-write scratch for
   hex digits, copied into a str_builder at the end (correct usage)
+- `block_stack[128]` in `inspect.cyr` and `diff_bstack[128]` in
+  `diff.cyr` — the parsers' brace-nesting stacks: 16 i64 slots, depth
+  clamped `< 15` on push and `> 0` on pop, so the maximum offset is 120
+  of 128 (audited 2026-08-21; the sizing is exact)
 
 The CI security-scan gate flags any new `var buf[≥4096]` for review;
 ≥ 65536 fails the build.

@@ -11,8 +11,11 @@ in the caller's process.
 
 The detailed threat model lives in
 [`docs/development/threat-model.md`](docs/development/threat-model.md) —
-8 numbered threats (T-1 through T-8). This file is the **policy**
-shorthand; consult the threat model for the mitigations.
+11 numbered threats (T-1 through T-11). T-9 covers Ed25519 signed-ruleset
+trust and integrity, T-10 MCP destructive-tool access control, and T-11 MCP
+tool-argument injection and output escaping — the three surfaces the 1.6.x
+line added. This file is the **policy** shorthand; consult the threat model
+for the mitigations.
 
 ## Reporting a Vulnerability
 

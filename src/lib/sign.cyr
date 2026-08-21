@@ -27,6 +27,27 @@
 fn _sign_begin(): cstring { return "-----BEGIN NFT RULESET-----"; }
 fn _sign_end(): cstring { return "-----END NFT RULESET-----"; }
 
+# Does the raw body contain either envelope delimiter? See sign_ruleset_body.
+fn _body_has_delimiter(data: i64, len: i64): i64 {
+    var d = 0;
+    while (d < 2) {
+        var needle = _sign_begin();
+        if (d == 1) { needle = _sign_end(); }
+        var nlen = strlen(needle);
+        if (nlen <= len) {
+            var i = 0;
+            while (i <= len - nlen) {
+                var j = 0;
+                while (j < nlen && load8(data + i + j) == load8(needle + j)) { j = j + 1; }
+                if (j == nlen) { return 1; }
+                i = i + 1;
+            }
+        }
+        d = d + 1;
+    }
+    return 0;
+}
+
 # Build a Str {data, len} record pointing at existing bytes (no copy).
 fn _sign_str(data: i64, len: i64): i64 {
     var s = alloc(16);
@@ -76,6 +97,18 @@ fn sign_ruleset_body(body: i64, sk: i64, key_id: cstring): i64 {
 
     var body_data = str_data(body);
     var body_len = str_len(body);
+
+    # Refuse to sign a body that contains either envelope delimiter (1.6.10,
+    # audit MEDIUM). A rule comment of `-----END NFT RULESET-----` passes
+    # validate_comment — 25 chars, no quote, no dangerous byte — and lands in
+    # the signed body verbatim, making the envelope self-ambiguous: the parser
+    # cannot tell the real terminator from the one inside the payload.
+    # Verification then runs over a body that is not the body that was signed.
+    # Rejecting at sign time is the unambiguous fix; there is no legitimate
+    # reason for an nft ruleset to contain these strings.
+    if (_body_has_delimiter(body_data, body_len) == 1) {
+        return nein_err(NEIN_ERR_SIG_MALFORMED);
+    }
 
     var sig = alloc(64);
     ed25519_sign(sk, body_data, body_len, sig);
@@ -177,6 +210,14 @@ fn parse_signed_ruleset(signed: i64): i64 {
     if (pubkey_hex == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
     if (sig_hex == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
     if (keyid == 0) { keyid = "unnamed"; }
+    # The keyid arrives from an untrusted envelope and sits OUTSIDE the signed
+    # body, so nothing in the signature covers it. sign_ruleset_body validates
+    # it on the way out; validate it on the way in too (1.6.10, audit MEDIUM)
+    # — an unbounded, arbitrary-charset label reaching a consumer's logs or
+    # policy lookups is a gap the signature cannot close.
+    if (is_err_result(validate_identifier(keyid)) == 1) {
+        return nein_err(NEIN_ERR_SIG_MALFORMED);
+    }
     # Hex length + charset gates.
     if (strlen(pubkey_hex) != 64) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
     if (strlen(sig_hex) != 128) { return nein_err(NEIN_ERR_SIG_MALFORMED); }

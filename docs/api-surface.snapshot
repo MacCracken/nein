@@ -15,6 +15,8 @@ apply::list_ruleset_with_handles/0
 apply::list_table_with_handles/2
 apply::nein_nft_path/0
 apply::nein_set_nft_path/1
+apply::nein_set_sigpipe_guard/1
+apply::nein_sigpipe_guard/0
 apply::replace_rule_live/5
 bridge::bf_add_isolation_group/2
 bridge::bf_add_port_mapping/2

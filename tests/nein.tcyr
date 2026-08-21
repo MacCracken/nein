@@ -1973,6 +1973,99 @@ fn _cstr_to_str(c) {
     return str_builder_build(sb);
 }
 
+fn test_nft_comment_char_rejected() {
+    test_group("nft_comment_char");
+
+    # '#' starts an nft comment to end-of-line. Verified against nftables
+    # 1.1.6: `... accept # drop` applies as ACCEPT — the verdict vanishes.
+    assert(is_err_result(validate_nft_element("accept # drop")) == 1, "'#' rejected in element");
+    assert(is_err_result(validate_nft_element("#")) == 1, "bare '#' rejected");
+    assert(is_ok(validate_nft_element("10.0.0.0/8")) == 1, "ordinary element still ok");
+    assert(is_ok(validate_nft_element("syn,ack")) == 1, "tcp flags still ok");
+
+    # Comments are rendered INSIDE quotes, where '#' is an ordinary
+    # character — rejecting it there would break a legitimate use.
+    assert(is_ok(validate_comment("port 80 # web")) == 1, "'#' still allowed in a comment");
+    assert(is_ok(validate_log_prefix("drop #1")) == 1, "'#' still allowed in a log prefix");
+
+    return 0;
+}
+
+fn test_handle_parse_hardening() {
+    test_group("handle_parse_hardening");
+
+    # Quote awareness: ' # handle ' inside a rule COMMENT must not be mistaken
+    # for the real suffix (audit H-6).
+    var bh = _strip_handle_suffix("tcp dport 22 accept comment \"x # handle 9\" # handle 4");
+    assert(streq(load64(bh), "tcp dport 22 accept comment \"x # handle 9\"") == 1,
+      "body keeps the quoted text intact");
+    assert_eq(load64(bh + 8), 4, "the real handle is taken, not the one in the comment");
+
+    # A marker that exists ONLY inside quotes is not a handle at all.
+    var bh2 = _strip_handle_suffix("tcp dport 22 accept comment \"x # handle 9\"");
+    assert_eq(load64(bh2 + 8), 0, "quoted-only marker yields no handle");
+
+    # Overflow: an over-long digit run must not wrap into a bogus handle.
+    var bh3 = _strip_handle_suffix("tcp dport 22 accept # handle 99999999999999999999");
+    assert_eq(load64(bh3 + 8), 0, "20-digit handle rejected, not wrapped");
+
+    # Marker with no digits.
+    var bh4 = _strip_handle_suffix("tcp dport 22 accept # handle ");
+    assert_eq(load64(bh4 + 8), 0, "handle marker with no digits yields 0");
+
+    return 0;
+}
+
+fn test_sigpipe_guard_surface() {
+    test_group("sigpipe_guard");
+
+    assert_eq(nein_sigpipe_guard(), 1, "guard on by default");
+    assert(is_ok(nein_set_sigpipe_guard(0)) == 1, "can be disabled");
+    assert_eq(nein_sigpipe_guard(), 0, "disable took effect");
+    nein_set_sigpipe_guard(1);
+    assert_eq(nein_sigpipe_guard(), 1, "re-enabled");
+
+    return 0;
+}
+
+fn test_sign_delimiter_rejected() {
+    test_group("sign_delimiter");
+
+    # A rule comment carrying the envelope terminator passes validate_comment,
+    # so it would land in the signed body and make the envelope ambiguous.
+    # Signing must refuse (audit MEDIUM).
+    assert(is_ok(validate_comment("-----END NFT RULESET-----")) == 1,
+      "the comment itself is not otherwise invalid");
+
+    var fw = firewall_new();
+    var t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    var r = allow_tcp(22);
+    rule_set_comment(r, "-----END NFT RULESET-----");
+    chain_add_rule(c, r);
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+
+    var sk = alloc(64);
+    var i = 0;
+    while (i < 64) { store8(sk + i, i); i = i + 1; }
+    var res = sign_ruleset_body(firewall_render(fw), sk, "test-key");
+    assert(is_err_result(res) == 1, "signing refuses a body containing the delimiter");
+    assert_eq(payload(res), NEIN_ERR_SIG_MALFORMED, "reported as malformed");
+
+    # A clean body still signs.
+    var fw2 = firewall_new();
+    var t2 = table_new("filter", FAMILY_INET);
+    var c2 = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(c2, allow_tcp(22));
+    table_add_chain(t2, c2);
+    firewall_add_table(fw2, t2);
+    assert(is_ok(sign_ruleset_body(firewall_render(fw2), sk, "test-key")) == 1,
+      "a clean body still signs");
+
+    return 0;
+}
+
 fn test_ct_state_validation() {
     test_group("ct_state_validation");
 
@@ -2347,20 +2440,59 @@ fn test_diff() {
     var ops = diff_compute(fw, _cstr_to_str(raw));
     assert_eq(vec_len(ops), 0, "identical target + live = no ops");
 
-    # --- Target has rule not in live = "add rule" ---
+    # --- Target has rule not in live: chain is REBUILT, not appended to ---
+    # Since 1.6.10 a chain that differs in any way is replaced wholesale, so
+    # the op set is (deletes for every live rule) + (adds for every target
+    # rule, in order) rather than a single append. See diff_compute's note.
     var raw_partial = "table inet filter { # handle 1\n  chain input { # handle 1\n    type filter hook input priority 0; policy drop;\n    tcp dport 22 accept # handle 7\n  }\n}\n";
     ops = diff_compute(fw, _cstr_to_str(raw_partial));
-    assert_eq(vec_len(ops), 1, "target has 1 extra rule = 1 add op");
-    var add_op = vec_get(ops, 0);
-    assert(str_contains_cstr(_cstr_to_str(add_op), "add rule inet filter input") == 1, "op starts with add rule");
-    assert(str_contains_cstr(_cstr_to_str(add_op), "tcp dport 80 accept") == 1, "op contains the new rule body");
+    assert_eq(vec_len(ops), 3, "differing chain rebuilt: 1 delete + 2 adds");
+    assert(str_contains_cstr(_cstr_to_str(vec_get(ops, 0)), "delete rule inet filter input handle 7") == 1,
+      "live rule deleted first");
+    assert(str_contains_cstr(_cstr_to_str(vec_get(ops, 1)), "tcp dport 22 accept") == 1,
+      "target rule 1 re-added in order");
+    assert(str_contains_cstr(_cstr_to_str(vec_get(ops, 2)), "tcp dport 80 accept") == 1,
+      "target rule 2 re-added in order");
 
-    # --- Live has extra rule not in target = "delete rule" ---
+    # --- Live has extra rule not in target: same rebuild ---
     var raw_extra = "table inet filter { # handle 1\n  chain input { # handle 1\n    type filter hook input priority 0; policy drop;\n    tcp dport 22 accept # handle 7\n    tcp dport 80 accept # handle 8\n    tcp dport 443 accept # handle 9\n  }\n}\n";
     ops = diff_compute(fw, _cstr_to_str(raw_extra));
-    assert_eq(vec_len(ops), 1, "live has 1 extra rule = 1 delete op");
-    var del_op = vec_get(ops, 0);
-    assert(str_contains_cstr(_cstr_to_str(del_op), "delete rule inet filter input handle 9") == 1, "op references handle 9");
+    assert_eq(vec_len(ops), 5, "3 live deletes + 2 target adds");
+    assert(str_contains_cstr(_cstr_to_str(vec_get(ops, 2)), "handle 9") == 1, "extra live rule deleted");
+
+    # --- ORDER: the bug this rewrite exists for (audit H-5) ---
+    # Live holds a broad accept. The target prepends a narrow drop to block a
+    # compromised host. Under the old set-semantics the accept "already
+    # matched", so only the drop was emitted — and nft APPENDS, landing it
+    # after the accept, leaving the host permitted.
+    var ord_fw = firewall_new();
+    var ord_t = table_new("filter", FAMILY_INET);
+    var ord_c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(ord_c, deny_source("10.0.0.5/32"));
+    chain_add_rule(ord_c, allow_service("10.0.0.0/8", PROTO_TCP, 22));
+    table_add_chain(ord_t, ord_c);
+    firewall_add_table(ord_fw, ord_t);
+
+    var ord_live_body = _render_to_cstr(rule_render(allow_service("10.0.0.0/8", PROTO_TCP, 22)));
+    var ord_sb = str_builder_new();
+    str_builder_add_cstr(ord_sb, "table inet filter { # handle 1\n  chain input { # handle 1\n    ");
+    str_builder_add_cstr(ord_sb, ord_live_body);
+    str_builder_add_cstr(ord_sb, " # handle 4\n  }\n}\n");
+    var ord_ops = diff_compute(ord_fw, str_builder_build(ord_sb));
+
+    assert_eq(vec_len(ord_ops), 3, "order mismatch rebuilds the chain");
+    assert(str_contains_cstr(_cstr_to_str(vec_get(ord_ops, 0)), "delete rule") == 1,
+      "existing accept is deleted, not left in place");
+    assert(str_contains_cstr(_cstr_to_str(vec_get(ord_ops, 1)), "10.0.0.5/32") == 1,
+      "the DROP is re-added FIRST — the whole point");
+    assert(str_contains_cstr(_cstr_to_str(vec_get(ord_ops, 2)), "dport 22") == 1,
+      "the accept follows it");
+
+    # A chain whose live rules lack handles cannot be rebuilt — fail closed
+    # rather than append duplicates on top of undeletable rules.
+    var nh_raw = "table inet filter {\n  chain input {\n    tcp dport 22 accept\n  }\n}\n";
+    assert_eq(vec_len(diff_compute(fw, _cstr_to_str(nh_raw))), 0,
+      "chain with unhandled live rules left untouched");
 
     # --- Empty target vs populated live = all deletes ---
     var empty_fw = firewall_new();
@@ -2652,6 +2784,12 @@ fn main() {
 
     # P(-1) hardening fixes (1.6.9)
     test_ct_state_validation();
+
+    # P(-1) open-item fixes (1.6.10)
+    test_nft_comment_char_rejected();
+    test_handle_parse_hardening();
+    test_sigpipe_guard_surface();
+    test_sign_delimiter_rejected();
     test_diff_validates_target();
     test_diff_del_op_requires_handle();
     test_parser_block_desync();

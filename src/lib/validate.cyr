@@ -253,10 +253,34 @@ fn validate_log_prefix(s: cstring): i64 {
 
 # Validate a set/map element string.
 # Non-empty, no dangerous chars, no quotes.
+# Reject '#' (0x23). nft treats it as a comment to end-of-line, so a value
+# carrying one silently truncates whatever follows it in the rendered rule.
+# Verified against nftables 1.1.6:
+#     add rule inet filter input ip saddr 1.2.3.4 accept # drop
+# applies as an ACCEPT — the intended `drop` verdict vanishes without error.
+#
+# Checked HERE rather than in the shared _is_dangerous_char set (1.6.10, audit
+# MEDIUM), because the contexts differ: everything validate_nft_element guards
+# is interpolated UNQUOTED into nft grammar — whole rule bodies via
+# add_rule_live, set/map elements, define values, tcp-flag and set-lookup
+# fields — so '#' is live there. Comments and log prefixes are rendered inside
+# double quotes, where '#' is an ordinary character; rejecting it there would
+# break the legitimate `comment "port 80 # web"` for no security gain.
+fn _has_nft_comment_char(s: cstring): i64 {
+    var i = 0;
+    var len = strlen(s);
+    while (i < len) {
+        if (load8(s + i) == 35) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn validate_nft_element(s: cstring): i64 {
     var len = strlen(s);
     if (len == 0) { return nein_err(ERR_INVALID_RULE); }
     if (_has_quote(s) == 1) { return nein_err(ERR_INVALID_RULE); }
     if (_has_dangerous_char(s) == 1) { return nein_err(ERR_INVALID_RULE); }
+    if (_has_nft_comment_char(s) == 1) { return nein_err(ERR_INVALID_RULE); }
     return nein_ok();
 }

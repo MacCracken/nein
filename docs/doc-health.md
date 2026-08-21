@@ -10,7 +10,7 @@ Pattern lifted from agnosys/agnostik 1.2.x. Refresh policy:
 - 🟠 **Yellow** — refreshed in the previous minor; due for a read-through
 - 🔴 **Red** — multiple minors stale; rewrite candidate
 
-Last refresh of this ledger: **2026-08-21** (post v1.6.9 — the `.deps`
+Last refresh of this ledger: **2026-08-21** (post v1.6.10 — the `.deps`
 sidecar packaging fix. Targeted, not a sweep: only the docs that made a
 now-false claim about the sidecars, or that state the current version, were
 touched. The v1.6.5 pass before it updated version/pin/dep-set refs across
@@ -62,7 +62,7 @@ Each ADR is dated at write-time; superseding ADRs reference the originals.
 | `docs/development/capability-map.md` | 2026-08-21 | ✅ | v1.6.6: version block → 1.6.6. v1.6.5: version block → 1.6.5 / cyrius 6.5.33. Prior v1.6.4 sweep: Lens-2 single pinned nft path, added `sign` + `mcp` per-module entries (both transitive-only). |
 | `docs/development/dependencies.md` | 2026-08-21 | ✅ | v1.6.6: `[deps.*]` table row `bote`→`bote-core`; new section on why the section is named for the module, not the repo (the `distlib` basename==section-name rule that put `bote-core` in both sidecars as a stdlib leaf), and a sidecar rule note — a sidecar may name stdlib leaves only. **New at v1.6.5.** Prose home for the `[deps]` rationale removed from `cyrius.cyml` (the `.cyml` parser mis-resolves deps when comments sit inside the `stdlib` array). Covers the explicit build sequence, per-module justification, pin ordering, the sigil/patra top-level pins, and what was dropped (agnosys, vendored bote-core). |
 | `docs/development/supply-chain-policy.md` | 2026-08-21 | ✅ | **New at v1.6.8.** Successor to `rust-old/deny.toml`: allowed sources, pinning rules, the 12-entry SPDX licence allow-list, undeclared-transitive policy, and why `cyrius deny` cannot carry any of it. Enforced by `scripts/supply-chain.sh` as a CI gate. |
-| `docs/audit/2026-08-21-audit.md` | 2026-08-21 | ✅ | **New at v1.6.9.** P(-1) scaffold-hardening security audit of v1.6.8: 7 review areas, adversarial verification of every MEDIUM+ finding, 1 CRITICAL + 6 HIGH + 10 MEDIUM + 17 LOW confirmed, 5 CRITICAL/HIGH fixed in 1.6.9. Records open findings with severity and fix sketches. |
+| `docs/audit/2026-08-21-audit.md` | 2026-08-21 | ✅ | **New at v1.6.9.** P(-1) scaffold-hardening security audit of v1.6.8: 7 review areas, adversarial verification of every MEDIUM+ finding, 1 CRITICAL + 6 HIGH + 10 MEDIUM + 17 LOW confirmed, 5 CRITICAL/HIGH fixed in 1.6.9; remaining 3 HIGH + 8 MEDIUM + all 6 doc errors fixed in 1.6.10, dispositions recorded in place. Records open findings with severity and fix sketches. |
 | `docs/development/port-completeness.md` | 2026-08-21 | ✅ | **New at v1.6.7, amended at v1.6.8** (verdict past-tense; scale-benchmark claim corrected in place; `Cargo.toml` row added). Rust→Cyrius port-completeness audit: method, 172-fn and 22-enum disposition tables, the five intentional drops, the gaps closed at 1.6.7, and the verdict that `rust-old/` can be deleted. |
 
 ## Guides

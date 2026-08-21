@@ -4,6 +4,126 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.10] — 2026-08-21
+
+**Closes every remaining open finding from the 2026-08-21 P(-1) audit.** All
+three open HIGH items and eight of the ten MEDIUM are fixed, along with all six
+confirmed documentation errors. 754 unit + 18 integration assertions (was 729),
+394 public fns.
+
+### Security
+
+- **HIGH — SIGPIPE was never ignored, so a dead nft killed the host process.**
+  The parent wrote the ruleset with a flagless `sys_write`; if the child was
+  already gone — failed execve, early parse-error exit, OOM kill — SIGPIPE's
+  default disposition terminated **the entire calling process**, not just the
+  apply. Reproduced as exit 141. It also falsified threat-model T-4's claim
+  that the parent observes the child's exit status on execve failure.
+
+  Fixed with `signal_ignore(13)`, applied once and latched before the first
+  write. This is process-wide state, so it is explicit rather than silent:
+  `nein_set_sigpipe_guard(0)` turns it off for a host that manages SIGPIPE
+  itself, and `nein_sigpipe_guard()` reports it. With SIGPIPE ignored the write
+  returns `-EPIPE`, which the loop now treats as a hard error.
+
+- **HIGH — `diff_compute` ignored rule order.** Each chain was treated as an
+  unordered set: any target rule whose body already existed live counted as
+  satisfied, and every other became `add rule …`, which nft **appends**. Rule
+  order is nftables' evaluation semantics, so a partial diff could leave a
+  chain matching neither the old nor the target ruleset. The concrete case:
+  live `input` holds `ip saddr 10.0.0.0/8 accept`, the target prepends
+  `ip saddr 10.0.0.5/32 drop` to block a compromised host — the accept already
+  matched, so only the drop was emitted, and it landed *after* the accept.
+  **The host stayed permitted.** `diff.cyr`'s header called this strategy
+  "conservative but always correct"; it was not, and that comment is corrected.
+
+  Chains are now compared as **ordered sequences**. A chain already in sync
+  emits nothing, so the common no-op case stays free; a chain that differs in
+  any way is rebuilt — every live rule deleted, every target rule re-added in
+  order. Safe because `diff_apply` batches all ops into a single `nft -f -` and
+  nftables commits a batch atomically, so no packet observes a half-built
+  chain. If a differing chain holds a live rule with no usable handle it cannot
+  be deleted, and re-adding on top would duplicate rather than replace — such a
+  chain is skipped with an error rather than half-converged.
+
+- **HIGH — `_strip_handle_suffix` had no quote awareness.** It scanned
+  backwards for the last literal ` # handle ` regardless of quoting, so a rule
+  whose *comment* contained that text had its body truncated at the comment and
+  its handle read out of comment text — and the mis-parsed rule then drove
+  add/delete decisions. The scan now runs forward tracking quote state and only
+  accepts a marker outside quotes.
+
+- **MEDIUM — `#` was absent from the rejected character set.** nft treats it as
+  a comment to end-of-line. Verified against nftables 1.1.6:
+  `… ip saddr 1.2.3.4 accept # drop` applies as an **accept** — the intended
+  verdict vanishes with no error. Now rejected by `validate_nft_element`, which
+  guards everything interpolated *unquoted* into nft grammar (whole rule bodies
+  via `add_rule_live`, set/map elements, define values, tcp-flag and set-lookup
+  fields). Deliberately **not** added to the shared dangerous-character set:
+  comments and log prefixes render inside double quotes where `#` is ordinary,
+  and rejecting it there would break the legitimate `comment "port 80 # web"`
+  for no security gain.
+
+- **MEDIUM — signing accepted a body containing its own envelope delimiter.**
+  A rule comment of `-----END NFT RULESET-----` passes `validate_comment` (25
+  chars, no quote, no dangerous byte) and landed in the signed body verbatim,
+  making the envelope self-ambiguous. `sign_ruleset_body` now refuses such a
+  body; there is no legitimate reason for an nft ruleset to contain those
+  strings. The parsed `nein-sig-keyid` is also validated on the way in — it
+  arrives from an untrusted envelope and sits *outside* the signed body, so no
+  signature covers it.
+
+### Fixed
+
+- **`sys_waitpid`'s return was unchecked** (both spawn helpers). On failure
+  waitpid does not write `status`, which stays 0 — and `WIFEXITED(0)==1` /
+  `WEXITSTATUS(0)==0` decodes that as a clean exit-zero child, so a failed
+  apply reported **success**. Reachable whenever the host installs a SIGCHLD
+  reaper or sets SIGCHLD to `SIG_IGN`, which process supervisors — nein's own
+  consumers — routinely do. Now checked, with `-EINTR` retried.
+- **A truncated stdin write was reported as success.** The loop broke on
+  `n <= 0` and never compared `written` against `input_len`, so a partial
+  ruleset that still happened to parse was applied by nft, which exited 0.
+  Now fails closed, reaping the child first; `-EINTR` is retried.
+- **The child could destroy its own stdio.** `sys_dup2(src, dst)` followed by
+  an unconditional `sys_close(src)` wipes the descriptor when `src == dst` —
+  and it can: a host that daemonizes by closing fds 0/1/2 makes `sys_pipe` hand
+  out exactly those numbers. `dup2` returns were also ignored in all three
+  places. Both fixed via a shared `_child_redirect` helper.
+- **Rule handles could overflow.** `handle = handle * 10 + digit` had no bound,
+  so a 20-digit run wrapped and produced a `delete rule … handle <wrapped>`
+  that could target an unrelated rule. Runs longer than 18 digits, and markers
+  with no digits, now yield handle 0 — which `_emit_del_rule` refuses to build
+  an op from.
+
+### Documentation
+
+All six confirmed errors from the audit's LOW table:
+
+- `SECURITY.md` claimed **8** numbered threats; the model has **11** (T-9
+  signing, T-10 MCP access control, T-11 MCP argument injection were missing
+  entirely).
+- **ADR-0003** described Cargo feature flags, a gated `tokio` dependency and a
+  `full` feature — none of which have existed since the port. Marked
+  **Superseded** with what actually replaced it (the two `distlib` bundles),
+  and left otherwise unedited per the ADR convention in `doc-health.md`:
+  point-in-time records are superseded, not rewritten.
+- `docs/architecture/overview.md` claimed `apply_ruleset_str` was the only
+  public fn taking a `Str` (five do), and its `var buf[N]` inventory omitted
+  both parsers' brace stacks.
+- `docs/development/capability-map.md` credited the apply module with **3**
+  subprocess binaries; there is **1**, the single pinned `/usr/sbin/nft`.
+- `docs/guides/testing.md` still described `cyrius capacity --check` as
+  informational; it has been a real gate since 1.6.5.
+
+### Known issues
+
+Two MEDIUM findings remain open, both recorded in the audit: the pipe-ordering
+deadlock in `_run_nft_stdin` (the full ruleset is written before stderr is
+drained; verified *not* reachable with real nft, which needs >64 KiB of stderr
+to trigger it), and the absence of replay binding on signed rulesets — nothing
+ties a signature to a time, nonce, or ruleset version.
+
 ## [1.6.9] — 2026-08-21
 
 **P(-1) scaffold-hardening review, and the two remaining quality gates.** A

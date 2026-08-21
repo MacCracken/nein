@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-08-21 (post v1.6.9 — P(-1) hardening review; 5 of 7 confirmed CRITICAL/HIGH findings fixed, the rest tracked below. v1.6.8 deleted `rust-old/`. v1.6.7 closed
+Last refresh: 2026-08-21 (post v1.6.10 — every open P(-1) audit finding closed except two deliberately-deferred MEDIUM. v1.6.8 deleted `rust-old/`. v1.6.7 closed
 every functional gap the Rust→Cyrius port-completeness audit turned up,
 including one shipped bug where `dry_run` was write-only; v1.6.8 lifted the
 Rust tree's supply-chain policy into a first-party gate and removed the tree.
@@ -51,42 +51,24 @@ crypto surface (`verify_ruleset_hex`, `apply_signed_ruleset_hex`,
 
 ---
 
-## P1 — open findings from the 2026-08-21 P(-1) audit
+## P(-1) audit — closed as of v1.6.10
 
-Full report: [`../audit/2026-08-21-audit.md`](../audit/2026-08-21-audit.md).
-Five of seven confirmed CRITICAL/HIGH were fixed in 1.6.9. These remain:
+The [2026-08-21 audit](../audit/2026-08-21-audit.md) found 1 CRITICAL, 6 HIGH,
+10 MEDIUM and 17 LOW. v1.6.9 fixed 5 of the 7 CRITICAL/HIGH; **v1.6.10 closed
+the remaining 3 HIGH, 8 of the 10 MEDIUM, and all 6 documentation errors.**
 
-**H-5 — `diff_compute` ignores rule position.** The diff treats a chain as an
-unordered set, and every missing rule becomes `add rule …`, which nft appends.
-Rule order *is* nftables' evaluation semantics, so a partial diff can leave a
-chain matching neither the old nor the target ruleset: a re-added deny rule
-lands after the accept it was meant to precede, and the host stays permitted.
-`diff.cyr`'s header comment calls the strategy "conservative but always
-correct" — that is false and should be corrected in the same change. Fix by
-comparing position as well as body and emitting ordered ops
-(`add_rule_after_live` already exists); or, cheaper, delete and re-add a whole
-chain in order whenever any rule in it differs.
+Two MEDIUM remain, both deliberately deferred:
 
-**H-6 — `_strip_handle_suffix` has no quote awareness.** A rule comment
-containing the literal ` # handle ` is mistaken for the handle suffix, so body
-and handle both parse wrong and then drive add/delete decisions.
-
-**H-7 — SIGPIPE is never ignored.** Writing a ruleset to a dead nft terminates
-the **whole calling process** (reproduced, exit 141). The stdlib ships the fix:
-`signal_ignore(13)` at `lib/syscalls.cyr:98`, called once before the write
-loop, then treat `-EPIPE` as a hard error. This also falsifies T-4's claim that
-the parent observes the child's exit status on execve failure — update the
-threat model in the same change.
-
-Ten MEDIUM findings are recorded in the audit. The two worth pulling forward:
-`sys_waitpid`'s unchecked return (a failed wait leaves `status` at 0, which
-decodes as a clean success, so a failed apply reports `Ok`), and `#` missing
-from the dangerous-character set (verified against nftables 1.1.6:
-`… accept # drop` applies as **accept**).
-
-Also owed: the six confirmed documentation errors in the audit's LOW table,
-including `SECURITY.md` claiming 8 threats when the model has 11, and
-ADR-0003 describing Cargo feature flags that have not existed since the port.
+- **Pipe-ordering deadlock** (`apply.cyr`). The whole ruleset is written before
+  stderr is drained, so both pipes can fill. Verified *not* reachable with real
+  nft — it needs the child to emit >64 KiB to stderr. Fixing it properly means
+  a poll loop over both descriptors, or redirecting the child's stderr to a
+  temp file; neither is worth the churn for an unreachable path until something
+  makes it reachable.
+- **No replay binding on signed rulesets.** Nothing ties a signature to a time,
+  nonce, or ruleset version, so a previously-valid signed ruleset can be
+  re-applied. Closing it is a format change to the `nein-sig` envelope and
+  wants a consumer (aegis holds the trusted pubkey) to design against.
 
 ---
 

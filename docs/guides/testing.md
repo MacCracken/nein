@@ -120,7 +120,8 @@ The current CI workflow (`.github/workflows/ci.yml`) gates:
 - `cyrius fmt` drift check on src/ + tests/
 - `cyrius lint` on src/ (no `warn ` lines allowed)
 - `cyrius vet` — include-graph audit
-- `cyrius capacity --check` (informational — see capacity job for caveat)
+- `cyrius capacity --check` — a real gate since 1.6.5 (the `|| true` was
+  dropped when the arch-peer false positive was fixed upstream)
 - `CYRIUS_TYPE_CHECK=1` build (zero nein-side warnings)
 - `CYRIUS_DCE=1` build on x86_64 + aarch64 cross-build
 - Test suite + benchmark run

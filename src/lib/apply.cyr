@@ -36,9 +36,67 @@ fn nein_set_nft_path(path: cstring): i64 {
 }
 
 # ================================================================
+# SIGPIPE guard (1.6.10, audit H-7)
+# ================================================================
+#
+# Writing the ruleset to nft's stdin raises SIGPIPE if the child is already
+# gone — a failed execve, a parse error that made nft exit early, an OOM kill.
+# SIGPIPE's default disposition TERMINATES THE WHOLE CALLING PROCESS, so a
+# missing or unexecutable /usr/sbin/nft killed the host instead of returning
+# an error. Reproduced as exit 141; it also falsified threat-model T-4's claim
+# that the parent observes the child's exit status on execve failure.
+#
+# With SIGPIPE ignored the write returns -EPIPE instead, which the loop below
+# now treats as a hard error.
+#
+# This is process-wide state, so it is worth being explicit about: setting it
+# changes SIGPIPE disposition for the ENTIRE host process, not just for nein's
+# subprocess window. That is what essentially every process that writes to a
+# pipe wants — and nein's consumers (stiva / daimon / aegis / sutra) are
+# daemons that already do it — but a host that manages SIGPIPE itself can turn
+# it off with `nein_set_sigpipe_guard(0)` before the first apply. Applied once
+# and latched; nein never restores the previous disposition, because doing so
+# would reopen the same window on the next call.
+var _nein_sigpipe_guard = 1;
+var _nein_sigpipe_applied = 0;
+
+# Enable (1, default) or disable (0) the SIGPIPE guard. Returns Ok(0).
+fn nein_set_sigpipe_guard(enabled: i64): i64 {
+    if (enabled == 0) { _nein_sigpipe_guard = 0; } else { _nein_sigpipe_guard = 1; }
+    return nein_ok();
+}
+
+fn nein_sigpipe_guard(): i64 { return _nein_sigpipe_guard; }
+
+fn _nein_apply_sigpipe_guard() {
+    if (_nein_sigpipe_guard == 0) { return 0; }
+    if (_nein_sigpipe_applied == 1) { return 0; }
+    signal_ignore(13);
+    _nein_sigpipe_applied = 1;
+    return 0;
+}
+
+# ================================================================
 # Low-level: spawn nft with stdin from buffer, capture stderr
 # Returns Ok(0) on exit 0, Err(ERR_NFT_FAILED) on non-zero or failure.
 # ================================================================
+
+# Redirect `src` onto standard descriptor `dst` in the child (1.6.10, audit
+# MEDIUM). The old code did `sys_dup2(src, dst); sys_close(src);`
+# unconditionally, which destroys the descriptor whenever src == dst — and
+# src CAN equal dst: a host that daemonizes by closing fds 0/1/2 (setsid +
+# close, which sutra / daimon / aegis all do) makes sys_pipe hand out exactly
+# those low numbers, so the pipe read end lands on fd 0 and the close that
+# follows the no-op dup2 leaves the child with no stdin at all.
+#
+# Also checks the dup2 return, which was ignored in all three places. A child
+# that cannot set up its own stdio must not go on to exec nft.
+fn _child_redirect(src: i64, dst: i64) {
+    if (src == dst) { return 0; }              # already in place; closing would destroy it
+    if (sys_dup2(src, dst) < 0) { sys_exit(127); }
+    sys_close(src);
+    return 0;
+}
 
 fn _run_nft_stdin(input_buf, input_len) {
     var pipe_in[16];
@@ -46,6 +104,9 @@ fn _run_nft_stdin(input_buf, input_len) {
 
     var sk_span_name = "nein.apply.run_nft_stdin";
     sakshi_span_enter(sk_span_name, strlen(sk_span_name));
+
+    # Must precede the write below — see the SIGPIPE guard notes above.
+    _nein_apply_sigpipe_guard();
 
     if (sys_pipe(&pipe_in) < 0) {
         var sk_pipe_err = "nein.apply: sys_pipe(stdin) failed";
@@ -79,10 +140,12 @@ fn _run_nft_stdin(input_buf, input_len) {
 
     if (pid == 0) {
         # Child: replace stdin with read end, stderr with err_wfd, exec nft -f -
-        sys_dup2(in_rfd, 0);
-        sys_dup2(err_wfd, 2);
-        sys_close(in_rfd); sys_close(in_wfd);
-        sys_close(err_rfd); sys_close(err_wfd);
+        _child_redirect(in_rfd, 0);
+        _child_redirect(err_wfd, 2);
+        # _child_redirect already closed in_rfd / err_wfd unless they were
+        # already on the target fd, in which case they must stay open.
+        if (in_wfd != 0 && in_wfd != 2) { sys_close(in_wfd); }
+        if (err_rfd != 0 && err_rfd != 2) { sys_close(err_rfd); }
 
         # argv: ["nft", "-f", "-", 0]
         var argv = alloc(32);
@@ -99,23 +162,56 @@ fn _run_nft_stdin(input_buf, input_len) {
     sys_close(in_rfd);
     sys_close(err_wfd);
 
-    # Write ruleset to nft's stdin
+    # Write ruleset to nft's stdin.
+    #
+    # Fail closed on a short write (1.6.10, audit MEDIUM). The old loop broke
+    # on `n <= 0` and never compared `written` to `input_len`, so a truncated
+    # ruleset that still happened to parse was applied by nft, which exited 0
+    # — and this function returned Ok for a firewall that was only partly
+    # installed. -EINTR is retried rather than treated as failure.
     var written = 0;
+    var write_failed = 0;
     while (written < input_len) {
         var n = sys_write(in_wfd, input_buf + written, input_len - written);
-        if (n <= 0) { break; }
+        if (n == 0 - 4) { continue; }          # -EINTR: retry, not a failure
+        if (n <= 0) { write_failed = 1; break; }
         written = written + n;
     }
     sys_close(in_wfd);
+
+    if (write_failed == 1 || written != input_len) {
+        var sk_short = "nein.apply: ruleset not fully written to nft stdin";
+        sakshi_error(sk_short, strlen(sk_short));
+        # Reap the child before returning so it does not become a zombie.
+        var st_short = 0;
+        sys_waitpid(pid, &st_short, 0);
+        sys_close(err_rfd);
+        sakshi_span_exit();
+        return nein_err(ERR_NFT_FAILED);
+    }
 
     # Drain stderr (ignored unless we need it for diagnostics)
     var errbuf[4096];
     while (sys_read(err_rfd, &errbuf, 4096) > 0) { }
     sys_close(err_rfd);
 
-    # Wait for child
+    # Wait for child.
+    #
+    # The return value MUST be checked (1.6.10, audit MEDIUM). On failure
+    # waitpid does not write `status`, which stays 0 — and the stdlib decodes 0
+    # as a clean exit-zero child (WIFEXITED(0)==1, WEXITSTATUS(0)==0). So an
+    # unchecked wait reported a failed apply as SUCCESS. Reachable whenever the
+    # host installs a SIGCHLD reaper or sets SIGCHLD to SIG_IGN, which process
+    # supervisors — nein's own consumers — routinely do.
     var status = 0;
-    sys_waitpid(pid, &status, 0);
+    var wr = sys_waitpid(pid, &status, 0);
+    while (wr == 0 - 4) { wr = sys_waitpid(pid, &status, 0); }   # -EINTR
+    if (wr < 0) {
+        var sk_wait = "nein.apply: waitpid failed — child fate unknown, failing closed";
+        sakshi_error(sk_wait, strlen(sk_wait));
+        sakshi_span_exit();
+        return nein_err(ERR_NFT_FAILED);
+    }
 
     if (WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 127) {
@@ -171,8 +267,8 @@ fn _run_nft_capture(argv, nft_path) {
     }
 
     if (pid == 0) {
-        sys_dup2(out_wfd, 1);
-        sys_close(out_rfd); sys_close(out_wfd);
+        _child_redirect(out_wfd, 1);
+        if (out_rfd != 1) { sys_close(out_rfd); }
         # Single pinned absolute path — no PATH consultation (T-3).
         sys_execve(_nein_nft_path, argv, 0);
         sys_exit(127);
@@ -195,8 +291,16 @@ fn _run_nft_capture(argv, nft_path) {
     }
     sys_close(out_rfd);
 
+    # Same unchecked-waitpid defect as _run_nft_stdin — see the note there.
     var status = 0;
-    sys_waitpid(pid, &status, 0);
+    var wr = sys_waitpid(pid, &status, 0);
+    while (wr == 0 - 4) { wr = sys_waitpid(pid, &status, 0); }   # -EINTR
+    if (wr < 0) {
+        var sk_cw = "nein.apply: waitpid(capture) failed — failing closed";
+        sakshi_error(sk_cw, strlen(sk_cw));
+        sakshi_span_exit();
+        return nein_err(ERR_NFT_FAILED);
+    }
 
     if (WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 127) {
