@@ -1,6 +1,6 @@
 commit	02b9d3fe90f94c51e95ee1a663d481e890dd1502	libro	https://github.com/MacCracken/libro.git	2.8.8
 commit	0135725ce114608ed0296adb36ffd28391f8703e	majra	https://github.com/MacCracken/majra.git	2.6.7
-commit	f2651c5393008c2f90c91642e7db781c94e228e9	bote	https://github.com/MacCracken/bote.git	3.3.2
+commit	f2651c5393008c2f90c91642e7db781c94e228e9	bote-core	https://github.com/MacCracken/bote.git	3.3.2
 commit	538518d67116be88dea31a31a0c8aa7cf2c3b579	sigil	https://github.com/MacCracken/sigil.git	3.12.9
 commit	f8b5da7153667fcfa58020fb3db3c9c359714347	patra	https://github.com/MacCracken/patra.git	1.13.9
 7240760b1260fa06c53c5a139d1a2086fb439e21ac90e53eacd4bf486ac0e9ca  lib/tagged.cyr

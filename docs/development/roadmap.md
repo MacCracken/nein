@@ -1,20 +1,21 @@
 # Roadmap
 
-Last refresh: 2026-08-21 (post v1.6.5 — toolchain 6.5.33 + full dependency
-refresh on top of v1.6.3/v1.6.4's; no feature or API change, but the 6.5.x
-line changed `cyrius fmt` / `capacity` / `distlib` behaviour and the CI
-gates were reworked to match. v1.6.2 shipped nein's half of the daimon
-firewall-MCP joint ship: [lib.mcp] bundle + dispatch adapter, whose paired
-daimon-side PR is the only 1.6.x item left).
+Last refresh: 2026-08-21 (post v1.6.6 — the `.deps` sidecar packaging fix
+that unblocked every consumer's `cyrius deps` on cyrius 6.5.24+, on top of
+v1.6.5's toolchain 6.5.33 + full dependency refresh; no feature or API
+change in either, but the 6.5.x line changed `cyrius fmt` / `capacity` /
+`distlib` behaviour and the CI gates were reworked to match. v1.6.2 shipped
+nein's half of the daimon firewall-MCP joint ship: [lib.mcp] bundle +
+dispatch adapter, whose paired daimon-side PR is the only 1.6.x item left).
 
-Forward-looking only. The release history (v1.0.0 → v1.6.5) lives in
+Forward-looking only. The release history (v1.0.0 → v1.6.6) lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); the rationale for each shipped
 decision is preserved there, not duplicated here. This file tracks
 **what's next**.
 
 ---
 
-## Current state — v1.6.5
+## Current state — v1.6.6
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 21 modules
@@ -28,7 +29,7 @@ as of 1.6.5. libro / majra / bote / sigil / patra consumed as git deps
 sigil + patra carry explicit `[deps.*]` pins (full `dist/sigil.cyr`) so
 libro 2.8.x's thin sigil sub-bundles don't collide with the full crypto
 bundle. Full `[deps]` rationale lives in
-[`dependencies.md`](dependencies.md) as of 1.6.5 — the `.cyml` parser
+[`dependencies.md`](dependencies.md) as of 1.6.6 — the `.cyml` parser
 mis-resolves deps when comments sit inside the `stdlib` array, so the
 manifest carries none.
 

@@ -4,6 +4,56 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.6] — 2026-08-21
+
+**Packaging fix: both `.deps` sidecars claimed `bote-core` ships in the cyrius
+stdlib, breaking every consumer's `cyrius deps` on toolchain 6.5.24+.** No source
+or API change (383 public fns unchanged); the `dist/*.cyr` bundles differ from
+1.6.5 only by their version banner. 664 unit + 16 integration assertions, 31
+benches and 5 fuzz drivers stay green; `cyrius deps --verify` clean (74 files).
+
+### Fixed — `dep nein requires 'bote-core' but it is not in the cyrius stdlib`
+
+Downstream symptom, on any consumer resolving nein against cyrius ≥ 6.5.24:
+
+```
+error: cannot read <snapshot>/lib/bote-core.cyr
+error: dep nein requires 'bote-core' but it is not in the cyrius stdlib
+```
+
+`cyrius distlib` omits a fold from the generated sidecar only when the fold's
+**basename equals the dep's section name**. The manifest named the section for
+the repo (`bote`) while the module is `bote-core`, so the names never matched and
+`src/main.cyr`'s `include "lib/bote-core.cyr"` was emitted into **both**
+`dist/nein.deps` and `dist/nein-mcp.deps` as a *stdlib leaf* — asserting that a
+git-dep bundle ships in the toolchain snapshot.
+
+**The section is now named `[deps.bote-core]`**, matching the module basename.
+The repo, tag and commit are untouched: `cyrius.lock` moves one label and nothing
+else. Both sidecars lose exactly one line; nothing was added.
+
+⚠ **The defect shipped in 1.6.4 and 1.6.5 and was invisible in both.** Through
+cyrius 6.5.23, `_dep_find_stdlib_dir()` returned the consumer's own
+half-populated `./lib` as the stdlib for any project carrying a `src/main.cyr` —
+and a consumer that declares bote drops `lib/bote-core.cyr` there itself, so the
+bad leaf resolved by accident. cyrius 6.5.24/6.5.25 fixed that lookup to consult
+the **pinned snapshot**, which is correct and which turned a latent packaging lie
+into a hard error everywhere at once. Nothing regressed in 6.5.x — the bug was
+always here, and nein's own CI never saw it because a project does not resolve
+its own sidecar. Filed from stiva 3.0.17, whose CI failed at `cyrius deps` after
+a routine 6.4.78 → 6.5.33 pin move.
+
+⚠ `dist/nein-mcp.deps` carried the same line, so **daimon was affected too** —
+not just consumers of the default bundle.
+
+### Changed
+
+- **`docs/development/dependencies.md`** — the `[deps.*]` table row is now
+  `bote-core`, with a new section recording why the section is named for the
+  module rather than the repo, and why the mismatch stayed hidden for two
+  releases. libro's CLAUDE.md quirk #9 documents the identical trap for its thin
+  `sigil-mldsa` folds; of nein's five pins, bote was the only mismatch.
+
 ## [1.6.5] — 2026-08-21
 
 **Toolchain 6.5.33 + full dependency refresh.** No nein source-logic or API

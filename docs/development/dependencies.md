@@ -1,6 +1,6 @@
 # Dependencies
 
-Last refresh: **2026-08-21** (v1.6.5).
+Last refresh: **2026-08-21** (v1.6.6).
 
 Why each entry in `cyrius.cyml`'s `[deps]` block exists, and why the
 resolution order is what it is. This file is the prose home for that
@@ -76,16 +76,55 @@ It is an explicit `[deps.sigil]` git pin instead — see below.
 
 ## `[deps.*]` — git pins
 
-| Dep | Tag (v1.6.5) | Bundle | Why |
+| Dep | Tag (v1.6.6) | Bundle | Why |
 |-----|--------------|--------|-----|
 | `libro` | 2.8.8 | `dist/libro.cyr` | bote's manifest graph references it |
 | `majra` | 2.6.7 | `dist/majra.cyr` | bote's manifest graph references it |
-| `bote` | 3.3.2 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
+| `bote-core` | 3.3.2 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
 | `sigil` | 3.12.9 | `dist/sigil.cyr` | Ed25519 + sha256 + hex for `sign.cyr` |
 | `patra` | 1.13.9 | `dist/patra.cyr` | libro's audit store links it |
 
-`libro` + `majra` are declared **before** `bote` because bote's graph
+`libro` + `majra` are declared **before** `bote-core` because bote's graph
 references them and Cyrius resolves single-pass.
+
+### Why the bote section is named `bote-core`, not `bote`
+
+The section is named for the **module** it pulls, not the repo it pulls from —
+the repo is still `bote.git` and the tag is still bote's. This is load-bearing
+packaging, fixed in **1.6.6**.
+
+`cyrius distlib` omits a fold from the generated `.deps` sidecar only when the
+fold's **basename equals the dep's section name** (`_distlib_named_deps` in the
+toolchain's `cbt/commands.cyr`). Under the section name `bote`, the basename
+`bote-core` matched nothing, so `src/main.cyr`'s `include "lib/bote-core.cyr"`
+was written into **both** `dist/nein.deps` and `dist/nein-mcp.deps` as a
+**stdlib leaf** — claiming bote-core ships in the cyrius stdlib, which it does
+not.
+
+Every consumer's `cyrius deps` then failed:
+
+```
+error: dep nein requires 'bote-core' but it is not in the cyrius stdlib
+```
+
+The defect shipped in 1.6.4 and 1.6.5 but stayed **invisible until cyrius
+6.5.24**. Through 6.5.23, `_dep_find_stdlib_dir()` returned the consumer's own
+half-populated `./lib` as the stdlib for any project with a `src/main.cyr` — and
+a consumer that declares bote drops `lib/bote-core.cyr` there itself, so the bad
+leaf resolved by accident. 6.5.24/6.5.25 fixed that lookup to consult the pinned
+snapshot, and the latent bug surfaced as a hard error in every downstream repo
+(filed from stiva 3.0.17).
+
+Renaming the section makes the basename match, so distlib treats the fold as a
+named dep and resolves it transitively instead of listing it as a leaf. Nothing
+else changes: `cyrius.lock` records the same commit, url and tag (only the dep
+label moves), and both `dist/*.cyr` bundles differ only by their version banner
+— the two removed sidecar lines are the entire functional change.
+
+⚠ Same rule, same trap, elsewhere in the ecosystem: libro's CLAUDE.md quirk #9
+documents the identical failure for its thin `sigil-mldsa` folds. **Any dep
+whose section name differs from its module basename will do this.** Of nein's
+five pins, only bote had that mismatch.
 
 ### Why `sigil` gets a top-level pin
 
@@ -143,3 +182,12 @@ what a consumer must have in scope. Toolchain 6.5.x widened
 list. Consumers of `dist/nein.cyr` that declared a narrower `[deps]
 stdlib` will need to widen theirs to match — the names are all stdlib
 modules, so `cyrius lib sync` covers them.
+
+⚠ A sidecar may name **stdlib leaves only**. A consumer resolves every
+line in it against the pinned toolchain snapshot, so a git-dep bundle
+listed there is an assertion the consumer cannot satisfy. Named deps are
+excluded by `distlib` automatically — but only when the section name
+matches the module basename, which is why the bote section is named
+`bote-core` (see above). When adding or renaming a `[deps.*]` entry,
+regenerate both bundles and check that nothing new appears in
+`dist/nein.deps` / `dist/nein-mcp.deps` that isn't a stdlib module.

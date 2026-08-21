@@ -126,7 +126,14 @@ git = "https://github.com/MacCracken/majra.git"
 tag = "2.6.7"
 modules = ["dist/majra.cyr"]
 
-[deps.bote]
+# MCP core, transport-free bundle. The section is named for the MODULE
+# (bote-core), not the repo (bote), and that is load-bearing: `cyrius distlib`
+# omits a fold from the `.deps` sidecar only when the fold basename equals the
+# dep's section name, so under the repo name `bote-core` was written into both
+# sidecars as a STDLIB LEAF and every consumer's `cyrius deps` failed with
+# "dep nein requires 'bote-core' but it is not in the cyrius stdlib".
+# See docs/development/dependencies.md.
+[deps.bote-core]
 git = "https://github.com/MacCracken/bote.git"
 tag = "3.3.2"
 modules = ["dist/bote-core.cyr"]

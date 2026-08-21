@@ -18,15 +18,23 @@ exactly as it already does for the full bote bundle.
 # host cyrius.cyml
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
-tag = "1.6.5"
+tag = "1.6.6"
 modules = ["dist/nein-mcp.cyr"]
 ```
 
-`dist/nein-mcp.deps` lists `bote-core`. Under cyrius 6.4.x `thread` /
-`thread_local` fold into the always-resolved `std` group, and since 1.6.3
-`sigil` is nein's own explicit `[deps.sigil]` git pin (full `dist/sigil.cyr`,
-mirroring bote 3.1.x) rather than a stdlib leave — so neither is emitted in
-the sidecar. The bundle body is unchanged: it still leaves **bote** and
+⚠ **Pin 1.6.6 or later.** `dist/nein-mcp.deps` listed `bote-core` through
+1.6.5, which asserted that bote's bundle ships in the cyrius stdlib. On cyrius
+≥ 6.5.24 that fails the host's `cyrius deps` outright with `dep nein requires
+'bote-core' but it is not in the cyrius stdlib`; on earlier toolchains it
+resolved only by accident, out of the host's own `./lib`. 1.6.6 renames the
+manifest section to `[deps.bote-core]` so `cyrius distlib` treats the fold as a
+named dep, and the line is gone from both sidecars. See
+[`dependencies.md`](../development/dependencies.md). The bundle body is
+identical across the fix.
+
+Since 1.6.3 `sigil` is nein's own explicit `[deps.sigil]` git pin (full
+`dist/sigil.cyr`, mirroring bote 3.1.x) rather than a stdlib leaf, so it is not
+emitted in the sidecar either. The bundle body still leaves **bote** and
 **sigil** (`ed25519` / `hex` / `sha256`) symbols unresolved, so include it
 **after** bote and sigil in the host's single-pass include chain (a bote+sigil
 host — e.g. daimon — already has both).
