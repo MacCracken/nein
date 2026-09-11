@@ -47,12 +47,12 @@ fn test_error() {
     assert(NEIN_ERR_PERMISSION_DENIED != NEIN_ERR_PARSE, "perm != parse");
     assert(NEIN_ERR_PARSE != NEIN_ERR_IO, "parse != io");
 
-    var e = nein_err(ERR_NFT_FAILED);
-    assert(is_err_result(e) == 1, "nein_err returns Err");
-    assert_eq(nein_err_code(e), ERR_NFT_FAILED, "err_code extracts code");
+    var e_t, e_v = nein_err(ERR_NFT_FAILED);
+    assert(is_err_result(e_t) == 1, "nein_err returns Err");
+    assert_eq(nein_err_code(e_t, e_v), ERR_NFT_FAILED, "err_code extracts code");
 
-    var ok = nein_ok();
-    assert(is_ok(ok) == 1, "nein_ok returns Ok");
+    var ok_t, ok_v = nein_ok();
+    assert(is_ok(ok_t) == 1, "nein_ok returns Ok");
     return 0;
 }
 
@@ -1479,8 +1479,8 @@ fn test_bridge() {
     bf_add_port_mapping(bf, pm_udp(5353, "172.17.0.3", 53));
     assert(vec_len(bf_port_mappings(bf)) == 3, "three mappings");
 
-    var removed = bf_remove_port_mapping(bf, 8080, PROTO_TCP);
-    assert(is_some(removed) == 1, "remove returns Some");
+    var removed_t, removed_v = bf_remove_port_mapping(bf, 8080, PROTO_TCP);
+    assert(is_some(removed_t) == 1, "remove returns Some");
     assert(vec_len(bf_port_mappings(bf)) == 2, "after removal");
 
     # Remove non-existent
@@ -1489,11 +1489,11 @@ fn test_bridge() {
     # Duplicate rejected
     bf = bridge_firewall_new(_test_bridge_config());
     bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
-    var res = bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.3", 90));
-    assert(is_err_result(res) == 1, "duplicate rejected");
+    var res_t, res_v = bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.3", 90));
+    assert(is_err_result(res_t) == 1, "duplicate rejected");
     # Different protocol same port: ok
-    res = bf_add_port_mapping(bf, pm_udp(8080, "172.17.0.2", 80));
-    assert(is_ok(res) == 1, "different proto same port ok");
+    var res2_t, res2_v = bf_add_port_mapping(bf, pm_udp(8080, "172.17.0.2", 80));
+    assert(is_ok(res2_t) == 1, "different proto same port ok");
 
     # Render no mappings no isolation
     bf = bridge_firewall_new(_test_bridge_config());
@@ -1619,18 +1619,18 @@ fn test_engine() {
     assert(is_none(pe_add_agent(e, agent_policy_new("agent-1", "10.100.0.2"))) == 1, "add returns None");
     assert_eq(pe_agent_count(e), 1, "count after add");
     assert(is_some(pe_get_agent(e, "agent-1")) == 1, "get after add");
-    var removed = pe_remove_agent(e, "agent-1");
-    assert(is_some(removed) == 1, "remove returns Some");
+    var removed_t, removed_v = pe_remove_agent(e, "agent-1");
+    assert(is_some(removed_t) == 1, "remove returns Some");
     assert_eq(pe_agent_count(e), 0, "count after remove");
 
     # Update agent: second add returns Some(prev)
     e = policy_engine_new();
     pe_add_agent(e, agent_policy_new("agent-1", "10.100.0.2"));
-    var prev = pe_add_agent(e, agent_policy_new("agent-1", "10.100.0.3"));
-    assert(is_some(prev) == 1, "update returns Some");
-    var curr = pe_get_agent(e, "agent-1");
-    assert(is_some(curr) == 1, "updated agent present");
-    assert(streq(ap_agent_addr(unwrap(curr)), "10.100.0.3") == 1, "new addr");
+    var prev_t, prev_v = pe_add_agent(e, agent_policy_new("agent-1", "10.100.0.3"));
+    assert(is_some(prev_t) == 1, "update returns Some");
+    var curr_t, curr_v = pe_get_agent(e, "agent-1");
+    assert(is_some(curr_t) == 1, "updated agent present");
+    assert(streq(ap_agent_addr(unwrap(curr_t, curr_v)), "10.100.0.3") == 1, "new addr");
 
     # Remove nonexistent
     assert(is_none(pe_remove_agent(e, "ghost")) == 1, "remove ghost None");
@@ -1873,12 +1873,12 @@ fn test_config() {
     assert_eq(cfg_parse_transport("quic"), TRANS_QUIC, "trans quic");
 
     # cfg_result wrapper
-    var r = cfg_result(FAMILY_INET);
-    assert(is_ok(r) == 1, "cfg_result wraps Ok");
-    assert_eq(payload(r), FAMILY_INET, "cfg_result payload");
-    r = cfg_result(0 - 1);
-    assert(is_err_result(r) == 1, "cfg_result wraps Err on -1");
-    assert_eq(nein_err_code(r), NEIN_ERR_PARSE, "cfg_result Err has NEIN_ERR_PARSE");
+    var r_t, r_v = cfg_result(FAMILY_INET);
+    assert(is_ok(r_t) == 1, "cfg_result wraps Ok");
+    assert_eq(r_v, FAMILY_INET, "cfg_result payload");
+    var r2_t, r2_v = cfg_result(0 - 1);
+    assert(is_err_result(r2_t) == 1, "cfg_result wraps Err on -1");
+    assert_eq(nein_err_code(r2_t, r2_v), NEIN_ERR_PARSE, "cfg_result Err has NEIN_ERR_PARSE");
 
     return 0;
 }
@@ -2049,9 +2049,9 @@ fn test_sign_delimiter_rejected() {
     var sk = alloc(64);
     var i = 0;
     while (i < 64) { store8(sk + i, i); i = i + 1; }
-    var res = sign_ruleset_body(firewall_render(fw), sk, "test-key");
-    assert(is_err_result(res) == 1, "signing refuses a body containing the delimiter");
-    assert_eq(payload(res), NEIN_ERR_SIG_MALFORMED, "reported as malformed");
+    var res_t, res_v = sign_ruleset_body(firewall_render(fw), sk, "test-key");
+    assert(is_err_result(res_t) == 1, "signing refuses a body containing the delimiter");
+    assert_eq(res_v, NEIN_ERR_SIG_MALFORMED, "reported as malformed");
 
     # A clean body still signs.
     var fw2 = firewall_new();
@@ -2245,8 +2245,8 @@ fn test_rule_matching_sets() {
     vec_push(ports, 80);
     vec_push(ports, 443);
     var r = rule_new(verdict_accept());
-    var res = rule_matching_ports(r, PROTO_TCP, ports);
-    assert(is_ok(res) == 1, "matching_ports ok");
+    var res_t, res_v = rule_matching_ports(r, PROTO_TCP, ports);
+    assert(is_ok(res_t) == 1, "matching_ports ok");
     var out = rule_render(r);
     assert(str_contains_cstr(out, "dport { 80, 443 }") == 1, "anonymous port set rendered");
     assert(str_contains_cstr(out, "tcp") == 1, "protocol match added");
@@ -2661,9 +2661,9 @@ fn test_sign() {
     table_add_chain(t, c);
     firewall_add_table(fw, t);
 
-    var sr = sign_ruleset(fw, sk, "aegis-key");
-    assert(is_err_result(sr) == 0, "sign_ruleset ok");
-    var env = payload(sr);
+    var sr_t, sr_v = sign_ruleset(fw, sk, "aegis-key");
+    assert(is_err_result(sr_t) == 0, "sign_ruleset ok");
+    var env = sr_v;
     assert(str_contains_cstr(env, "nein-sig: v1") == 1, "envelope version line");
     assert(str_contains_cstr(env, "-----BEGIN NFT RULESET-----") == 1, "envelope begin delim");
     assert(str_contains_cstr(env, "tcp dport 22 accept") == 1, "envelope carries body");
@@ -2675,30 +2675,30 @@ fn test_sign() {
     var sk2 = alloc(64);
     var pk2 = alloc(32);
     sign_keygen(sk2, pk2);
-    var vw = verify_ruleset(env, pk2);
-    assert(is_err_result(vw) == 1, "verify wrong key errs");
-    assert_eq(nein_err_code(vw), NEIN_ERR_SIG_KEY_MISMATCH, "wrong key = key mismatch");
+    var vw_t, vw_v = verify_ruleset(env, pk2);
+    assert(is_err_result(vw_t) == 1, "verify wrong key errs");
+    assert_eq(nein_err_code(vw_t, vw_v), NEIN_ERR_SIG_KEY_MISMATCH, "wrong key = key mismatch");
 
     # parse accessors
-    var pr = parse_signed_ruleset(env);
-    assert(is_err_result(pr) == 0, "parse ok");
-    var rec = payload(pr);
+    var pr_t, pr_v = parse_signed_ruleset(env);
+    assert(is_err_result(pr_t) == 0, "parse ok");
+    var rec = pr_v;
     assert(streq(signed_keyid(rec), "aegis-key") == 1, "keyid parsed");
     assert_eq(strlen(signed_pubkey_hex(rec)), 64, "pubkey hex is 64 chars");
     assert_eq(strlen(signed_sig_hex(rec)), 128, "sig hex is 128 chars");
 
     # apply with wrong key is fail-closed (never reaches nft)
-    var aw = apply_signed_ruleset(env, pk2);
-    assert(is_err_result(aw) == 1, "apply wrong key fails closed");
-    assert_eq(nein_err_code(aw), NEIN_ERR_SIG_KEY_MISMATCH, "apply blocked pre-nft");
+    var aw_t, aw_v = apply_signed_ruleset(env, pk2);
+    assert(is_err_result(aw_t) == 1, "apply wrong key fails closed");
+    assert_eq(nein_err_code(aw_t, aw_v), NEIN_ERR_SIG_KEY_MISMATCH, "apply blocked pre-nft");
 
     # tamper a body byte -> bad signature (header pubkey still matches)
     var at = _sign_find(str_data(env), str_len(env), "tcp dport 22");
     assert(at >= 0, "found body marker to tamper");
     store8(str_data(env) + at, 117);   # 't' -> 'u'
-    var vt = verify_ruleset(env, pk);
-    assert(is_err_result(vt) == 1, "tampered body rejected");
-    assert_eq(nein_err_code(vt), NEIN_ERR_BAD_SIGNATURE, "tamper = bad signature");
+    var vt_t, vt_v = verify_ruleset(env, pk);
+    assert(is_err_result(vt_t) == 1, "tampered body rejected");
+    assert_eq(nein_err_code(vt_t, vt_v), NEIN_ERR_BAD_SIGNATURE, "tamper = bad signature");
 
     # malformed envelope -> Err
     assert(is_err_result(parse_signed_ruleset(str_from("not an envelope"))) == 1, "malformed errs");

@@ -133,11 +133,11 @@ fn _mcp_build_rule(args: cstring, verdict: cstring): cstring {
 fn _nein_status_handler(args: cstring, claims: i64): cstring {
     var g = _nein_gate_check("nein_status", claims);
     if (g != 0) { return g; }
-    var res = status();
-    if (is_err_result(res) == 1) {
+    var res_t, res_v = status();
+    if (is_err_result(res_t) == 1) {
         return _mcp_err("nein_status: nft query failed (needs root + nft installed)");
     }
-    var st = payload(res);
+    var st = res_v;
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "tables=");
     str_builder_add_int(sb, vec_len(status_tables(st)));
@@ -157,8 +157,8 @@ fn _mcp_apply_verdict(args: cstring, verdict: cstring, label: cstring): cstring 
     if (chain == 0) { chain = "input"; }
 
     var rule = _mcp_build_rule(args, verdict);
-    var res = add_rule_live("inet", table, chain, rule);
-    if (is_err_result(res) == 1) {
+    var res_t, res_v = add_rule_live("inet", table, chain, rule);
+    if (is_err_result(res_t) == 1) {
         return _mcp_err("apply failed (needs root + nft; verify the table/chain exist)");
     }
     var sb = str_builder_new();
@@ -200,11 +200,11 @@ fn _nein_validate_handler(args: cstring, claims: i64): cstring {
 fn _nein_list_handler(args: cstring, claims: i64): cstring {
     var g = _nein_gate_check("nein_list", claims);
     if (g != 0) { return g; }
-    var res = list_ruleset_with_handles();
-    if (is_err_result(res) == 1) {
+    var res_t, res_v = list_ruleset_with_handles();
+    if (is_err_result(res_t) == 1) {
         return _mcp_err("nein_list: nft query failed (needs root + nft installed)");
     }
-    var rules = diff_parse_live(payload(res));
+    var rules = diff_parse_live(res_v);
     var ftable = jsonx_get_str(args, "table");
     var fchain = jsonx_get_str(args, "chain");
 
@@ -315,11 +315,11 @@ fn _nein_diff_handler(args: cstring, claims: i64): cstring {
 
     # `-a` required — without the handle suffixes every live rule parses with
     # handle 0 and no delete op can be emitted (1.6.9; same fix as diff.cyr).
-    var live = list_ruleset_with_handles();
-    if (is_err_result(live) == 1) {
+    var live_t, live_v = list_ruleset_with_handles();
+    if (is_err_result(live_t) == 1) {
         return _mcp_err("nein_diff: nft query failed (needs root + nft installed)");
     }
-    var ops = diff_compute(fw, payload(live));
+    var ops = diff_compute(fw, live_v);
 
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"ops\":[");

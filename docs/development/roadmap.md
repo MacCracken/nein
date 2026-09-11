@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-08-21 (post v1.6.10 — every open P(-1) audit finding closed except two deliberately-deferred MEDIUM. v1.6.8 deleted `rust-old/`. v1.6.7 closed
+Last refresh: 2026-09-10 (post v1.6.11 — the cyrius 6.6.2 value-form migration: 104 validator error paths were failing OPEN, see the CHANGELOG and the trap below. Previously 2026-08-21, post v1.6.10 — every open P(-1) audit finding closed except two deliberately-deferred MEDIUM. v1.6.8 deleted `rust-old/`. v1.6.7 closed
 every functional gap the Rust→Cyrius port-completeness audit turned up,
 including one shipped bug where `dry_run` was write-only; v1.6.8 lifted the
 Rust tree's supply-chain policy into a first-party gate and removed the tree.
@@ -32,6 +32,30 @@ changes what the next person should do.
   and v1.6.10 the rest, plus 8 of 10 MEDIUM and all 6 documentation errors.
 
 ### Traps worth not re-stepping in
+
+**The value form fails OPEN when migrated naively (1.6.11).** Since cyrius
+6.6.0 a `Result` is a two-register `(tag, payload)` value. `var vr = f();` binds
+the **tag only**, so the once-idiomatic `if (is_err_result(vr) == 1) { return vr; }`
+returns the payload alone and the caller reads an `Err` as **success**. 104 nein
+sites were on that path. Bind both halves and propagate with `return Err(v);`.
+The compiler now warns, and the type-check gate enforces it — see the next item
+for why that gate cannot filter on the warning's text.
+
+**A gate must not share a defect with the thing it checks (1.6.11).** cyrius
+6.6.x warns on `return None();` even though `lib/tagged.cyr` documents the
+nullary constructor as correctly tag-only — and the false positive's message is
+**byte-identical** to a real propagation trap's. Filtering the text would have
+made the gate green while blinding it to the class above. The gate instead reads
+the reported source line, deriving the exemption a different way than the
+message. Injection-verified. If you ever relax this gate, re-run that injection.
+
+**Removing `[deps.sigil]` / `[deps.patra]` to silence `refusing to overwrite
+stdlib leaf` makes things worse (1.6.11).** The pins look inert — cyrius treats
+both as stdlib leaves and skips the dep artifact, so `lib/sigil.cyr` is
+byte-identical to the toolchain snapshot. But the sections are load-bearing for
+their *exclusion* effect: without them libro's sidecar resolves its thin sigil
+sub-bundles (`sigil-mldsa`, `sigil-x509`, …) into `lib/`, colliding with the
+full bundle across dozens of `duplicate fn` warnings. Measured, not guessed.
 
 Three toolchain subcommands do **not** do what their names suggest, and each
 cost a round of investigation:
@@ -92,7 +116,7 @@ Whichever lands, drop the ns threshold back toward 50% and shrink or remove
 
 ---
 
-## Current state — v1.6.10
+## Current state — v1.6.11
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 21 modules

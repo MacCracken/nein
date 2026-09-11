@@ -51,8 +51,8 @@ fn test_path_pinning_default() {
 
 fn test_path_pinning_override() {
     var prev = nein_nft_path();
-    var r = nein_set_nft_path("/sbin/nft");
-    assert(is_ok(r) == 1, "set valid absolute path");
+    var r_t, r_v = nein_set_nft_path("/sbin/nft");
+    assert(is_ok(r_t) == 1, "set valid absolute path");
     assert(streq(nein_nft_path(), "/sbin/nft") == 1, "path was updated");
     # Restore default for subsequent tests
     nein_set_nft_path(prev);
@@ -60,16 +60,16 @@ fn test_path_pinning_override() {
 }
 
 fn test_path_pinning_relative_rejected() {
-    var r = nein_set_nft_path("nft");
-    assert(is_err_result(r) == 1, "relative path rejected");
-    var r2 = nein_set_nft_path("./nft");
-    assert(is_err_result(r2) == 1, "./relative path rejected");
+    var r_t, r_v = nein_set_nft_path("nft");
+    assert(is_err_result(r_t) == 1, "relative path rejected");
+    var r2_t, r2_v = nein_set_nft_path("./nft");
+    assert(is_err_result(r2_t) == 1, "./relative path rejected");
     return 0;
 }
 
 fn test_path_pinning_null_rejected() {
-    var r = nein_set_nft_path(0);
-    assert(is_err_result(r) == 1, "null path rejected");
+    var r_t, r_v = nein_set_nft_path(0);
+    assert(is_err_result(r_t) == 1, "null path rejected");
     return 0;
 }
 
@@ -77,22 +77,22 @@ fn test_apply_smoke_inside_netns() {
     # Inside a fresh netns the ruleset is empty. Apply a minimal one
     # and verify it sticks.
     var fw = basic_host_firewall();
-    var r = apply_firewall(fw);
+    var r_t, r_v = apply_firewall(fw);
 
     # On non-permissive hosts (CI default, no root) we expect
     # NEIN_ERR_PERMISSION_DENIED. On a permissive host (`unshare -n` as
     # root), we expect Ok.
-    if (is_err_result(r) == 1) {
-        var code = payload(r);
+    if (is_err_result(r_t) == 1) {
+        var code = r_v;
         assert(code == NEIN_ERR_PERMISSION_DENIED || code == ERR_NFT_FAILED,
           "apply failure is permission or nft-failed (got expected error class)");
         return 0;
     }
 
     # Permissive path: list_ruleset and confirm the table is present.
-    var st = status();
-    if (is_err_result(st) == 1) { return 0; }
-    var status_obj = payload(st);
+    var st_t, st_v = status();
+    if (is_err_result(st_t) == 1) { return 0; }
+    var status_obj = st_v;
     var tcount = vec_len(status_tables(status_obj));
     assert(tcount >= 1, "at least one table after apply");
 
@@ -109,15 +109,15 @@ fn test_dry_run_does_not_apply() {
     var fw = basic_host_firewall();
     firewall_set_dry_run(fw, 1);
 
-    var r = apply_firewall(fw);
-    assert(is_ok(r) == 1, "dry-run apply returns Ok without spawning nft");
+    var r_t, r_v = apply_firewall(fw);
+    assert(is_ok(r_t) == 1, "dry-run apply returns Ok without spawning nft");
 
     # Whatever the host's permissions, a dry run must not have created a table.
     # (On a non-permissive host status() itself errors — that is also a pass:
     # nothing was applied.)
-    var st = status();
-    if (is_err_result(st) == 1) { return 0; }
-    var status_obj = payload(st);
+    var st_t, st_v = status();
+    if (is_err_result(st_t) == 1) { return 0; }
+    var status_obj = st_v;
     assert_eq(vec_len(status_tables(status_obj)), 0,
       "dry-run left the live ruleset untouched");
     return 0;
@@ -130,9 +130,9 @@ fn test_dry_run_still_validates() {
     firewall_set_dry_run(fw, 1);
     firewall_add_table(fw, table_new("bad; rm -rf /", FAMILY_INET));
 
-    var r = apply_firewall(fw);
-    assert(is_err_result(r) == 1, "dry-run still rejects invalid input");
-    assert_eq(payload(r), ERR_INVALID_RULE, "validation error, not applied");
+    var r_t, r_v = apply_firewall(fw);
+    assert(is_err_result(r_t) == 1, "dry-run still rejects invalid input");
+    assert_eq(r_v, ERR_INVALID_RULE, "validation error, not applied");
     return 0;
 }
 

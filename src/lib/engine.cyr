@@ -80,16 +80,16 @@ fn ap_set_allow_established(ap: i64, flag: i64): i64 { store64(ap + 40, flag); r
 fn ap_set_allow_loopback(ap: i64, flag: i64): i64 { store64(ap + 48, flag); return ap; }
 
 fn ap_validate(ap: i64): i64 {
-    var vr = validate_identifier(ap_agent_id(ap));
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_addr(ap_agent_addr(ap));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(ap_agent_id(ap));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var vr2_t, vr2_v = validate_addr(ap_agent_addr(ap));
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
     var hosts = ap_allowed_outbound_hosts(ap);
     var hlen = vec_len(hosts);
     var i = 0;
     while (i < hlen) {
-        vr = validate_addr(vec_get(hosts, i));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr3_t, vr3_v = validate_addr(vec_get(hosts, i));
+        if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
         i = i + 1;
     }
     return nein_ok();
@@ -411,14 +411,14 @@ fn pe_get_agent(pe: i64, agent_id: cstring): i64 {
 }
 
 fn pe_validate(pe: i64): i64 {
-    var vr = validate_identifier(pe_table_name(pe));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(pe_table_name(pe));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var agents = pe_agents(pe);
     var alen = vec_len(agents);
     var i = 0;
     while (i < alen) {
-        vr = ap_validate(vec_get(agents, i));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr2_t, vr2_v = ap_validate(vec_get(agents, i));
+        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         i = i + 1;
     }
     return nein_ok();

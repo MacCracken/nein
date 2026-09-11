@@ -367,8 +367,8 @@ fn _rule_addr_set(r: i64, addrs: i64, prefix: cstring): i64 {
     # Validate every address BEFORE mutating the rule.
     var i = 0;
     while (i < n) {
-        var vr = validate_addr(vec_get(addrs, i));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr1_t, vr1_v = validate_addr(vec_get(addrs, i));
+        if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
         i = i + 1;
     }
 
@@ -689,35 +689,35 @@ fn rule_validate(r: i64): i64 {
 
         if (mt == MATCH_SOURCE_ADDR || mt == MATCH_DEST_ADDR ||
           mt == MATCH_SOURCE_ADDR6 || mt == MATCH_DEST_ADDR6) {
-            vr = validate_addr(v1);
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr1_t, vr1_v = validate_addr(v1);
+            if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
         } elif (mt == MATCH_IIF || mt == MATCH_OIF) {
-            vr = validate_iface(v1);
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr2_t, vr2_v = validate_iface(v1);
+            if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         } elif (mt == MATCH_CT_HELPER || mt == MATCH_FLOW_OFFLOAD ||
           mt == MATCH_CT_TIMEOUT_SET) {
-            vr = validate_identifier(v1);
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr3_t, vr3_v = validate_identifier(v1);
+            if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
         } elif (mt == MATCH_SET_LOOKUP) {
-            vr = validate_nft_element(v1);
-            if (is_err_result(vr) == 1) { return vr; }
-            vr = validate_identifier(v2);
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr4_t, vr4_v = validate_nft_element(v1);
+            if (is_err_result(vr4_t) == 1) { return Err(vr4_v); }
+            var vr5_t, vr5_v = validate_identifier(v2);
+            if (is_err_result(vr5_t) == 1) { return Err(vr5_v); }
         } elif (mt == MATCH_ICMP_TYPE || mt == MATCH_ICMPV6_TYPE) {
-            vr = validate_identifier(v1);
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr6_t, vr6_v = validate_identifier(v1);
+            if (is_err_result(vr6_t) == 1) { return Err(vr6_v); }
         } elif (mt == MATCH_ICMP_TYPE_CODE || mt == MATCH_ICMPV6_TYPE_CODE) {
-            vr = validate_identifier(v1);
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr7_t, vr7_v = validate_identifier(v1);
+            if (is_err_result(vr7_t) == 1) { return Err(vr7_v); }
         } elif (mt == MATCH_TCP_FLAGS) {
-            vr = validate_nft_element(v1);
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr8_t, vr8_v = validate_nft_element(v1);
+            if (is_err_result(vr8_t) == 1) { return Err(vr8_v); }
         } elif (mt == MATCH_CT_STATE) {
             # Was MISSING entirely before 1.6.9 — _render_match interpolates
             # this straight into `ct state { ... }`, so an unchecked value
             # could close the brace and append arbitrary nft statements.
-            vr = validate_ct_state_list(v1);
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr9_t, vr9_v = validate_ct_state_list(v1);
+            if (is_err_result(vr9_t) == 1) { return Err(vr9_v); }
         } elif (mt == MATCH_DSCP) {
             if (v1 > 63) { return nein_err(ERR_INVALID_RULE); }
         } elif (mt == MATCH_VLAN_ID) {
@@ -735,28 +735,28 @@ fn rule_validate(r: i64): i64 {
     var v = rule_verdict(r);
     var vt = verdict_type(v);
     if (vt == VERDICT_JUMP || vt == VERDICT_GOTO) {
-        vr = validate_identifier(verdict_val1(v));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr10_t, vr10_v = validate_identifier(verdict_val1(v));
+        if (is_err_result(vr10_t) == 1) { return Err(vr10_v); }
     } elif (vt == VERDICT_LOG) {
         if (verdict_val1(v) != 0) {
-            vr = validate_log_prefix(verdict_val1(v));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr11_t, vr11_v = validate_log_prefix(verdict_val1(v));
+            if (is_err_result(vr11_t) == 1) { return Err(vr11_v); }
         }
     } elif (vt == VERDICT_LOG_ADVANCED) {
         if (verdict_val1(v) != 0) {
-            vr = validate_log_prefix(verdict_val1(v));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr12_t, vr12_v = validate_log_prefix(verdict_val1(v));
+            if (is_err_result(vr12_t) == 1) { return Err(vr12_v); }
         }
     } elif (vt == VERDICT_COUNTER_NAMED) {
-        vr = validate_identifier(verdict_val1(v));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr13_t, vr13_v = validate_identifier(verdict_val1(v));
+        if (is_err_result(vr13_t) == 1) { return Err(vr13_v); }
     }
 
     # Validate comment
     var comment = rule_comment(r);
     if (comment != 0) {
-        vr = validate_comment(comment);
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr14_t, vr14_v = validate_comment(comment);
+        if (is_err_result(vr14_t) == 1) { return Err(vr14_v); }
     }
 
     return nein_ok();

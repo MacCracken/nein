@@ -40,7 +40,10 @@ fn nein_err(code: i64): i64 {
     return Err(code);
 }
 
-# Extract the error code from an Err result
-fn nein_err_code(r: i64): i64 {
-    return payload(r);
+# Extract the error code from an Err result. Takes BOTH halves of the
+# value form: the tag says whether this is an Err, the payload carries
+# the code. Ok yields 0.
+fn nein_err_code(t: i64, v: i64): i64 {
+    if (is_err_result(t) == 0) { return 0; }
+    return v;
 }

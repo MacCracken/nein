@@ -80,14 +80,14 @@ fn nft_set_add_elements(s: i64, elems: i64): i64 {
 }
 
 fn nft_set_validate(s: i64): i64 {
-    var vr = validate_identifier(nft_set_name(s));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(nft_set_name(s));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var elems = nft_set_elements(s);
     var elen = vec_len(elems);
     var i = 0;
     while (i < elen) {
-        vr = validate_nft_element(vec_get(elems, i));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr2_t, vr2_v = validate_nft_element(vec_get(elems, i));
+        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         i = i + 1;
     }
     return nein_ok();
@@ -163,18 +163,18 @@ fn nft_map_add_entry(m: i64, key: cstring, vtype: i64, vval: i64): i64 {
 }
 
 fn nft_map_validate(m: i64): i64 {
-    var vr = validate_identifier(nft_map_name(m));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(nft_map_name(m));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var entries = nft_map_entries(m);
     var elen = vec_len(entries);
     var i = 0;
     while (i < elen) {
         var e = vec_get(entries, i);
-        vr = validate_nft_element(load64(e));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr2_t, vr2_v = validate_nft_element(load64(e));
+        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         if (load64(e + 8) == MAPV_JUMP) {
-            vr = validate_identifier(load64(e + 16));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr3_t, vr3_v = validate_identifier(load64(e + 16));
+            if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
         }
         i = i + 1;
     }

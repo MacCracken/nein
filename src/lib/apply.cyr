@@ -357,8 +357,8 @@ fn apply_ruleset_str(ruleset_str: Str): i64 {
 # value means "do not touch the live firewall". Fail-safe direction — a
 # malformed flag skips the apply instead of performing one.
 fn apply_firewall(fw: i64): i64 {
-    var vr = firewall_validate(fw);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = firewall_validate(fw);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var ruleset = firewall_render(fw);
     if (firewall_dry_run(fw) != 0) {
         var sk_dry = "nein.apply: dry-run set — rendered but not applied";
@@ -396,38 +396,38 @@ fn _build_nft_line(verb, family, table, chain_or_null) {
 }
 
 fn flush_table(family: cstring, table: cstring): i64 {
-    var vr = validate_family(family);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(table);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_family(family);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var vr2_t, vr2_v = validate_identifier(table);
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
     return _nft_cmd(_build_nft_line("flush table", family, table, 0));
 }
 
 fn delete_table(family: cstring, table: cstring): i64 {
-    var vr = validate_family(family);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(table);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_family(family);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var vr2_t, vr2_v = validate_identifier(table);
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
     return _nft_cmd(_build_nft_line("delete table", family, table, 0));
 }
 
 fn flush_chain(family: cstring, table: cstring, chain: cstring): i64 {
-    var vr = validate_family(family);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(table);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(chain);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_family(family);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var vr2_t, vr2_v = validate_identifier(table);
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
+    var vr3_t, vr3_v = validate_identifier(chain);
+    if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
     return _nft_cmd(_build_nft_line("flush chain", family, table, chain));
 }
 
 fn delete_chain(family: cstring, table: cstring, chain: cstring): i64 {
-    var vr = validate_family(family);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(table);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(chain);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_family(family);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var vr2_t, vr2_v = validate_identifier(table);
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
+    var vr3_t, vr3_v = validate_identifier(chain);
+    if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
     return _nft_cmd(_build_nft_line("delete chain", family, table, chain));
 }
 
@@ -462,53 +462,53 @@ fn _build_rule_line(verb_prefix, family, table, chain, rule, suffix_prefix, suff
 }
 
 fn _validate_rule_args(family, table, chain, rule) {
-    var vr = validate_family(family);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(table);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(chain);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_nft_element(rule);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_family(family);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var vr2_t, vr2_v = validate_identifier(table);
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
+    var vr3_t, vr3_v = validate_identifier(chain);
+    if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
+    var vr4_t, vr4_v = validate_nft_element(rule);
+    if (is_err_result(vr4_t) == 1) { return Err(vr4_v); }
     return nein_ok();
 }
 
 # add rule FAM TAB CHN RULE
 fn add_rule_live(family: cstring, table: cstring, chain: cstring, rule: cstring): i64 {
-    var vr = _validate_rule_args(family, table, chain, rule);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = _validate_rule_args(family, table, chain, rule);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     return _nft_cmd(_build_rule_line("add rule", family, table, chain, rule, 0, 0));
 }
 
 # insert rule FAM TAB CHN RULE (prepends)
 fn insert_rule_live(family: cstring, table: cstring, chain: cstring, rule: cstring): i64 {
-    var vr = _validate_rule_args(family, table, chain, rule);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = _validate_rule_args(family, table, chain, rule);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     return _nft_cmd(_build_rule_line("insert rule", family, table, chain, rule, 0, 0));
 }
 
 # add rule FAM TAB CHN position POS RULE
 fn add_rule_after_live(family: cstring, table: cstring, chain: cstring, position_handle: i64, rule: cstring): i64 {
-    var vr = _validate_rule_args(family, table, chain, rule);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = _validate_rule_args(family, table, chain, rule);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     return _nft_cmd(_build_rule_line("add rule", family, table, chain, rule, "position", position_handle));
 }
 
 # replace rule FAM TAB CHN handle H RULE
 fn replace_rule_live(family: cstring, table: cstring, chain: cstring, handle: i64, new_rule: cstring): i64 {
-    var vr = _validate_rule_args(family, table, chain, new_rule);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = _validate_rule_args(family, table, chain, new_rule);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     return _nft_cmd(_build_rule_line("replace rule", family, table, chain, new_rule, "handle", handle));
 }
 
 # delete rule FAM TAB CHN handle H
 fn delete_rule_live(family: cstring, table: cstring, chain: cstring, handle: i64): i64 {
-    var vr = validate_family(family);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(table);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(chain);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_family(family);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var vr2_t, vr2_v = validate_identifier(table);
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
+    var vr3_t, vr3_v = validate_identifier(chain);
+    if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
 
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "delete rule ");
@@ -558,10 +558,10 @@ fn list_ruleset_with_handles(): i64 {
 # ever entering the result set. Both names are validated before they reach
 # argv — they are operator-supplied and land in an execve argument vector.
 fn list_table_with_handles(family: cstring, table: cstring): i64 {
-    var vr = validate_family(family);
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(table);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_family(family);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var vr2_t, vr2_v = validate_identifier(table);
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
 
     var argv = alloc(56);
     store64(argv, "nft");

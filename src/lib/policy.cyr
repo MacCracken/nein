@@ -84,8 +84,8 @@ fn _validate_policy_rules(rules: i64): i64 {
         var peer = policy_rule_peer(pr);
         # "any" peer is allowed without validation
         if (streq(peer, "any") == 0) {
-            vr = validate_addr(peer);
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr1_t, vr1_v = validate_addr(peer);
+            if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
         }
         i = i + 1;
     }
@@ -93,14 +93,14 @@ fn _validate_policy_rules(rules: i64): i64 {
 }
 
 fn policy_validate(np: i64): i64 {
-    var vr = validate_identifier(policy_name(np));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(policy_name(np));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
 
-    vr = _validate_policy_rules(policy_ingress(np));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr2_t, vr2_v = _validate_policy_rules(policy_ingress(np));
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
 
-    vr = _validate_policy_rules(policy_egress(np));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr3_t, vr3_v = _validate_policy_rules(policy_egress(np));
+    if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
 
     return nein_ok();
 }

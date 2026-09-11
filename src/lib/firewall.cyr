@@ -97,16 +97,16 @@ fn firewall_validate(fw: i64): i64 {
     while (i < tlen) {
         var t = vec_get(tables, i);
 
-        vr = validate_identifier(table_name(t));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr1_t, vr1_v = validate_identifier(table_name(t));
+        if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
 
         # Defines
         vec2 = table_defines(t);
         vlen = vec_len(vec2);
         j = 0;
         while (j < vlen) {
-            vr = define_validate(vec_get(vec2, j));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr2_t, vr2_v = define_validate(vec_get(vec2, j));
+            if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
             j = j + 1;
         }
 
@@ -115,8 +115,8 @@ fn firewall_validate(fw: i64): i64 {
         vlen = vec_len(vec2);
         j = 0;
         while (j < vlen) {
-            vr = flowtable_validate(vec_get(vec2, j));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr3_t, vr3_v = flowtable_validate(vec_get(vec2, j));
+            if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
             j = j + 1;
         }
 
@@ -125,8 +125,8 @@ fn firewall_validate(fw: i64): i64 {
         vlen = vec_len(vec2);
         j = 0;
         while (j < vlen) {
-            vr = ct_timeout_validate(vec_get(vec2, j));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr4_t, vr4_v = ct_timeout_validate(vec_get(vec2, j));
+            if (is_err_result(vr4_t) == 1) { return Err(vr4_v); }
             j = j + 1;
         }
 
@@ -135,8 +135,8 @@ fn firewall_validate(fw: i64): i64 {
         vlen = vec_len(vec2);
         j = 0;
         while (j < vlen) {
-            vr = nft_set_validate(vec_get(vec2, j));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr5_t, vr5_v = nft_set_validate(vec_get(vec2, j));
+            if (is_err_result(vr5_t) == 1) { return Err(vr5_v); }
             j = j + 1;
         }
 
@@ -145,8 +145,8 @@ fn firewall_validate(fw: i64): i64 {
         vlen = vec_len(vec2);
         j = 0;
         while (j < vlen) {
-            vr = nft_map_validate(vec_get(vec2, j));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr6_t, vr6_v = nft_map_validate(vec_get(vec2, j));
+            if (is_err_result(vr6_t) == 1) { return Err(vr6_v); }
             j = j + 1;
         }
 
@@ -156,14 +156,14 @@ fn firewall_validate(fw: i64): i64 {
         j = 0;
         while (j < vlen) {
             var chain = vec_get(vec2, j);
-            vr = validate_identifier(chain_name(chain));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr7_t, vr7_v = validate_identifier(chain_name(chain));
+            if (is_err_result(vr7_t) == 1) { return Err(vr7_v); }
             var rules = chain_rules(chain);
             var rlen = vec_len(rules);
             var k = 0;
             while (k < rlen) {
-                vr = chain_rule_validate(vec_get(rules, k));
-                if (is_err_result(vr) == 1) { return vr; }
+                var vr8_t, vr8_v = chain_rule_validate(vec_get(rules, k));
+                if (is_err_result(vr8_t) == 1) { return Err(vr8_v); }
                 k = k + 1;
             }
             j = j + 1;

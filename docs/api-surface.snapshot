@@ -127,7 +127,7 @@ engine::ps_udp/1
 engine::transport_label/1
 engine::transport_protocol/1
 error::nein_err/1
-error::nein_err_code/1
+error::nein_err_code/2
 error::nein_ok/0
 firewall::firewall_add_table/2
 firewall::firewall_deduplicate/1

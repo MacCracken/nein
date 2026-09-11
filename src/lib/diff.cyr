@@ -572,23 +572,23 @@ fn nein_diff(target_fw: i64): i64 {
     # Validate the whole target tree before anything is rendered or applied.
     # apply_firewall has always done this; the diff path did not, which made
     # nein_diff a way to reach `nft -f -` with un-validated rule text (1.6.9).
-    var vr = firewall_validate(target_fw);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = firewall_validate(target_fw);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
 
     # `-a` is required: without it nft omits the `# handle N` suffixes and
     # every parsed live rule gets handle 0, so every delete op was emitted as
     # `delete rule ... handle 0` and nft rejected the whole batch (1.6.9).
-    var live_res = list_ruleset_with_handles();
-    if (is_err_result(live_res) == 1) { return live_res; }
-    var live_raw = payload(live_res);
+    var live_res1_t, live_res1_v = list_ruleset_with_handles();
+    if (is_err_result(live_res1_t) == 1) { return Err(live_res1_v); }
+    var live_raw = live_res1_v;
     var ops = diff_compute(target_fw, live_raw);
     if (firewall_dry_run(target_fw) != 0) {
         var sk_dry = "nein.diff: dry-run set — ops computed but not applied";
         sakshi_info(sk_dry, strlen(sk_dry));
         return Ok(ops);
     }
-    var apply_res = diff_apply(ops);
-    if (is_err_result(apply_res) == 1) { return apply_res; }
+    var apply_res1_t, apply_res1_v = diff_apply(ops);
+    if (is_err_result(apply_res1_t) == 1) { return Err(apply_res1_v); }
     return Ok(ops);
 }
 
@@ -653,12 +653,12 @@ fn parse_rules_with_handles(raw_str: Str, comment_prefix: cstring): i64 {
 # any subprocess runs — comment_prefix goes through validate_comment because
 # it is operator input that reaches an execve argv via the table listing.
 fn find_rules_by_comment(family: cstring, table: cstring, comment_prefix: cstring): i64 {
-    var vr = validate_comment(comment_prefix);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_comment(comment_prefix);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
 
     # list_table_with_handles validates family + table itself.
-    var res = list_table_with_handles(family, table);
-    if (is_err_result(res) == 1) { return res; }
+    var res1_t, res1_v = list_table_with_handles(family, table);
+    if (is_err_result(res1_t) == 1) { return Err(res1_v); }
 
-    return Ok(parse_rules_with_handles(payload(res), comment_prefix));
+    return Ok(parse_rules_with_handles(res1_v, comment_prefix));
 }

@@ -84,16 +84,16 @@ fn _validate_cidr_list(cidrs: i64): i64 {
     var i = 0;
     var vr = 0;
     while (i < clen) {
-        vr = validate_addr(vec_get(cidrs, i));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr1_t, vr1_v = validate_addr(vec_get(cidrs, i));
+        if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
         i = i + 1;
     }
     return nein_ok();
 }
 
 fn geoip_validate(bl: i64): i64 {
-    var vr = validate_identifier(geoip_table_name(bl));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(geoip_table_name(bl));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
 
     var countries = geoip_countries(bl);
     var clen = vec_len(countries);
@@ -103,10 +103,10 @@ fn geoip_validate(bl: i64): i64 {
         if (_is_valid_country_code(country_code(cb)) == 0) {
             return nein_err(ERR_INVALID_RULE);
         }
-        vr = _validate_cidr_list(country_cidrs_v4(cb));
-        if (is_err_result(vr) == 1) { return vr; }
-        vr = _validate_cidr_list(country_cidrs_v6(cb));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr2_t, vr2_v = _validate_cidr_list(country_cidrs_v4(cb));
+        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
+        var vr3_t, vr3_v = _validate_cidr_list(country_cidrs_v6(cb));
+        if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
         i = i + 1;
     }
 

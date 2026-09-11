@@ -150,8 +150,8 @@ fn _sign_body_cstr(data: i64, len: i64): cstring {
 # Validate `fw`, render it, and sign the rendered body. Returns
 # Ok(Str envelope) | Err (firewall_validate's Err, or NEIN_ERR_SIG_KEY).
 fn sign_ruleset(fw: i64, sk: i64, key_id: cstring): i64 {
-    var vr = firewall_validate(fw);
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = firewall_validate(fw);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     return sign_ruleset_body(firewall_render(fw), sk, key_id);
 }
 
@@ -271,9 +271,9 @@ fn _sign_verify_parsed(sr: i64, pubkey: i64): i64 {
 # Ok(0) iff it parses AND header pubkey == supplied AND the signature
 # verifies over the body. Fail-closed.
 fn verify_ruleset(signed: i64, pubkey: i64): i64 {
-    var pr = parse_signed_ruleset(signed);
-    if (is_err_result(pr) == 1) { return pr; }
-    return _sign_verify_parsed(payload(pr), pubkey);
+    var pr1_t, pr1_v = parse_signed_ruleset(signed);
+    if (is_err_result(pr1_t) == 1) { return Err(pr1_v); }
+    return _sign_verify_parsed(pr1_v, pubkey);
 }
 
 # Verify against a 64-char hex pubkey instead of raw bytes.
@@ -291,11 +291,11 @@ fn verify_ruleset_hex(signed: i64, pubkey_hex: cstring): i64 {
 # ================================================================
 
 fn apply_signed_ruleset(signed: i64, pubkey: i64): i64 {
-    var pr = parse_signed_ruleset(signed);
-    if (is_err_result(pr) == 1) { return pr; }
-    var sr = payload(pr);
-    var vr = _sign_verify_parsed(sr, pubkey);
-    if (is_err_result(vr) == 1) { return vr; }   # fail-closed: never apply
+    var pr1_t, pr1_v = parse_signed_ruleset(signed);
+    if (is_err_result(pr1_t) == 1) { return Err(pr1_v); }
+    var sr = pr1_v;
+    var vr1_t, vr1_v = _sign_verify_parsed(sr, pubkey);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }   # fail-closed: never apply
     return apply_ruleset_str(signed_body(sr));
 }
 

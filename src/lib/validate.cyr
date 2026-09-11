@@ -215,8 +215,8 @@ fn validate_ct_state_list(s: cstring): i64 {
             while (out > 0 && load8(buf + out - 1) == 32) { out = out - 1; }
             store8(buf + out, 0);
             if (out == 0) { return nein_err(ERR_INVALID_RULE); }
-            var vr = validate_ct_state(buf);
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr1_t, vr1_v = validate_ct_state(buf);
+            if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
             out = 0;
         } elif (c == 32 && out == 0) {
             # Leading space before a token — skip. An INTERNAL space is copied

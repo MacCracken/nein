@@ -35,9 +35,9 @@ fn test_consume() {
     var pk = alloc(32);
     assert(sign_keygen(sk, pk) == 1, "bundle sign_keygen ok");
     var body = str_from("table inet filter { }");
-    var sr = sign_ruleset_body(body, sk, "smoke");
-    assert(is_err_result(sr) == 0, "bundle sign_ruleset_body ok");
-    assert(is_err_result(verify_ruleset(payload(sr), pk)) == 0, "bundle verify round-trips");
+    var sr_t, sr_v = sign_ruleset_body(body, sk, "smoke");
+    assert(is_err_result(sr_t) == 0, "bundle sign_ruleset_body ok");
+    assert(is_err_result(verify_ruleset(sr_v, pk)) == 0, "bundle verify round-trips");
 
     return 0;
 }

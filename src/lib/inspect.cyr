@@ -199,9 +199,9 @@ fn _parse_ruleset(raw_str: Str, tables_vec: i64): i64 {
 # status() — query live firewall state.
 # Returns Ok(FirewallStatus) or Err on nft failure.
 fn status(): i64 {
-    var res = list_ruleset();
-    if (is_err_result(res) == 1) { return res; }
-    var raw = payload(res);
+    var res1_t, res1_v = list_ruleset();
+    if (is_err_result(res1_t) == 1) { return Err(res1_v); }
+    var raw = res1_v;
 
     var tables = vec_new();
     var count = _parse_ruleset(raw, tables);

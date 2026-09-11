@@ -4,6 +4,90 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.11] — 2026-09-10
+
+**cyrius 6.5.33 → 6.6.2 — the `Result` / `Option` / `Either` value form.** 754
+unit + 18 integration assertions hold, 5 fuzz harnesses pass, 21 benchmarks show
+0 regressions (most are faster: the value form constructs a Result in 0 bytes).
+Dependency pins refreshed alongside. 394 public fns.
+
+### Security — 104 error paths were failing OPEN
+
+⛔ **This is the headline and it is not cosmetic.** Since cyrius 6.6.0 a
+`Result` is a two-register `(tag, payload)` value. nein's validation chains were
+written for the old boxed form:
+
+```
+var vr = validate_identifier(table);
+if (is_err_result(vr) == 1) { return vr; }
+```
+
+`var vr = f()` binds only the **tag**, so `return vr;` hands the caller the
+payload alone. An `Err(ERR_INVALID_RULE)` propagated this way arrives with
+`tag = ERR_INVALID_RULE` and `is_err_result == 0` — **an error that reads as
+success**. Every rule, NAT, set, table, chain, policy, geoip, mesh, bridge and
+apply validator in `src/lib/` was on this path: 104 sites across 15 files, of
+which `apply.cyr` alone held 24. All now bind both halves and propagate with
+`return Err(v);`.
+
+The practical shape of the bug: `_validate_rule_args` rejecting an
+injection-bearing table name, and `add_rule_live` reading that rejection as a
+pass.
+
+### Changed — toolchain and dependency pins
+
+| dep | was | now |
+|---|---|---|
+| cyrius | 6.5.33 | **6.6.2** |
+| libro | 2.8.8 | **2.10.0** |
+| majra | 2.6.7 | **2.7.1** |
+| bote-core | 3.3.2 | **3.3.7** |
+| sigil | 3.12.9 | **3.12.16** |
+| patra | 1.13.9 | **1.14.1** |
+
+The majra bump is load-bearing: at 2.6.7 `lib/majra.cyr`'s `_sub_new` collided
+with libro's at a different arity, which cyrius 6.6.2 promotes from a silent
+"last definition wins" to a hard error. majra 2.7.1 renamed it `_majra_sub_new`.
+
+### Changed — `nein_err_code` takes both halves
+
+`nein_err_code(r)` called the `payload()` accessor cyrius 6.6.0 deleted. It is
+now `nein_err_code(tag, val)` and returns 0 for an `Ok`. This is the only
+public-surface change in this release; `docs/api-surface.snapshot` records it as
+`error::nein_err_code/1` → `/2`.
+
+### Fixed — the type-check gate vs. a cyrius false positive
+
+cyrius 6.6.x's pair-return check does not exempt the **nullary** variant
+constructor. `None()` carries no payload, so it needs no second register, and
+`lib/tagged.cyr` documents exactly that: *"`None()` returns its tag ALONE and is
+correctly NOT pair-returning."* The compiler warns anyway, on nein's four
+`return None();` sites (`bridge.cyr:202`, `engine.cyr:388/393/409`). Verified
+against a minimal reproducer: the warning fires, and the runtime is correct.
+
+The gate could not simply filter the message, because **its text is identical to
+a real propagation trap** — filtering on text would have blinded this gate to
+the exact class described above. It now decides from the **source line**,
+derived independently of the message: a real trap returns a bound variable, a
+nullary return is literally `return None();`. Anything else still fails.
+Injection-verified: reverting one `return Err(vr2_v);` to `return vr2_v;` in
+`bridge.cyr` turns the gate red.
+
+The gate also stops failing on `refusing to overwrite stdlib leaf` for sigil and
+patra. Removing those `[deps.*]` pins to silence it was measured and is **worse**
+— libro's sidecar then resolves its thin sigil sub-bundles (`sigil-mldsa`,
+`sigil-x509`, …) into `lib/`, colliding with the full bundle across dozens of
+`duplicate fn` warnings. The pins stay; the notice is named explicitly so a
+different resolver warning still fails.
+
+### Changed — supply-chain policy accepts two new stdlib transitives
+
+`boxed` (the boxed Result/Option surface cyrius 6.6.0 split out of `tagged.cyr`)
+and `hashseed` (per-process randomized hash seeding, reached through `hashmap`)
+now arrive in `lib/`. Both recorded in `scripts/supply-chain.sh` and documented
+in `docs/development/dependencies.md`. Note that map iteration order now differs
+between processes.
+
 ## [1.6.10] — 2026-08-21
 
 **Closes every remaining open finding from the 2026-08-21 P(-1) audit.** All

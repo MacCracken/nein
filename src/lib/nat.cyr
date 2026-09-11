@@ -178,40 +178,40 @@ fn nat_validate(n: i64): i64 {
     var vr = 0;
 
     if (nt == NAT_DNAT) {
-        vr = validate_addr(nat_v3(n));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr1_t, vr1_v = validate_addr(nat_v3(n));
+        if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
         if (nat_v5(n) != 0) {
-            vr = validate_comment(nat_v5(n));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr2_t, vr2_v = validate_comment(nat_v5(n));
+            if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         }
     } elif (nt == NAT_SNAT) {
-        vr = validate_addr(nat_v1(n));
-        if (is_err_result(vr) == 1) { return vr; }
-        vr = validate_addr(nat_v2(n));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr3_t, vr3_v = validate_addr(nat_v1(n));
+        if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
+        var vr4_t, vr4_v = validate_addr(nat_v2(n));
+        if (is_err_result(vr4_t) == 1) { return Err(vr4_v); }
         if (nat_v3(n) != 0) {
-            vr = validate_comment(nat_v3(n));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr5_t, vr5_v = validate_comment(nat_v3(n));
+            if (is_err_result(vr5_t) == 1) { return Err(vr5_v); }
         }
     } elif (nt == NAT_MASQUERADE) {
-        vr = validate_addr(nat_v1(n));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr6_t, vr6_v = validate_addr(nat_v1(n));
+        if (is_err_result(vr6_t) == 1) { return Err(vr6_v); }
         if (nat_v2(n) != 0) {
-            vr = validate_iface(nat_v2(n));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr7_t, vr7_v = validate_iface(nat_v2(n));
+            if (is_err_result(vr7_t) == 1) { return Err(vr7_v); }
         }
         if (nat_v3(n) != 0) {
-            vr = validate_comment(nat_v3(n));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr8_t, vr8_v = validate_comment(nat_v3(n));
+            if (is_err_result(vr8_t) == 1) { return Err(vr8_v); }
         }
     } elif (nt == NAT_REDIRECT) {
         if (nat_v4(n) != 0) {
-            vr = validate_comment(nat_v4(n));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr9_t, vr9_v = validate_comment(nat_v4(n));
+            if (is_err_result(vr9_t) == 1) { return Err(vr9_v); }
         }
     } elif (nt == NAT_DNAT_RANGE) {
-        vr = validate_addr(nat_v4(n));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr10_t, vr10_v = validate_addr(nat_v4(n));
+        if (is_err_result(vr10_t) == 1) { return Err(vr10_v); }
         var dps = nat_v2(n);
         var dpe = nat_v3(n);
         var tps = nat_v5(n);
@@ -220,8 +220,8 @@ fn nat_validate(n: i64): i64 {
         if (tps > tpe) { return nein_err(ERR_INVALID_RULE); }
         if ((dpe - dps) != (tpe - tps)) { return nein_err(ERR_INVALID_RULE); }
         if (nat_v7(n) != 0) {
-            vr = validate_comment(nat_v7(n));
-            if (is_err_result(vr) == 1) { return vr; }
+            var vr11_t, vr11_v = validate_comment(nat_v7(n));
+            if (is_err_result(vr11_t) == 1) { return Err(vr11_v); }
         }
     }
 

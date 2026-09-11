@@ -151,19 +151,61 @@ jobs:
           # warning landing first would have sailed through this gate. Split
           # every embedded warning onto its own line first.
           sed 's/ warning:/\nwarning:/g' "$tmp" > "$tmp.n"
-          if grep -E "^warning:" "$tmp.n" \
-              | grep -vE "^warning:lib/" \
-              | grep -v "large static data" \
-              | head -1 | grep -q .; then
+
+          # `refusing to overwrite stdlib leaf` (1.6.11): cyrius 6.6.x reports
+          # this for sigil + patra because nein pins both as [deps.*] AND the
+          # toolchain ships them as stdlib leaves, so the dep artifact is skipped.
+          # The pins stay anyway — REMOVING them was measured and is worse: libro's
+          # sidecar then resolves its THIN sigil sub-bundles (sigil-mldsa,
+          # sigil-x509, ...) into lib/, colliding with the full bundle across dozens
+          # of `duplicate fn` warnings. A resolver notice, not a code defect; named
+          # explicitly so a DIFFERENT resolver warning still fails the gate.
+          grep -E "^warning:" "$tmp.n" \
+            | grep -vE "^warning:lib/" \
+            | grep -v "large static data" \
+            | grep -v "refusing to overwrite stdlib leaf" \
+            > "$tmp.c" || true
+
+          # cyrius 6.6.x's pair-return check does not exempt the NULLARY variant
+          # constructor. `None()` carries no payload so it needs no second register,
+          # and lib/tagged.cyr says so in as many words: "None() returns its tag
+          # ALONE and is correctly NOT pair-returning". The compiler warns anyway.
+          #
+          # The message text of that false positive is IDENTICAL to a real
+          # propagation trap, so filtering on the TEXT would blind this gate to the
+          # exact class cyrius 6.6.0 introduced. Decide from the SOURCE LINE instead
+          # — derived a different way than the message: a real trap returns a bound
+          # variable (`return vr;`); a nullary return is literally `return None();`.
+          # Anything else still fails.
+          : > "$tmp.real"
+          while IFS= read -r w; do
+            loc=${w#warning:}
+            f=$(printf '%s' "$loc" | cut -d: -f1)
+            l=$(printf '%s' "$loc" | cut -d: -f2)
+            keep=1
+            case "$w" in
+              *"pair on another path"*)
+                if [ -f "$f" ] && printf '%s' "$l" | grep -qE '^[0-9]+$'; then
+                  src=$(sed -n "${l}p" "$f" | tr -d '[:space:]')
+                  case "$src" in
+                    *"returnNone();"*) keep=0 ;;
+                  esac
+                fi
+                ;;
+            esac
+            [ "$keep" = 1 ] && printf '%s\n' "$w" >> "$tmp.real"
+          done < "$tmp.c"
+
+          exempt=$(( $(wc -l < "$tmp.c") - $(wc -l < "$tmp.real") ))
+          echo "type-check: $exempt nullary-None() false positive(s) exempted (verified against the source line)"
+          if [ -s "$tmp.real" ]; then
             echo "type-check: nein-side warnings present"
-            grep -E "^warning:" "$tmp.n" \
-              | grep -vE "^warning:lib/" \
-              | grep -v "large static data"
-            rm -f "$tmp" "$tmp.n"
+            cat "$tmp.real"
+            rm -f "$tmp" "$tmp.n" "$tmp.c" "$tmp.real"
             exit 1
           fi
           echo "type-check: no nein-side warnings"
-          rm -f "$tmp" "$tmp.n"
+          rm -f "$tmp" "$tmp.n" "$tmp.c" "$tmp.real"
 
       - name: Verify ELF
         run: xxd -l 4 build/nein | grep -q "7f45 4c46"

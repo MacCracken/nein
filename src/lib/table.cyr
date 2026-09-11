@@ -39,10 +39,10 @@ fn define_name(d: i64): i64 { return load64(d); }
 fn define_value(d: i64): i64 { return load64(d + 8); }
 
 fn define_validate(d: i64): i64 {
-    var vr = validate_identifier(define_name(d));
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_nft_element(define_value(d));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(define_name(d));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var vr2_t, vr2_v = validate_nft_element(define_value(d));
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
     return nein_ok();
 }
 
@@ -76,8 +76,8 @@ fn flowtable_priority(ft: i64): i64 { return load64(ft + 16); }
 fn flowtable_devices(ft: i64): i64 { return load64(ft + 24); }
 
 fn flowtable_validate(ft: i64): i64 {
-    var vr = validate_identifier(flowtable_name(ft));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(flowtable_name(ft));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     if (flowtable_hook(ft) != HOOK_INGRESS) {
         return nein_err(ERR_INVALID_RULE);
     }
@@ -86,8 +86,8 @@ fn flowtable_validate(ft: i64): i64 {
     if (dlen == 0) { return nein_err(ERR_INVALID_RULE); }
     var i = 0;
     while (i < dlen) {
-        vr = validate_iface(vec_get(devs, i));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr2_t, vr2_v = validate_iface(vec_get(devs, i));
+        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         i = i + 1;
     }
     return nein_ok();
@@ -155,8 +155,8 @@ fn ct_timeout_add_timeout(ct: i64, state: cstring, seconds: i64): i64 {
 }
 
 fn ct_timeout_validate(ct: i64): i64 {
-    var vr = validate_identifier(ct_timeout_name(ct));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(ct_timeout_name(ct));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var proto = ct_timeout_protocol(ct);
     if (proto != PROTO_TCP && proto != PROTO_UDP) {
         return nein_err(ERR_INVALID_RULE);
@@ -170,8 +170,8 @@ fn ct_timeout_validate(ct: i64): i64 {
     var i = 0;
     while (i < plen) {
         var e = vec_get(pol, i);
-        vr = validate_identifier(load64(e));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr2_t, vr2_v = validate_identifier(load64(e));
+        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         i = i + 1;
     }
     return nein_ok();

@@ -92,6 +92,11 @@ ALLOWED_LICENSES=(
 # list is that the NEXT arrival fails the build instead of slipping in.
 ACCEPTED_TRANSITIVES=(
     "async"
+    "boxed"      # cyrius 6.6.0: the boxed Result/Option surface
+                 # (tagged_new / boxed_tag / boxed_payload) split out of
+                 # tagged.cyr when Result became a register-pair value.
+    "hashseed"   # cyrius 6.6.x: per-process randomized hash seeding,
+                 # pulled in by hashmap. Closes a hash-flooding DoS.
     "dynlib"
     "fdlopen"
     "mmap"

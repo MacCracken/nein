@@ -230,3 +230,18 @@ matches the module basename, which is why the bote section is named
 `bote-core` (see above). When adding or renaming a `[deps.*]` entry,
 regenerate both bundles and check that nothing new appears in
 `dist/nein.deps` / `dist/nein-mcp.deps` that isn't a stdlib module.
+
+## Accepted undeclared transitives — `boxed` and `hashseed` (1.6.11)
+
+Two stdlib modules arrive in `lib/` at cyrius 6.6.x without nein declaring
+them, and are recorded in `scripts/supply-chain.sh`'s `ACCEPTED_TRANSITIVES`:
+
+- **`boxed`** — cyrius 6.6.0 moved the *boxed* Result/Option surface
+  (`tagged_new`, `boxed_tag`, `boxed_payload`) out of `tagged.cyr` when
+  `Result`/`Option`/`Either` became a two-register `(tag, payload)` value.
+  Reached through `tagged`, which nein declares.
+- **`hashseed`** — cyrius 6.6.x per-process randomized hash seeding, pulled
+  in by `hashmap` (declared). Closes a hash-flooding DoS. Note that map
+  iteration order now differs between processes.
+
+nein calls no symbol from either directly.

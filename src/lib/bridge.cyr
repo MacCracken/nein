@@ -25,14 +25,14 @@ fn bridge_set_table_prefix(cfg: i64, prefix: cstring): i64 {
 }
 
 fn bridge_config_validate(cfg: i64): i64 {
-    var vr = validate_iface(bridge_name(cfg));
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_addr(bridge_subnet(cfg));
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_iface(bridge_outbound_iface(cfg));
-    if (is_err_result(vr) == 1) { return vr; }
-    vr = validate_identifier(bridge_table_prefix(cfg));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_iface(bridge_name(cfg));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var vr2_t, vr2_v = validate_addr(bridge_subnet(cfg));
+    if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
+    var vr3_t, vr3_v = validate_iface(bridge_outbound_iface(cfg));
+    if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
+    var vr4_t, vr4_v = validate_identifier(bridge_table_prefix(cfg));
+    if (is_err_result(vr4_t) == 1) { return Err(vr4_v); }
     return nein_ok();
 }
 
@@ -129,14 +129,14 @@ fn iso_name(g: i64): i64 { return load64(g); }
 fn iso_cidrs(g: i64): i64 { return load64(g + 8); }
 
 fn iso_validate(g: i64): i64 {
-    var vr = validate_identifier(iso_name(g));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(iso_name(g));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var cidrs = iso_cidrs(g);
     var clen = vec_len(cidrs);
     var i = 0;
     while (i < clen) {
-        vr = validate_addr(vec_get(cidrs, i));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr2_t, vr2_v = validate_addr(vec_get(cidrs, i));
+        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         i = i + 1;
     }
     return nein_ok();
@@ -208,15 +208,15 @@ fn bf_add_isolation_group(bf: i64, g: i64): i64 {
 }
 
 fn bf_validate(bf: i64): i64 {
-    var vr = bridge_config_validate(bf_config(bf));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = bridge_config_validate(bf_config(bf));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
 
     var pms = bf_port_mappings(bf);
     var plen = vec_len(pms);
     var i = 0;
     while (i < plen) {
-        vr = pm_validate(vec_get(pms, i));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr2_t, vr2_v = pm_validate(vec_get(pms, i));
+        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         i = i + 1;
     }
 
@@ -224,8 +224,8 @@ fn bf_validate(bf: i64): i64 {
     var glen = vec_len(groups);
     i = 0;
     while (i < glen) {
-        vr = iso_validate(vec_get(groups, i));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr3_t, vr3_v = iso_validate(vec_get(groups, i));
+        if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
         i = i + 1;
     }
 

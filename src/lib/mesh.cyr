@@ -46,14 +46,14 @@ fn mesh_clear_excl_out_cidrs(m: i64): i64 {
 # ================================================================
 
 fn mesh_validate(m: i64): i64 {
-    var vr = validate_identifier(mesh_table_name(m));
-    if (is_err_result(vr) == 1) { return vr; }
+    var vr1_t, vr1_v = validate_identifier(mesh_table_name(m));
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var cidrs = mesh_excl_out_cidrs(m);
     var clen = vec_len(cidrs);
     var i = 0;
     while (i < clen) {
-        vr = validate_addr(vec_get(cidrs, i));
-        if (is_err_result(vr) == 1) { return vr; }
+        var vr2_t, vr2_v = validate_addr(vec_get(cidrs, i));
+        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         i = i + 1;
     }
     return nein_ok();
