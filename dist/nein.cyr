@@ -4491,7 +4491,7 @@ fn _run_nft_stdin(input_buf, input_len) {
     # entry point, loudly and specifically, is the honest behaviour: the
     # caller gets a diagnosable refusal instead of a mystery nft error, and
     # the firewall is never half-applied.
-    var sk_agnos = "nein.apply: nftables backend unavailable on agnos (no nft binary; agnos uses its own network stack) — refusing rather than half-applying";
+    var sk_agnos = "nein.apply: no nftables backend on agnos - refusing, not half-applying";
     sakshi_error(sk_agnos, strlen(sk_agnos));
     sakshi_span_exit();
     return nein_err(ERR_NFT_FAILED);
@@ -4658,7 +4658,7 @@ fn _run_nft_capture(argv, nft_path) {
     # entry point, loudly and specifically, is the honest behaviour: the
     # caller gets a diagnosable refusal instead of a mystery nft error, and
     # the firewall is never half-applied.
-    var sk_agnos = "nein.apply: nftables backend unavailable on agnos (no nft binary; agnos uses its own network stack) — refusing rather than half-applying";
+    var sk_agnos = "nein.apply: no nftables backend on agnos - refusing, not half-applying";
     sakshi_error(sk_agnos, strlen(sk_agnos));
     sakshi_span_exit();
     return nein_err(ERR_NFT_FAILED);
