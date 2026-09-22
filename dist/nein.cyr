@@ -4474,6 +4474,29 @@ fn _child_redirect(src: i64, dst: i64) {
 }
 
 fn _run_nft_stdin(input_buf, input_len) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # ⛔ nft does not exist on agnos, and neither do the syscalls this path
+    # needs. nein's apply layer drives LINUX NETFILTER by exec'ing
+    # /usr/sbin/nft over a pipe: that needs `sys_dup2` (agnos has `sys_dup`
+    # and `sys_exec_redirect`, not dup2) and `sys_execve` (agnos is
+    # spawn-not-fork-exec: `sys_spawn_path` #43). Both are hard COMPILE
+    # errors on --agnos, which is what stopped any consumer building
+    # dist/nein-mcp.cyr for that target (found by daimon at 2.1.8).
+    #
+    # Mapping the syscalls would compile but LIE: it would fork, spawn a
+    # path that is not there, and report a generic failure. agnos has its
+    # own network stack (`sys_net_config` and peers) and no nftables at all,
+    # so there is nothing here to port until nein grows an agnos BACKEND —
+    # a different piece of work from a syscall shim. Failing closed at the
+    # entry point, loudly and specifically, is the honest behaviour: the
+    # caller gets a diagnosable refusal instead of a mystery nft error, and
+    # the firewall is never half-applied.
+    var sk_agnos = "nein.apply: nftables backend unavailable on agnos (no nft binary; agnos uses its own network stack) — refusing rather than half-applying";
+    sakshi_error(sk_agnos, strlen(sk_agnos));
+    sakshi_span_exit();
+    return nein_err(ERR_NFT_FAILED);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var pipe_in[16];
     var pipe_err[16];
 
@@ -4609,6 +4632,7 @@ fn _run_nft_stdin(input_buf, input_len) {
     sakshi_error(sk_unk, strlen(sk_unk));
     sakshi_span_exit();
     return nein_err(ERR_NFT_FAILED);
+    #endif
 }
 
 # ================================================================
@@ -4617,6 +4641,29 @@ fn _run_nft_stdin(input_buf, input_len) {
 # ================================================================
 
 fn _run_nft_capture(argv, nft_path) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # ⛔ nft does not exist on agnos, and neither do the syscalls this path
+    # needs. nein's apply layer drives LINUX NETFILTER by exec'ing
+    # /usr/sbin/nft over a pipe: that needs `sys_dup2` (agnos has `sys_dup`
+    # and `sys_exec_redirect`, not dup2) and `sys_execve` (agnos is
+    # spawn-not-fork-exec: `sys_spawn_path` #43). Both are hard COMPILE
+    # errors on --agnos, which is what stopped any consumer building
+    # dist/nein-mcp.cyr for that target (found by daimon at 2.1.8).
+    #
+    # Mapping the syscalls would compile but LIE: it would fork, spawn a
+    # path that is not there, and report a generic failure. agnos has its
+    # own network stack (`sys_net_config` and peers) and no nftables at all,
+    # so there is nothing here to port until nein grows an agnos BACKEND —
+    # a different piece of work from a syscall shim. Failing closed at the
+    # entry point, loudly and specifically, is the honest behaviour: the
+    # caller gets a diagnosable refusal instead of a mystery nft error, and
+    # the firewall is never half-applied.
+    var sk_agnos = "nein.apply: nftables backend unavailable on agnos (no nft binary; agnos uses its own network stack) — refusing rather than half-applying";
+    sakshi_error(sk_agnos, strlen(sk_agnos));
+    sakshi_span_exit();
+    return nein_err(ERR_NFT_FAILED);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var sk_span_name = "nein.apply.run_nft_capture";
     sakshi_span_enter(sk_span_name, strlen(sk_span_name));
 
@@ -4697,6 +4744,7 @@ fn _run_nft_capture(argv, nft_path) {
     sakshi_error(sk_u, strlen(sk_u));
     sakshi_span_exit();
     return nein_err(ERR_NFT_FAILED);
+    #endif
 }
 
 # ================================================================

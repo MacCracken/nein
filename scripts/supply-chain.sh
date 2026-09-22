@@ -91,6 +91,17 @@ ALLOWED_LICENSES=(
 # because nein cannot control a dependency's own sidecar; the point of this
 # list is that the NEXT arrival fails the build instead of slipping in.
 ACCEPTED_TRANSITIVES=(
+    "alloc_cx"   # cyrius 6.6.5+: the allocator peer for the cx bytecode
+                 # target. `lib/alloc.cyr` includes it unconditionally, so it
+                 # lands in lib/ for every consumer; nein reaches none of it
+                 # (no cx target). Arrived with the 6.6.2 -> 6.6.6 bump at
+                 # 1.6.12 — it does not exist in the 6.6.4 snapshot.
+    "sys"        # named by the libro 2.10.3 AND majra 2.9.1 dep sidecars.
+                 # Both arrived with 1.6.12's pin bumps. sigil 3.12.18 is the
+                 # reason it is load-bearing: its `agnosys_uname` calls
+                 # `sys_uname` from lib/sys.cyr rather than a raw syscall(63),
+                 # which is also why `duplicate fn 'uname_release'` warns on
+                 # units linking both (upstream sigil packaging, harmless).
     "async"
     "boxed"      # cyrius 6.6.0: the boxed Result/Option surface
                  # (tagged_new / boxed_tag / boxed_payload) split out of

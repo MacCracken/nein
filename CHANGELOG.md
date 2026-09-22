@@ -4,7 +4,7 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.6.12] - 2026-09-22
+## [1.6.12] — 2026-09-22
 
 **Toolchain and dependency refresh, plus one packaging fix that only a bote-hosting consumer can
 see.** Cut so daimon can adopt `dist/nein-mcp.cyr`: at 1.6.11 the bundle did not link into a host
@@ -38,6 +38,47 @@ before; only the MCP bundle, which never used them, stops shipping them.
 `dist/nein-mcp.cyr`: 237,170 → **224,646 bytes**. Its `.deps` sidecar is now 21 stdlib leaves with
 no named-package entries, matching the guide's contract that the bundle leaves bote and sigil
 symbols for the host to supply.
+
+### Fixed — the nft-apply path was a hard compile error on `--agnos`
+
+`src/lib/apply.cyr` drives **Linux netfilter**: it forks, wires pipes with `sys_dup2`, and execs
+`/usr/sbin/nft` via `sys_execve`. agnos has neither syscall — it is spawn-not-fork-exec
+(`sys_spawn_path` #43) and offers `sys_dup` / `sys_exec_redirect`, not `dup2` — so both were
+*reachable* undefined functions and cyrius refused to emit a binary. **No consumer could build
+`dist/nein-mcp.cyr` for agnos at all**, which is where daimon hit it.
+
+**Mapped to a refusal, not to the agnos syscalls.** Shimming `dup2`→`exec_redirect` and
+`execve`→`spawn_path` would compile and then lie: it would fork, spawn a path that is not there, and
+report a generic nft failure. agnos has its own network stack (`sys_net_config` and peers) and **no
+nftables at all**, so there is nothing to port until nein grows an agnos *backend* — a different
+piece of work from a syscall shim. Both `_run_nft_stdin` and `_run_nft_capture` now fail closed at
+the entry point on agnos with a specific message ("nftables backend unavailable on agnos ... refusing
+rather than half-applying"), so the caller gets a diagnosable refusal and the firewall is never
+half-applied. `sys_dup2` becomes unreachable and DCE NOPs it.
+
+`cyrius build --agnos` now succeeds: **2,654,128 bytes**. The Linux path is byte-for-byte unchanged
+— 754 assertions pass, host build unchanged at 2,698,904 bytes.
+
+### Fixed — `sys_waitpid` arity, same class
+
+Five sites in `apply.cyr` called the 3-arg Linux `sys_waitpid(pid, &status, 0)`. agnos's `waitpid`
+(#4) takes **one** argument, is non-blocking by design, and answers exit_code / **-2 (WOULD_BLOCK)** /
+-1 — the kernel notes "-2 vs -1 IS THE WHOLE CONTRACT". All five now route through `_nein_waitpid`,
+which normalises both and synthesises a Linux-shaped status word (`exit_code << 8`) so the existing
+`WEXITSTATUS` decoding is unchanged.
+
+### Fixed — supply-chain gate
+
+`scripts/supply-chain.sh` failed on two undeclared modules in `lib/`. Both are legitimate and are now
+in `ACCEPTED_TRANSITIVES` with their provenance recorded:
+
+- **`alloc_cx`** — the allocator peer for cyrius's cx bytecode target, included unconditionally by
+  `lib/alloc.cyr`. It does not exist in the 6.6.4 snapshot; it arrived with this release's
+  6.6.2 → 6.6.6 bump. nein reaches none of it.
+- **`sys`** — named by the **libro 2.10.3** and **majra 2.9.1** sidecars, both bumped here. It is
+  load-bearing because sigil 3.12.18's `agnosys_uname` calls `sys_uname` from `lib/sys.cyr` rather
+  than a raw `syscall(63)` — which is also why `duplicate fn 'uname_release'` warns on units linking
+  both (upstream sigil packaging, harmless).
 
 ### Changed — pins
 
