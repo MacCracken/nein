@@ -351,18 +351,18 @@ fn rule_set_comment(r: i64, c: cstring): i64 {
 # DELIBERATE DEVIATION FROM THE RUST ORIGINAL: `Rule::matching_addrs` filtered
 # invalid addresses out and logged a warning, keeping the rest. For a deny
 # rule that silently fails OPEN — the dropped address stops being denied and
-# nothing in the returned value says so. These return Err(ERR_INVALID_RULE)
+# nothing in the returned value says so. These return Err(NEIN_ERR_INVALID_RULE)
 # on the first bad element instead, and leave the rule UNMODIFIED: every input
 # is checked before any match is pushed, so a rejected call cannot leave a
 # half-built rule behind.
 #
 # Each takes a Vec (ports: Vec<i64>, addrs: Vec<cstring>) and returns a packed
-# Result — Ok(rule) or Err(ERR_INVALID_RULE).
+# Result — Ok(rule) or Err(NEIN_ERR_INVALID_RULE).
 # ================================================================
 
 fn _rule_addr_set(r: i64, addrs: i64, prefix: cstring): i64 {
     var n = vec_len(addrs);
-    if (n == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (n == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
     # Validate every address BEFORE mutating the rule.
     var i = 0;
@@ -389,14 +389,14 @@ fn _rule_addr_set(r: i64, addrs: i64, prefix: cstring): i64 {
 # `{proto} dport { p1, p2, ... }` — adds a protocol match plus the port set.
 fn rule_matching_ports(r: i64, proto: i64, ports: i64): i64 {
     var n = vec_len(ports);
-    if (n == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (n == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
     # Bounds-check every port before mutating the rule.
     var i = 0;
     while (i < n) {
         var p = vec_get(ports, i);
-        if (p < 0) { return nein_err(ERR_INVALID_RULE); }
-        if (p > 65535) { return nein_err(ERR_INVALID_RULE); }
+        if (p < 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        if (p > 65535) { return nein_err(NEIN_ERR_INVALID_RULE); }
         i = i + 1;
     }
 
@@ -719,11 +719,11 @@ fn rule_validate(r: i64): i64 {
             var vr9_t, vr9_v = validate_ct_state_list(v1);
             if (is_err_result(vr9_t) == 1) { return Err(vr9_v); }
         } elif (mt == MATCH_DSCP) {
-            if (v1 > 63) { return nein_err(ERR_INVALID_RULE); }
+            if (v1 > 63) { return nein_err(NEIN_ERR_INVALID_RULE); }
         } elif (mt == MATCH_VLAN_ID) {
-            if (v1 > 4094) { return nein_err(ERR_INVALID_RULE); }
+            if (v1 > 4094) { return nein_err(NEIN_ERR_INVALID_RULE); }
         } elif (mt == MATCH_DPORT_RANGE) {
-            if (v1 > v2) { return nein_err(ERR_INVALID_RULE); }
+            if (v1 > v2) { return nein_err(NEIN_ERR_INVALID_RULE); }
         } elif (mt == MATCH_RAW) {
             # Deliberately not validated — caller's responsibility
         }

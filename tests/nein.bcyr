@@ -78,7 +78,7 @@ fn bench_rule_validate_complex() {
 
 # --- nein_err / nein_ok ---
 
-fn bench_nein_err() { nein_err(ERR_INVALID_RULE); return 0; }
+fn bench_nein_err() { nein_err(NEIN_ERR_INVALID_RULE); return 0; }
 fn bench_nein_ok() { nein_ok(); return 0; }
 
 fn bench_table_render() {

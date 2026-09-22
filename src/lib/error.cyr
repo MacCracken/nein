@@ -4,10 +4,24 @@
 # Uses stdlib tagged Result: Ok(value) / Err(code) from tagged.cyr.
 
 enum NeinError {
-    ERR_NFT_FAILED = 1;
-    ERR_INVALID_RULE = 2;
-    ERR_TABLE_NOT_FOUND = 3;
-    ERR_CHAIN_NOT_FOUND = 4;
+    # ⭐ 1.7.0 — the first four carry the `NEIN_ERR_` prefix too. They were
+    # bare (`ERR_NFT_FAILED` …) from 1.0 and were the only members cyrlint's
+    # `lint_error_enum_namespace` rule still flagged: a bare `ERR_*` is
+    # reserved for the sakshi base logger, and the flat enum-const namespace
+    # lets any sibling lib in the same single-pass build clobber it. The
+    # reasoning in the block below applied to them all along; only the later
+    # members had ever been migrated.
+    #
+    # ⚠ SOURCE-breaking, ABI-compatible — hence a MINOR bump. The VALUES are
+    # unchanged (1..4), so `nein_err_code()` returns exactly what it always
+    # did and any consumer reading integer codes (over MCP, across a wire,
+    # out of a log) is unaffected. Only a consumer naming the bare SYMBOL at
+    # compile time must update, and it fails loudly at build rather than
+    # silently taking a neighbour's value — which is the whole point.
+    NEIN_ERR_NFT_FAILED = 1;
+    NEIN_ERR_INVALID_RULE = 2;
+    NEIN_ERR_TABLE_NOT_FOUND = 3;
+    NEIN_ERR_CHAIN_NOT_FOUND = 4;
     # Prefixed `NEIN_ERR_` to avoid symbol collisions with sibling AGNOS
     # enums included in the same single-pass build: originally agnosys-core's
     # SysError (bare `ERR_PERMISSION_DENIED` / `ERR_IO`, dropped at 1.5.4),

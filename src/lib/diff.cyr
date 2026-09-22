@@ -19,7 +19,7 @@
 # Exact match means "same rule"; any drift in whitespace or operand
 # ordering produces a delete+add pair, which is conservative but
 # always correct (nft accepts duplicate adds and rejects invalid
-# deletes, both of which are surfaced as ERR_NFT_FAILED).
+# deletes, both of which are surfaced as NEIN_ERR_NFT_FAILED).
 
 # ================================================================
 # LiveRule struct — { family, table, chain, body, handle }

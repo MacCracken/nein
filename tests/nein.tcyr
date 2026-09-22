@@ -32,24 +32,24 @@ include "src/lib/mcp.cyr"
 
 fn test_error() {
     test_group("error");
-    assert(ERR_NFT_FAILED != 0, "ERR_NFT_FAILED nonzero");
-    assert(ERR_INVALID_RULE != 0, "ERR_INVALID_RULE nonzero");
-    assert(ERR_TABLE_NOT_FOUND != 0, "ERR_TABLE_NOT_FOUND nonzero");
-    assert(ERR_CHAIN_NOT_FOUND != 0, "ERR_CHAIN_NOT_FOUND nonzero");
+    assert(NEIN_ERR_NFT_FAILED != 0, "NEIN_ERR_NFT_FAILED nonzero");
+    assert(NEIN_ERR_INVALID_RULE != 0, "NEIN_ERR_INVALID_RULE nonzero");
+    assert(NEIN_ERR_TABLE_NOT_FOUND != 0, "NEIN_ERR_TABLE_NOT_FOUND nonzero");
+    assert(NEIN_ERR_CHAIN_NOT_FOUND != 0, "NEIN_ERR_CHAIN_NOT_FOUND nonzero");
     assert(NEIN_ERR_PERMISSION_DENIED != 0, "NEIN_ERR_PERMISSION_DENIED nonzero");
     assert(NEIN_ERR_PARSE != 0, "NEIN_ERR_PARSE nonzero");
     assert(NEIN_ERR_IO != 0, "NEIN_ERR_IO nonzero");
 
-    assert(ERR_NFT_FAILED != ERR_INVALID_RULE, "nft != invalid");
-    assert(ERR_INVALID_RULE != ERR_TABLE_NOT_FOUND, "invalid != table");
-    assert(ERR_TABLE_NOT_FOUND != ERR_CHAIN_NOT_FOUND, "table != chain");
-    assert(ERR_CHAIN_NOT_FOUND != NEIN_ERR_PERMISSION_DENIED, "chain != perm");
+    assert(NEIN_ERR_NFT_FAILED != NEIN_ERR_INVALID_RULE, "nft != invalid");
+    assert(NEIN_ERR_INVALID_RULE != NEIN_ERR_TABLE_NOT_FOUND, "invalid != table");
+    assert(NEIN_ERR_TABLE_NOT_FOUND != NEIN_ERR_CHAIN_NOT_FOUND, "table != chain");
+    assert(NEIN_ERR_CHAIN_NOT_FOUND != NEIN_ERR_PERMISSION_DENIED, "chain != perm");
     assert(NEIN_ERR_PERMISSION_DENIED != NEIN_ERR_PARSE, "perm != parse");
     assert(NEIN_ERR_PARSE != NEIN_ERR_IO, "parse != io");
 
-    var e_t, e_v = nein_err(ERR_NFT_FAILED);
+    var e_t, e_v = nein_err(NEIN_ERR_NFT_FAILED);
     assert(is_err_result(e_t) == 1, "nein_err returns Err");
-    assert_eq(nein_err_code(e_t, e_v), ERR_NFT_FAILED, "err_code extracts code");
+    assert_eq(nein_err_code(e_t, e_v), NEIN_ERR_NFT_FAILED, "err_code extracts code");
 
     var ok_t, ok_v = nein_ok();
     assert(is_ok(ok_t) == 1, "nein_ok returns Ok");

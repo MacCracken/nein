@@ -77,7 +77,7 @@ caller's Cyrius code (e.g. stiva, daimon, aegis, sutra)
                  chain_add_rule(rule_new(verdict_accept()))
         │
         ▼
-  validation:    firewall_validate(fw)  ──→  Err(ERR_INVALID_RULE) if bad
+  validation:    firewall_validate(fw)  ──→  Err(NEIN_ERR_INVALID_RULE) if bad
         │
         ▼
   rendering:     firewall_render(fw)    ──→  Str of nftables syntax
@@ -86,7 +86,7 @@ caller's Cyrius code (e.g. stiva, daimon, aegis, sutra)
   apply:         apply_firewall(fw)     ──→  fork → pipe → execve /usr/sbin/nft -f -
                                               │
                                               └─→ stderr drained, exit observed,
-                                                  Ok(0) / Err(ERR_NFT_FAILED|PERMISSION_DENIED)
+                                                  Ok(0) / Err(NEIN_ERR_NFT_FAILED|PERMISSION_DENIED)
 ```
 
 The apply layer is the only path that touches privileges; everything

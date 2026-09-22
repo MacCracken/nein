@@ -79,11 +79,11 @@ fn flowtable_validate(ft: i64): i64 {
     var vr1_t, vr1_v = validate_identifier(flowtable_name(ft));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     if (flowtable_hook(ft) != HOOK_INGRESS) {
-        return nein_err(ERR_INVALID_RULE);
+        return nein_err(NEIN_ERR_INVALID_RULE);
     }
     var devs = flowtable_devices(ft);
     var dlen = vec_len(devs);
-    if (dlen == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (dlen == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var i = 0;
     while (i < dlen) {
         var vr2_t, vr2_v = validate_iface(vec_get(devs, i));
@@ -159,11 +159,11 @@ fn ct_timeout_validate(ct: i64): i64 {
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var proto = ct_timeout_protocol(ct);
     if (proto != PROTO_TCP && proto != PROTO_UDP) {
-        return nein_err(ERR_INVALID_RULE);
+        return nein_err(NEIN_ERR_INVALID_RULE);
     }
     var l3 = ct_timeout_l3proto(ct);
     if (l3 != 0 && l3 != FAMILY_IP && l3 != FAMILY_IP6) {
-        return nein_err(ERR_INVALID_RULE);
+        return nein_err(NEIN_ERR_INVALID_RULE);
     }
     var pol = ct_timeout_policy(ct);
     var plen = vec_len(pol);

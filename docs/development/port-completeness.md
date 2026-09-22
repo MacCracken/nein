@@ -129,7 +129,7 @@ hazardous one.
 invalid addresses out and logged a warning, keeping the rest. For a deny
 rule that fails **open** — the dropped address stops being denied and
 nothing in the return value says so. The Cyrius versions return
-`Err(ERR_INVALID_RULE)` on the first bad element and leave the rule
+`Err(NEIN_ERR_INVALID_RULE)` on the first bad element and leave the rule
 **unmodified**: all inputs are checked before any match is pushed, so a
 rejected call cannot leave a half-built rule behind.
 

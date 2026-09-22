@@ -168,7 +168,7 @@ fn bf_add_port_mapping(bf: i64, pm: i64): i64 {
         var existing = vec_get(pms, i);
         if (pm_host_port(existing) == pm_host_port(pm)) {
             if (pm_protocol(existing) == pm_protocol(pm)) {
-                return nein_err(ERR_INVALID_RULE);
+                return nein_err(NEIN_ERR_INVALID_RULE);
             }
         }
         i = i + 1;

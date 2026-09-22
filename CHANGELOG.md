@@ -4,6 +4,41 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.7.0] — 2026-09-22
+
+**The error enum is fully namespaced.** The last four bare `ERR_*` members are now `NEIN_ERR_*`,
+closing the only `lint_error_enum_namespace` finding left in the tree. **754 tests** pass, host and
+`--agnos` builds clean, supply-chain PASS.
+
+### Breaking — `ERR_NFT_FAILED` · `ERR_INVALID_RULE` · `ERR_TABLE_NOT_FOUND` · `ERR_CHAIN_NOT_FOUND`
+
+Renamed to `NEIN_ERR_NFT_FAILED`, `NEIN_ERR_INVALID_RULE`, `NEIN_ERR_TABLE_NOT_FOUND`,
+`NEIN_ERR_CHAIN_NOT_FOUND`. 88 call sites across `src/`, `tests/` and `docs/`.
+
+⚠ **Source-breaking, ABI-compatible — which is why this is a MINOR and not a MAJOR.** The **values
+are unchanged** (1..4), so `nein_err_code()` returns exactly what it always did and any consumer
+reading integer codes — over MCP, across a wire, out of a log — is **unaffected**. Only a consumer
+naming the bare *symbol* at compile time must update, and it fails loudly at build rather than
+silently taking a neighbour's value.
+
+**Migration**: mechanical, and the compiler finds every site.
+
+```sh
+sed -i -E 's/\bERR_(NFT_FAILED|INVALID_RULE|TABLE_NOT_FOUND|CHAIN_NOT_FOUND)\b/NEIN_ERR_\1/g' <your sources>
+```
+
+The `\b` word boundary makes it idempotent: an already-prefixed `NEIN_ERR_NFT_FAILED` does not
+match, because there is no boundary between `N` and `E`.
+
+**Why now.** A bare `ERR_*` is reserved for the sakshi base logger, and cyrius's enum constants share
+one flat namespace — so any sibling library included in the same single-pass build can clobber them
+with last-definition-wins. `src/lib/error.cyr` has documented that hazard since 1.5.4 and prefixed
+every member added *after* it: agnosys-core's bare `ERR_PERMISSION_DENIED`/`ERR_IO` forced the first
+three, and from 1.6.0 bote's `BoteErrTag` defines a bare `ERR_PARSE` (=4) and `ERR_IO` (=11) — which
+collides with nein's `ERR_CHAIN_NOT_FOUND` (=4) by value in any host linking both. The reasoning
+applied to all four from the start; only the later members were ever migrated. daimon hit exactly
+this class from the other direction and renamed its own constants to `DAIMON_ERR_*` at its 1.4.2.
+
 ## [1.6.12] — 2026-09-22
 
 **Toolchain and dependency refresh, plus one packaging fix that only a bote-hosting consumer can

@@ -84,7 +84,7 @@ fn test_apply_smoke_inside_netns() {
     # root), we expect Ok.
     if (is_err_result(r_t) == 1) {
         var code = r_v;
-        assert(code == NEIN_ERR_PERMISSION_DENIED || code == ERR_NFT_FAILED,
+        assert(code == NEIN_ERR_PERMISSION_DENIED || code == NEIN_ERR_NFT_FAILED,
           "apply failure is permission or nft-failed (got expected error class)");
         return 0;
     }
@@ -132,7 +132,7 @@ fn test_dry_run_still_validates() {
 
     var r_t, r_v = apply_firewall(fw);
     assert(is_err_result(r_t) == 1, "dry-run still rejects invalid input");
-    assert_eq(r_v, ERR_INVALID_RULE, "validation error, not applied");
+    assert_eq(r_v, NEIN_ERR_INVALID_RULE, "validation error, not applied");
     return 0;
 }
 

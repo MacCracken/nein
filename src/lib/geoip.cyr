@@ -101,7 +101,7 @@ fn geoip_validate(bl: i64): i64 {
     while (i < clen) {
         var cb = vec_get(countries, i);
         if (_is_valid_country_code(country_code(cb)) == 0) {
-            return nein_err(ERR_INVALID_RULE);
+            return nein_err(NEIN_ERR_INVALID_RULE);
         }
         var vr2_t, vr2_v = _validate_cidr_list(country_cidrs_v4(cb));
         if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }

@@ -216,9 +216,9 @@ fn nat_validate(n: i64): i64 {
         var dpe = nat_v3(n);
         var tps = nat_v5(n);
         var tpe = nat_v6(n);
-        if (dps > dpe) { return nein_err(ERR_INVALID_RULE); }
-        if (tps > tpe) { return nein_err(ERR_INVALID_RULE); }
-        if ((dpe - dps) != (tpe - tps)) { return nein_err(ERR_INVALID_RULE); }
+        if (dps > dpe) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        if (tps > tpe) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        if ((dpe - dps) != (tpe - tps)) { return nein_err(NEIN_ERR_INVALID_RULE); }
         if (nat_v7(n) != 0) {
             var vr11_t, vr11_v = validate_comment(nat_v7(n));
             if (is_err_result(vr11_t) == 1) { return Err(vr11_v); }

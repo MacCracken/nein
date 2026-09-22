@@ -3,7 +3,7 @@
 # All strings interpolated into nftables syntax pass through these
 # validators to prevent injection of arbitrary nft commands.
 #
-# Returns: packed Result — Ok(0) on valid, Err(ERR_INVALID_RULE) on reject.
+# Returns: packed Result — Ok(0) on valid, Err(NEIN_ERR_INVALID_RULE) on reject.
 
 # Dangerous characters that could inject nftables commands or break syntax.
 # ; { } | \n \r \0 ` $
@@ -85,13 +85,13 @@ fn _is_addr_char(c: i64): i64 {
 # Must be non-empty, alphanumeric plus _ and -, at most 64 chars.
 fn validate_identifier(s: cstring): i64 {
     var len = strlen(s);
-    if (len == 0) { return nein_err(ERR_INVALID_RULE); }
-    if (len > 64) { return nein_err(ERR_INVALID_RULE); }
+    if (len == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (len > 64) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
     var i = 0;
     while (i < len) {
         if (_is_ident_char(load8(s + i)) == 0) {
-            return nein_err(ERR_INVALID_RULE);
+            return nein_err(NEIN_ERR_INVALID_RULE);
         }
         i = i + 1;
     }
@@ -103,13 +103,13 @@ fn validate_identifier(s: cstring): i64 {
 # Rejects dangerous injection characters and non-address strings.
 fn validate_addr(s: cstring): i64 {
     var len = strlen(s);
-    if (len == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (len == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
     # Fast reject: only allow valid addr chars
     var i = 0;
     while (i < len) {
         if (_is_addr_char(load8(s + i)) == 0) {
-            return nein_err(ERR_INVALID_RULE);
+            return nein_err(NEIN_ERR_INVALID_RULE);
         }
         i = i + 1;
     }
@@ -122,7 +122,7 @@ fn validate_addr(s: cstring): i64 {
         if (c >= 48 && c <= 57) { has_digit = 1; }
         i = i + 1;
     }
-    if (has_digit == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (has_digit == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
     # Must contain . or : to be IPv4 or IPv6
     var has_dot = 0;
@@ -134,7 +134,7 @@ fn validate_addr(s: cstring): i64 {
         if (c == 58) { has_colon = 1; }
         i = i + 1;
     }
-    if (has_dot == 0 && has_colon == 0) { return nein_err(ERR_INVALID_RULE); }
+    if (has_dot == 0 && has_colon == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
     return nein_ok();
 }
@@ -148,20 +148,20 @@ fn validate_family(s: cstring): i64 {
     if (streq(s, "arp") == 1) { return nein_ok(); }
     if (streq(s, "bridge") == 1) { return nein_ok(); }
     if (streq(s, "netdev") == 1) { return nein_ok(); }
-    return nein_err(ERR_INVALID_RULE);
+    return nein_err(NEIN_ERR_INVALID_RULE);
 }
 
 # Validate a network interface name.
 # Up to 15 chars, alphanumeric plus - _ .
 fn validate_iface(s: cstring): i64 {
     var len = strlen(s);
-    if (len == 0) { return nein_err(ERR_INVALID_RULE); }
-    if (len > 15) { return nein_err(ERR_INVALID_RULE); }
+    if (len == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (len > 15) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
     var i = 0;
     while (i < len) {
         if (_is_iface_char(load8(s + i)) == 0) {
-            return nein_err(ERR_INVALID_RULE);
+            return nein_err(NEIN_ERR_INVALID_RULE);
         }
         i = i + 1;
     }
@@ -176,7 +176,7 @@ fn validate_ct_state(s: cstring): i64 {
     if (streq(s, "related") == 1) { return nein_ok(); }
     if (streq(s, "invalid") == 1) { return nein_ok(); }
     if (streq(s, "untracked") == 1) { return nein_ok(); }
-    return nein_err(ERR_INVALID_RULE);
+    return nein_err(NEIN_ERR_INVALID_RULE);
 }
 
 # Validate a ct-state LIST, as carried by MATCH_CT_STATE and rendered into
@@ -198,8 +198,8 @@ fn validate_ct_state(s: cstring): i64 {
 # new statement — is rejected.
 fn validate_ct_state_list(s: cstring): i64 {
     var len = strlen(s);
-    if (len == 0) { return nein_err(ERR_INVALID_RULE); }
-    if (len > 128) { return nein_err(ERR_INVALID_RULE); }
+    if (len == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (len > 128) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
     var buf = alloc(len + 1);
     var out = 0;
@@ -214,7 +214,7 @@ fn validate_ct_state_list(s: cstring): i64 {
             # spaces, then check the token against the closed set.
             while (out > 0 && load8(buf + out - 1) == 32) { out = out - 1; }
             store8(buf + out, 0);
-            if (out == 0) { return nein_err(ERR_INVALID_RULE); }
+            if (out == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
             var vr1_t, vr1_v = validate_ct_state(buf);
             if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
             out = 0;
@@ -235,9 +235,9 @@ fn validate_ct_state_list(s: cstring): i64 {
 # Rejects double quotes and dangerous chars. Max 128 chars.
 fn validate_comment(s: cstring): i64 {
     var len = strlen(s);
-    if (len > 128) { return nein_err(ERR_INVALID_RULE); }
-    if (_has_quote(s) == 1) { return nein_err(ERR_INVALID_RULE); }
-    if (_has_dangerous_char(s) == 1) { return nein_err(ERR_INVALID_RULE); }
+    if (len > 128) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (_has_quote(s) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (_has_dangerous_char(s) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
     return nein_ok();
 }
 
@@ -245,9 +245,9 @@ fn validate_comment(s: cstring): i64 {
 # Same constraints as comments but max 64 chars (nftables limit).
 fn validate_log_prefix(s: cstring): i64 {
     var len = strlen(s);
-    if (len > 64) { return nein_err(ERR_INVALID_RULE); }
-    if (_has_quote(s) == 1) { return nein_err(ERR_INVALID_RULE); }
-    if (_has_dangerous_char(s) == 1) { return nein_err(ERR_INVALID_RULE); }
+    if (len > 64) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (_has_quote(s) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (_has_dangerous_char(s) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
     return nein_ok();
 }
 
@@ -278,9 +278,9 @@ fn _has_nft_comment_char(s: cstring): i64 {
 
 fn validate_nft_element(s: cstring): i64 {
     var len = strlen(s);
-    if (len == 0) { return nein_err(ERR_INVALID_RULE); }
-    if (_has_quote(s) == 1) { return nein_err(ERR_INVALID_RULE); }
-    if (_has_dangerous_char(s) == 1) { return nein_err(ERR_INVALID_RULE); }
-    if (_has_nft_comment_char(s) == 1) { return nein_err(ERR_INVALID_RULE); }
+    if (len == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (_has_quote(s) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (_has_dangerous_char(s) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (_has_nft_comment_char(s) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
     return nein_ok();
 }
