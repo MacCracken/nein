@@ -4,6 +4,60 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.12] - 2026-09-22
+
+**Toolchain and dependency refresh, plus one packaging fix that only a bote-hosting consumer can
+see.** Cut so daimon can adopt `dist/nein-mcp.cyr`: at 1.6.11 the bundle did not link into a host
+that vendors current bote. **754 tests** pass, build clean.
+
+### Fixed — `bridge_config_new` collided with bote's at a different arity
+
+`dist/nein-mcp.cyr` carried `src/lib/bridge.cyr`, whose `bridge_config_new(bridge_name, subnet,
+outbound_iface)` (3 args, 32-byte struct — a *network* bridge) has the same name as bote's
+`bridge_config_new(addr, port)` (2 args, 48-byte struct — an *HTTP* bridge). Unrelated concepts,
+identical name. In a host that vendors both, cyrius reports:
+
+```
+error: duplicate fn 'bridge_config_new' disagrees about arity: this one takes 3,
+       the one in lib/bote.cyr takes 2 (last definition wins, so calls to the
+       other arity would silently mis-bind)
+```
+
+and **refuses to emit the binary**. Since the MCP bundle's entire audience is bote hosts, the bundle
+was unusable by design-intent consumers. Worse than the refusal would have been the alternative:
+nein's 3-arg/32-byte version winning while bote's caller writes its `bearer_ctx` at +40 — past the
+end of a 32-byte allocation.
+
+**Fixed by scope, not by rename.** `src/lib/bridge.cyr` is dropped from the `[lib.mcp]` profile.
+Neither `mcp.cyr` nor `sign.cyr` references a single `bridge_*` symbol, and no other module in the
+profile does either (`builder.cyr`'s `bridge_name` is a parameter name, not nein's accessor) — so
+the module was in the bundle without being reachable from it. **This is not a breaking change**:
+`bridge_config_new` and the whole bridge surface stay in `[lib]` and `dist/nein.cyr` exactly as
+before; only the MCP bundle, which never used them, stops shipping them.
+
+`dist/nein-mcp.cyr`: 237,170 → **224,646 bytes**. Its `.deps` sidecar is now 21 stdlib leaves with
+no named-package entries, matching the guide's contract that the bundle leaves bote and sigil
+symbols for the host to supply.
+
+### Changed — pins
+
+| dep | was | now | | dep | was | now |
+|---|---|---|---|---|---|---|
+| cyrius | 6.6.2 | **6.6.6** | | sigil | 3.12.16 | **3.12.18** |
+| bote-core | 3.3.7 | **3.3.13** | | patra | 1.14.1 | **1.14.3** |
+| libro | 2.10.0 | **2.10.3** | | majra | 2.7.1 | **2.9.1** |
+
+The bote skew was the second half of why 1.6.11 would not link into daimon: the bundle carried bote
+3.3.7 symbols while the host vendored 3.3.13, producing 249 `duplicate fn` warnings between two
+versions of the same library. At a matched pin those become same-version duplicates.
+
+⚠ **Residual, and it is a packaging question rather than a defect.** nein declares
+`[deps.bote-core]` for its own build, and `cyrius deps` resolves that transitively, so a host that
+already vendors the full `dist/bote.cyr` ends up with both packagings and ~249 benign
+`duplicate fn (last definition wins)` warnings — identical bodies at a matched version, so last-wins
+is a no-op. It does not block the build. Whether the MCP bundle's sidecar should suppress a
+host-supplied dep is worth settling before the next consumer adopts it.
+
 ## [1.6.11] — 2026-09-10
 
 **cyrius 6.5.33 → 6.6.2 — the `Result` / `Option` / `Either` value form.** 754
