@@ -23,6 +23,46 @@
 # callers can override at runtime via nein_set_nft_path.
 var _nein_nft_path = "/usr/sbin/nft";
 
+# --- portable child reap (1.6.12) ---------------------------------------
+# agnos and Linux disagree on BOTH the arity and the meaning of waitpid, so
+# every reap in this file goes through here rather than calling sys_waitpid
+# directly. Linux: `waitpid(pid, &status, 0)` BLOCKS and writes a status word.
+# agnos `waitpid(pid)` (#4) takes ONE argument, is NON-BLOCKING by design, and
+# answers the exit code / -2 (WOULD_BLOCK) / -1 (no such child) with no status
+# word at all — the kernel notes "-2 vs -1 IS THE WHOLE CONTRACT", because
+# collapsing them makes "still running" indistinguishable from "no children".
+#
+# Found by daimon at its 2.1.8 adoption: a raw 3-arg `sys_waitpid` is a hard
+# COMPILE error on `--agnos`, so dist/nein-mcp.cyr could not be built for that
+# target by any consumer.
+#
+# Contract here, identical on both: returns > 0 on a successful reap, < 0 on
+# failure, and writes a Linux-shaped status word so the existing WEXITSTATUS
+# decoding below is unchanged. The agnos arm synthesises that word as
+# `exit_code << 8`, which is exactly what Linux reports for a normal exit.
+var _NEIN_REAP_TRIES = 2000;      # ~2s at 1ms — nft apply is fast or wedged
+
+fn _nein_waitpid(pid: i64, status_ptr: i64): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    var ts: i64[2];
+    store64(&ts, 0);
+    store64(&ts + 8, 1000000);              # 1 ms
+    var i = 0;
+    while (i < _NEIN_REAP_TRIES) {
+        var r = sys_waitpid(pid);
+        if (r >= 0) { store64(status_ptr, r << 8); return 1; }
+        if (r != 0 - 2) { return r; }       # -1 no such child, or other error
+        sys_nanosleep(&ts, 0);
+        i = i + 1;
+    }
+    return 0 - 1;                           # outlived the budget: fail closed
+    #else
+    var wr = sys_waitpid(pid, status_ptr, 0);
+    while (wr == 0 - 4) { wr = sys_waitpid(pid, status_ptr, 0); }   # -EINTR
+    return wr;
+    #endif
+}
+
 fn nein_nft_path(): cstring { return _nein_nft_path; }
 
 # Override the absolute path to nft. Must start with '/'. Returns
@@ -184,7 +224,7 @@ fn _run_nft_stdin(input_buf, input_len) {
         sakshi_error(sk_short, strlen(sk_short));
         # Reap the child before returning so it does not become a zombie.
         var st_short = 0;
-        sys_waitpid(pid, &st_short, 0);
+        _nein_waitpid(pid, &st_short);
         sys_close(err_rfd);
         sakshi_span_exit();
         return nein_err(ERR_NFT_FAILED);
@@ -204,8 +244,7 @@ fn _run_nft_stdin(input_buf, input_len) {
     # host installs a SIGCHLD reaper or sets SIGCHLD to SIG_IGN, which process
     # supervisors — nein's own consumers — routinely do.
     var status = 0;
-    var wr = sys_waitpid(pid, &status, 0);
-    while (wr == 0 - 4) { wr = sys_waitpid(pid, &status, 0); }   # -EINTR
+    var wr = _nein_waitpid(pid, &status);
     if (wr < 0) {
         var sk_wait = "nein.apply: waitpid failed — child fate unknown, failing closed";
         sakshi_error(sk_wait, strlen(sk_wait));
@@ -293,8 +332,7 @@ fn _run_nft_capture(argv, nft_path) {
 
     # Same unchecked-waitpid defect as _run_nft_stdin — see the note there.
     var status = 0;
-    var wr = sys_waitpid(pid, &status, 0);
-    while (wr == 0 - 4) { wr = sys_waitpid(pid, &status, 0); }   # -EINTR
+    var wr = _nein_waitpid(pid, &status);
     if (wr < 0) {
         var sk_cw = "nein.apply: waitpid(capture) failed — failing closed";
         sakshi_error(sk_cw, strlen(sk_cw));
