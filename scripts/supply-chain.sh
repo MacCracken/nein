@@ -84,43 +84,35 @@ ALLOWED_LICENSES=(
 # second set is invisible in cyrius.cyml, so it is recorded here — check 8
 # fails on anything that appears in lib/ and is not on one of the lists.
 #
-# The TLS stack below arrives via majra's sidecar (dist/majra.deps requires
-# tls, dynlib, fdlopen, async, sandhi), NOT via bote — nein declares none of
-# them and calls none of them, but they are resolved into the tree and
-# hash-pinned in cyrius.lock all the same. Recorded rather than removed
-# because nein cannot control a dependency's own sidecar; the point of this
-# list is that the NEXT arrival fails the build instead of slipping in.
+# Recorded rather than removed because nein cannot control a dependency's own
+# sidecar or the stdlib's own include graph; the point of this list is that the
+# NEXT arrival fails the build instead of slipping in. That cuts both ways: an
+# entry for a module that no longer arrives would let it come back unnoticed,
+# so entries are pruned when their module leaves the tree.
+#
+# Pruned at 1.7.1: the TLS stack (tls + seven tls_native_*), dynlib, fdlopen,
+# async, sandhi and test. They arrived through majra's and libro's
+# over-reporting sidecars; cyrius 6.6.18 derives every sidecar by compiling the
+# bundle, and majra 2.9.3 / libro 2.10.8 no longer name any of them.
 ACCEPTED_TRANSITIVES=(
     "alloc_cx"   # cyrius 6.6.5+: the allocator peer for the cx bytecode
                  # target. `lib/alloc.cyr` includes it unconditionally, so it
                  # lands in lib/ for every consumer; nein reaches none of it
                  # (no cx target). Arrived with the 6.6.2 -> 6.6.6 bump at
                  # 1.6.12 — it does not exist in the 6.6.4 snapshot.
-    "sys"        # named by the libro 2.10.3 AND majra 2.9.1 dep sidecars.
-                 # Both arrived with 1.6.12's pin bumps. sigil 3.12.18 is the
-                 # reason it is load-bearing: its `agnosys_uname` calls
-                 # `sys_uname` from lib/sys.cyr rather than a raw syscall(63),
-                 # which is also why `duplicate fn 'uname_release'` warns on
-                 # units linking both (upstream sigil packaging, harmless).
-    "async"
+    "sys"        # `lib/sigil.cyr` includes it directly, and the sigil 3.13.10
+                 # sidecar names it: sigil's `agnosys_uname` calls `sys_uname`
+                 # from lib/sys.cyr rather than a raw syscall(63).
     "boxed"      # cyrius 6.6.0: the boxed Result/Option surface
                  # (tagged_new / boxed_tag / boxed_payload) split out of
                  # tagged.cyr when Result became a register-pair value.
     "hashseed"   # cyrius 6.6.x: per-process randomized hash seeding,
                  # pulled in by hashmap. Closes a hash-flooding DoS.
-    "dynlib"
-    "fdlopen"
-    "mmap"
-    "sandhi"
-    "test"
-    "tls"
-    "tls_native"
-    "tls_native_conn"
-    "tls_native_ctx"
-    "tls_native_hs12"
-    "tls_native_hs13"
-    "tls_native_keysched"
-    "tls_native_lowlevel"
+    "mmap"       # included by lib/freelist.cyr and lib/thread.cyr.
+    "poison"     # cyrius 6.6.18: allocator poisoning (redzones) behind
+                 # `cyrius fuzz --poison`. `lib/alloc.cyr` and
+                 # `lib/freelist.cyr` include it unconditionally; inert unless
+                 # a harness enables it. Arrived with the 6.6.6 -> 6.6.20 bump.
 )
 
 if [[ "${1:-}" == "--print" ]]; then

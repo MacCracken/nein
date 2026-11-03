@@ -1,6 +1,6 @@
 # Dependency Supply-Chain Policy
 
-Last refresh: **2026-08-21** (v1.6.8).
+Last refresh: **2026-11-02** (v1.7.1).
 
 What nein is allowed to depend on, and how that is enforced. Successor to
 the Rust tree's `deny.toml` (cargo-deny), which was retired together with
@@ -105,15 +105,15 @@ bundles. The nearest equivalents already run in CI:
 
 ---
 
-## Current attestation (v1.6.8)
+## Current attestation (v1.7.1, cyrius 6.6.20)
 
 | Dep | Tag | Source | Licence |
 |-----|-----|--------|---------|
-| `libro` | 2.8.8 | github.com/MacCracken/libro | GPL-3.0-only |
-| `majra` | 2.6.7 | github.com/MacCracken/majra | GPL-3.0-only |
-| `bote-core` | 3.3.2 | github.com/MacCracken/bote | GPL-3.0-only |
-| `sigil` | 3.12.9 | github.com/MacCracken/sigil | GPL-3.0-only |
-| `patra` | 1.13.9 | github.com/MacCracken/patra | GPL-3.0-only |
+| `libro` | 2.10.8 | github.com/MacCracken/libro | GPL-3.0-only |
+| `majra` | 2.9.3 | github.com/MacCracken/majra | GPL-3.0-only |
+| `bote-core` | 3.3.17 | github.com/MacCracken/bote | GPL-3.0-only |
+| `sigil` | 3.13.10 | github.com/MacCracken/sigil | GPL-3.0-only |
+| `patra` | 1.15.2 | github.com/MacCracken/patra | GPL-3.0-only |
 
 The `bote-core` section is named for the **module** it pulls, not the
 repo it pulls from — see [`dependencies.md`](dependencies.md) for why

@@ -4,6 +4,92 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.7.1] — 2026-11-02
+
+**cyrius 6.6.6 → 6.6.20, and every git dep moved to the newest tag pinned at or below it.** The dep
+set is the one daimon 2.4.4 already ships on 6.6.20, so a host vendoring both now resolves one
+version of each library. **754 unit + 18 integration assertions** pass, 5/5 fuzz harnesses pass,
+host / `--aarch64` / `--agnos` builds clean, every CI gate green locally. 394 public fns, API
+snapshot unchanged.
+
+### Changed — pins
+
+| dep | was | now | pinned to cyrius | | dep | was | now | pinned to cyrius |
+|---|---|---|---|---|---|---|---|---|
+| cyrius | 6.6.6 | **6.6.20** | | | sigil | 3.12.18 | **3.13.10** | 6.6.18 |
+| bote-core | 3.3.13 | **3.3.17** | 6.6.20 | | patra | 1.14.3 | **1.15.2** | 6.6.18 |
+| libro | 2.10.3 | **2.10.8** | 6.6.20 | | majra | 2.9.1 | **2.9.3** | 6.6.20 |
+
+Each is the newest tag whose own `cyrius` pin is ≤ 6.6.20 — the next tag of every one moves to 6.7.x.
+They also agree with each other: libro 2.10.8 pins sigil 3.13.10 + patra 1.15.2, and bote 3.3.17 pins
+libro 2.10.8 + majra 2.9.3.
+
+### Fixed — four MCP response sites would have failed the type-check gate
+
+cyrius 6.6.13 started reporting `str_data(..)` passed to a `: cstring` parameter, because a `Str`'s
+bytes are not NUL-terminated at its length in general (`str_sub` / `str_split` borrow their
+parent's). Four handlers in `src/lib/mcp.cyr` passed `str_data(str_builder_build(sb))` to `_mcp_ok`,
+and CI's type-check gate fails on any warning from nein's own files — **injection-verified**: the
+1.7.0 `mcp.cyr` fails the gate at 6.6.20 with exactly those four warnings.
+
+**Not a live bug, and fixed without a copy.** A *fresh* `str_builder_build` is the case where the
+bytes ARE terminated: `lib/str.cyr` allocates `total + 1` and writes the NUL as documented contract.
+All six builder-to-cstring hand-offs in the module (the four flagged, plus two `: cstring` returns
+the check does not cover) now go through one helper, `_mcp_sb_cstr(sb)`, which names that contract,
+so the reliance lives in one place instead of six. Private, so the API surface is unchanged.
+
+### Changed — `dist/*.deps` sidecars shrank to `syscalls`
+
+cyrius 6.6.18 derives a sidecar **only** by compiling the bundle on its own across six targets;
+`[deps] stdlib` no longer leaks into it. `dist/nein.deps` goes from 31 leaves to **`syscalls`**,
+`dist/nein-mcp.deps` from 21 to **`syscalls`**, and each bundle gains a compile-verified
+`include "lib/syscalls.cyr"` requires block. This is the toolchain's new contract, not a nein change:
+libro 2.10.8's sidecar went 28 → 1 (`hashmap`) and bote-core 3.3.17's 11 → 4 in the same move.
+
+⚠ **Consumers**: declare every stdlib leaf you use in your own `[deps] stdlib` instead of relying on
+nein's sidecar to bring it. A missing one now fails your build with
+`hint: '<fn>' is defined by stdlib leaf '<leaf>' — add it to [deps] stdlib`. daimon already builds
+this way on 6.6.20; stiva (6.6.10) and aegis (6.6.2) will meet it when they move their pins.
+
+### Changed — the resolved tree lost 19 modules it never used
+
+`lib/` goes from 77 files to **63**. The TLS stack (`tls` + seven `tls_native_*`), `dynlib`,
+`fdlopen`, `async`, `sandhi` and `test` stop arriving: they came only through majra's and libro's
+over-reporting sidecars, which 6.6.18 corrected. Two arrive new: `poison` (6.6.18 allocator
+poisoning behind `cyrius fuzz --poison`; `lib/alloc.cyr` and `lib/freelist.cyr` include it
+unconditionally) and `hashmap_fast` (vendored beside `hashmap`; nothing includes it).
+
+`scripts/supply-chain.sh`'s `ACCEPTED_TRANSITIVES` goes from 19 entries to **6** — `poison` added,
+the 14 that no longer arrive **pruned**. The list exists so the next arrival fails the build; an
+entry for a module that has left would let it come back unnoticed.
+
+### Changed — `cyrius.lock` regenerated for the new pin
+
+A plain `cyrius lib sync` after the pin move restamps the lock to 6.6.20 but leaves the transitive
+leaves (`boxed`, `hashseed`, `mmap`, `sigil`, `sys`) at their 6.6.6 hashes, and the following
+`cyrius deps` then refuses them as "changed under an unchanged pin". The lock was regenerated from an
+empty `lib/` instead: one commit row per dep, 63 hash rows for 63 files, and a second
+`lib sync` → `deps` → `deps --verify` pass leaves it byte-identical. See the roadmap's traps.
+
+### Performance
+
+0 regressions across the 22 gated benchmarks against the last committed baseline, stable over two
+runs (ns/op). That baseline is **1.6.10 on cyrius 6.5.33** — no baseline was recorded at 1.6.11,
+1.6.12 or 1.7.0 — so these deltas span three toolchain moves, not this one alone.
+
+| bench | 1.6.10 | 1.7.1 | | bench | 1.6.10 | 1.7.1 |
+|---|---|---|---|---|---|---|
+| `nein_ok` | 15 | 5–6 | | `validate_comment` | 511 | 427–435 |
+| `nein_err` | 16 | 7 | | `nat_validate` | 435 | 367–369 |
+| `validate_identifier/short` | 62 | 39 | | `deep_protocol_validate` | 628 | 552–559 |
+| `validate_family` | 57 | 48 | | `validate_addr/ipv4` | 145 | **161–164** |
+
+`validate_addr/ipv4` is the one consistent slowdown (+11–13%), well inside its 90% threshold.
+
+Binary size, 1.6.12 → 1.7.1: host 2,698,904 → **2,300,536 bytes** (identical with and without
+`CYRIUS_DCE=1` — x86_64 NOP-fills dead code rather than compacting it), `--agnos` 2,654,128 →
+**2,276,576 bytes**.
+
 ## [1.7.0] — 2026-09-22
 
 **The error enum is fully namespaced.** The last four bare `ERR_*` members are now `NEIN_ERR_*`,

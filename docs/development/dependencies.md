@@ -1,6 +1,6 @@
 # Dependencies
 
-Last refresh: **2026-08-21** (v1.6.8).
+Last refresh: **2026-11-02** (v1.7.1, cyrius 6.6.20).
 
 Why each entry in `cyrius.cyml`'s `[deps]` block exists, and why the
 resolution order is what it is. This file is the prose home for that
@@ -87,16 +87,35 @@ It is an explicit `[deps.sigil]` git pin instead — see below.
 
 ## `[deps.*]` — git pins
 
-| Dep | Tag (v1.6.8) | Bundle | Why |
+| Dep | Tag (v1.7.1) | Bundle | Why |
 |-----|--------------|--------|-----|
-| `libro` | 2.8.8 | `dist/libro.cyr` | bote's manifest graph references it |
-| `majra` | 2.6.7 | `dist/majra.cyr` | bote's manifest graph references it |
-| `bote-core` | 3.3.2 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
-| `sigil` | 3.12.9 | `dist/sigil.cyr` | Ed25519 + sha256 + hex for `sign.cyr` |
-| `patra` | 1.13.9 | `dist/patra.cyr` | libro's audit store links it |
+| `libro` | 2.10.8 | `dist/libro.cyr` | bote's manifest graph references it |
+| `majra` | 2.9.3 | `dist/majra.cyr` | bote's manifest graph references it |
+| `bote-core` | 3.3.17 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
+| `sigil` | 3.13.10 | `dist/sigil.cyr` | Ed25519 + sha256 + hex for `sign.cyr` |
+| `patra` | 1.15.2 | `dist/patra.cyr` | libro's audit store links it |
 
 `libro` + `majra` are declared **before** `bote-core` because bote's graph
 references them and Cyrius resolves single-pass.
+
+**How the tags are chosen.** On a cyrius pin move, each dep goes to its newest
+tag whose own `[package].cyrius` pin is **at or below** nein's — a dep pinned
+higher may use language or stdlib that nein's toolchain does not have. At 1.7.1
+(cyrius 6.6.20) that is libro 2.10.8 / majra 2.9.3 / bote 3.3.17 (each pinned
+6.6.20) and sigil 3.13.10 / patra 1.15.2 (6.6.18); the next tag of every one
+pins 6.7.x. The set is also internally consistent — libro 2.10.8 pins sigil
+3.13.10 + patra 1.15.2, bote 3.3.17 pins libro 2.10.8 + majra 2.9.3 — and is
+the set daimon 2.4.4 ships on 6.6.20, so a host vendoring both resolves one
+version of each. To list the candidates:
+
+```bash
+for t in $(git -C ../libro tag --sort=-v:refname | head -20); do
+  echo "$t $(git -C ../libro show "${t}:cyrius.cyml" | grep -m1 '^cyrius')"
+done
+```
+
+(Under zsh write `"${t}:cyrius.cyml"`, braces included: a bare `$t:c…` is a
+zsh history modifier and silently yields an empty path.)
 
 ### Why the bote section is named `bote-core`, not `bote`
 
@@ -173,20 +192,31 @@ dropped 6 → 5 commit-pinned.
 ## Undeclared transitives
 
 `cyrius lib sync` copies the declared `[deps].stdlib` subset into
-`./lib/`. `cyrius deps` then adds whatever each git dep's `.deps`
-sidecar requires on top. That second set appears nowhere in
-`cyrius.cyml`, so at v1.6.8 there were **74 files in `lib/` against 31
-declared stdlib modules**.
+`./lib/`, plus whatever those modules `include`. `cyrius deps` then adds
+whatever each git dep's `.deps` sidecar requires on top. Neither set
+appears in `cyrius.cyml`. At v1.7.1 there are **63 files in `lib/`
+against 31 declared stdlib modules** (74 at v1.6.8, 77 at v1.7.0).
 
-Collapsing arch/platform variants, 14 base modules arrive undeclared:
+Collapsing arch/platform variants, 6 base modules arrive undeclared:
 
-| Module(s) | Pulled by | Notes |
+| Module | Pulled by | Notes |
 |---|---|---|
-| `tls`, `tls_native`, `tls_native_{conn,ctx,hs12,hs13,keysched,lowlevel}` | majra | Full TLS stack. nein calls none of it. |
-| `dynlib`, `fdlopen` | majra | Dynamic loading. |
-| `async`, `sandhi` | majra | Async runtime + transport. |
-| `mmap` | toolchain snapshot | |
-| `test` | libro | |
+| `alloc_cx` | `lib/alloc.cyr` | cx bytecode allocator peer (cyrius 6.6.5+). No cx target in nein. |
+| `poison` | `lib/alloc.cyr`, `lib/freelist.cyr` | Allocator poisoning behind `cyrius fuzz --poison` (6.6.18). Inert unless enabled. |
+| `boxed` | `lib/tagged.cyr` | Boxed Result/Option surface (6.6.0). |
+| `hashseed` | `lib/hashmap.cyr` | Per-process hash seed (hash-flooding DoS). |
+| `mmap` | `lib/freelist.cyr`, `lib/thread.cyr` | |
+| `sys` | `lib/sigil.cyr`, sigil's sidecar | sigil's `agnosys_uname` calls `sys_uname`. |
+
+`hashmap_fast` is also vendored beside `hashmap` and nothing includes it;
+the gate folds `_fast` onto its base module.
+
+**Gone at v1.7.1:** the TLS stack (`tls` + seven `tls_native_*`),
+`dynlib`, `fdlopen`, `async`, `sandhi` and `test`. They arrived only
+through majra's and libro's sidecars, which over-reported until cyrius
+6.6.18 began deriving every sidecar by compiling the bundle (see below);
+majra 2.9.3 and libro 2.10.8 name none of them. They were pruned from the
+gate's list in the same release, so a return fails the build.
 
 nein cannot control a dependency's own sidecar, so these are recorded
 rather than removed. They are enumerated in
@@ -216,11 +246,21 @@ correctly and the git dep could be restored.
 ## `dist/*.deps` sidecars
 
 `cyrius distlib` writes a `.deps` sidecar next to each bundle naming
-what a consumer must have in scope. Toolchain 6.5.x widened
-`dist/nein.deps` from a computed leaf set to the full declared stdlib
-list. Consumers of `dist/nein.cyr` that declared a narrower `[deps]
-stdlib` will need to widen theirs to match — the names are all stdlib
-modules, so `cyrius lib sync` covers them.
+what a consumer must have in scope.
+
+**Since cyrius 6.6.18 (nein 1.7.1) a sidecar lists only what the bundle
+needs to compile on its own**, derived by compiling it across six
+targets; `[deps] stdlib` no longer leaks into it. Both of nein's sidecars
+are now the single leaf `syscalls`, and each bundle opens with a matching
+compile-verified `include "lib/syscalls.cyr"` requires block. Through
+6.6.6 `dist/nein.deps` carried the full declared stdlib list (31 leaves).
+
+A consumer therefore declares every stdlib leaf **it** needs in its own
+`[deps] stdlib`, including what nein's bundle calls, rather than relying
+on nein's sidecar to bring them. A missing one fails the consumer's build
+with `hint: '<fn>' is defined by stdlib leaf '<leaf>' — add it to [deps]
+stdlib`. nein's own declared list (above) is a complete, working set to
+copy from.
 
 ⚠ A sidecar may name **stdlib leaves only**. A consumer resolves every
 line in it against the pinned toolchain snapshot, so a git-dep bundle

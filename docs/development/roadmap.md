@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-09-10 (post v1.6.11 — the cyrius 6.6.2 value-form migration: 104 validator error paths were failing OPEN, see the CHANGELOG and the trap below. Previously 2026-08-21, post v1.6.10 — every open P(-1) audit finding closed except two deliberately-deferred MEDIUM. v1.6.8 deleted `rust-old/`. v1.6.7 closed
+Last refresh: 2026-11-02 (post v1.7.1 — cyrius 6.6.6 → 6.6.20 and every git dep moved to the newest tag pinned at or below it; the lock-regeneration trap below is new. Previously 2026-09-10, post v1.6.11 — the cyrius 6.6.2 value-form migration: 104 validator error paths were failing OPEN, see the CHANGELOG and the trap below. Before that 2026-08-21, post v1.6.10 — every open P(-1) audit finding closed except two deliberately-deferred MEDIUM. v1.6.8 deleted `rust-old/`. v1.6.7 closed
 every functional gap the Rust→Cyrius port-completeness audit turned up,
 including one shipped bug where `dry_run` was write-only; v1.6.8 lifted the
 Rust tree's supply-chain policy into a first-party gate and removed the tree.
@@ -40,6 +40,16 @@ returns the payload alone and the caller reads an `Err` as **success**. 104 nein
 sites were on that path. Bind both halves and propagate with `return Err(v);`.
 The compiler now warns, and the type-check gate enforces it — see the next item
 for why that gate cannot filter on the warning's text.
+
+**On a cyrius pin move, regenerate `cyrius.lock` — don't patch it (1.7.1).** The 6.6.17 release
+notes predicted CI would refuse a stale lock at `lib sync`. What actually happens: a plain
+`cyrius lib sync` restamps the lock to the new pin but re-hashes only the *declared* stdlib leaves,
+so the include-closure leaves (`boxed`, `hashseed`, `mmap`, `sigil`, `sys`) keep the old pin's
+hashes, and the next `cyrius deps` refuses them as "changed under an unchanged pin". `deps --relock`
+gets past it but leaves the old tags' commit rows beside the new ones. What worked:
+`rm -rf lib cyrius.lock && cyrius lib sync && cyrius deps`, then prove it by running CI's
+`lib sync` → `deps` → `deps --verify` once more and checking the lock is byte-identical. Expect one
+commit row per dep and as many hash rows as files in `lib/`.
 
 **A gate must not share a defect with the thing it checks (1.6.11).** cyrius
 6.6.x warns on `return None();` even though `lib/tagged.cyr` documents the
@@ -116,7 +126,7 @@ Whichever lands, drop the ns threshold back toward 50% and shrink or remove
 
 ---
 
-## Current state — v1.6.11
+## Current state — v1.7.1
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 21 modules
@@ -127,6 +137,7 @@ integration guard, 48 benchmarks, 5 per-target fuzz drivers, single-file
 clean; aarch64 cross-build green; `capacity --check` is a real gate again
 as of 1.6.5. libro / majra / bote / sigil / patra consumed as git deps
 (daimon recipe) via `cyrius lib sync` + `cyrius deps`; no vendored bundles.
+Pinned at cyrius 6.6.20 with the same dep set daimon ships on it (1.7.1).
 sigil + patra carry explicit `[deps.*]` pins (full `dist/sigil.cyr`) so
 libro 2.8.x's thin sigil sub-bundles don't collide with the full crypto
 bundle. Full `[deps]` rationale lives in
@@ -270,13 +281,3 @@ For shipped releases see [`CHANGELOG.md`](../../CHANGELOG.md).
 For doc currency see [`doc-health.md`](../doc-health.md).
 For per-module capability footprint see [`capability-map.md`](capability-map.md).
 For threat surface see [`threat-model.md`](threat-model.md).
-
-## Recorded by cyrius 6.6.17 (2026-10-05) — for the next cyrius pin move
-
-⛔ **Nothing to do until cyrius 6.6.17 is tagged and out.** Docs-only note from the cyrius 6.6.17 lanes; each item
-is this repo's to adopt when it pins ≥ 6.6.17. Nothing here gates a cyrius release.
-
-- **`lib sync` now checks the lock** (cyrius 6.6.17 t1). This repo's CI runs `lib sync` → `deps` →
-  `deps --verify`: no change needed — with a correct committed lock `lib sync` leaves it byte-identical. If the
-  installed snapshot moves under the pin, CI now fails at `lib sync` with a named refusal instead of later at
-  `deps`.
