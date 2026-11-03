@@ -1,6 +1,6 @@
 # Dependencies
 
-Last refresh: **2026-11-02** (v1.7.1, cyrius 6.6.20).
+Last refresh: **2026-11-02** (v1.8.0, cyrius 6.7.9).
 
 Why each entry in `cyrius.cyml`'s `[deps]` block exists, and why the
 resolution order is what it is. This file is the prose home for that
@@ -87,26 +87,45 @@ It is an explicit `[deps.sigil]` git pin instead — see below.
 
 ## `[deps.*]` — git pins
 
-| Dep | Tag (v1.7.1) | Bundle | Why |
+| Dep | Tag (v1.8.0) | Bundle | Why |
 |-----|--------------|--------|-----|
-| `libro` | 2.10.8 | `dist/libro.cyr` | bote's manifest graph references it |
-| `majra` | 2.9.3 | `dist/majra.cyr` | bote's manifest graph references it |
-| `bote-core` | 3.3.17 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
-| `sigil` | 3.13.10 | `dist/sigil.cyr` | Ed25519 + sha256 + hex for `sign.cyr` |
-| `patra` | 1.15.2 | `dist/patra.cyr` | libro's audit store links it |
+| `libro` | 2.11.0 | `dist/libro.cyr` | bote's manifest graph references it |
+| `majra` | 2.12.0 | `dist/majra.cyr` | bote's manifest graph references it |
+| `bote-core` | 3.4.10 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
+| `sigil` | 3.13.11 | `dist/sigil.cyr` | Ed25519 + sha256 + hex for `sign.cyr` |
+| `patra` | 1.16.0 | `dist/patra.cyr` | libro's audit store links it |
 
 `libro` + `majra` are declared **before** `bote-core` because bote's graph
 references them and Cyrius resolves single-pass.
 
-**How the tags are chosen.** On a cyrius pin move, each dep goes to its newest
-tag whose own `[package].cyrius` pin is **at or below** nein's — a dep pinned
-higher may use language or stdlib that nein's toolchain does not have. At 1.7.1
-(cyrius 6.6.20) that is libro 2.10.8 / majra 2.9.3 / bote 3.3.17 (each pinned
-6.6.20) and sigil 3.13.10 / patra 1.15.2 (6.6.18); the next tag of every one
-pins 6.7.x. The set is also internally consistent — libro 2.10.8 pins sigil
-3.13.10 + patra 1.15.2, bote 3.3.17 pins libro 2.10.8 + majra 2.9.3 — and is
-the set daimon 2.4.4 ships on 6.6.20, so a host vendoring both resolves one
-version of each. To list the candidates:
+**How the tags are chosen.** Two rules, because two kinds of pin:
+
+- **libro, majra, bote-core** — the newest tag whose own `[package].cyrius` pin
+  is **at or below** nein's. A dep pinned higher may use language or stdlib that
+  nein's toolchain does not have.
+- **sigil, patra** — **the version the pinned toolchain snapshot folds**, read
+  from the `# Version:` line of `~/.cyrius/versions/<pin>/lib/sigil.cyr` and
+  `…/patra.cyr`. The snapshot ships both as stdlib leaves, and for sigil cyrius
+  keeps the snapshot copy over the dep artifact (`refusing to overwrite stdlib
+  leaf 'sigil'`), so the snapshot's version is what compiles whatever the pin
+  says. Pinning that version keeps the pin, `cyrius.lock` and the compiled code
+  in agreement. Every release through 1.7.1 did this, which is why the first rule
+  looked sufficient: at 6.6.20 the newest eligible sigil happened to be the
+  snapshot's. At 6.7.9 it is not — 3.13.12–3.13.15 also pin 6.7.9 but were tagged
+  after the 6.7.9 snapshot folded **3.13.11** — and pinning 3.13.15 recorded a
+  commit in the lock for code that never reached the binary. Confirm with
+  `cmp lib/sigil.cyr ~/.cyrius/deps/sigil/<tag>/dist/sigil.cyr`.
+
+| Release | cyrius | libro | majra | bote-core | sigil | patra |
+|---|---|---|---|---|---|---|
+| 1.7.1 | 6.6.20 | 2.10.8 | 2.9.3 | 3.3.17 | 3.13.10 | 1.15.2 |
+| 1.8.0 | 6.7.9 | 2.11.0 | 2.12.0 | 3.4.10 | 3.13.11 | 1.16.0 |
+
+At 1.8.0 the next tag of each of libro / majra / bote pins 6.7.18. The set is
+internally consistent: bote 3.4.10 pins libro 2.11.0 + majra 2.12.0, and libro
+2.11.0 pins patra 1.16.0. libro asks for sigil 3.13.12; nein's root pin wins
+(`cyrius deps` prints `sigil 3.13.12 (wanted by libro) not used`), which is the
+pin's second job, below. To list the candidates:
 
 ```bash
 for t in $(git -C ../libro tag --sort=-v:refname | head -20); do
@@ -194,7 +213,7 @@ dropped 6 → 5 commit-pinned.
 `cyrius lib sync` copies the declared `[deps].stdlib` subset into
 `./lib/`, plus whatever those modules `include`. `cyrius deps` then adds
 whatever each git dep's `.deps` sidecar requires on top. Neither set
-appears in `cyrius.cyml`. At v1.7.1 there are **63 files in `lib/`
+appears in `cyrius.cyml`. At v1.8.0 there are **63 files in `lib/`
 against 31 declared stdlib modules** (74 at v1.6.8, 77 at v1.7.0).
 
 Collapsing arch/platform variants, 6 base modules arrive undeclared:

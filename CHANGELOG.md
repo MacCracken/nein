@@ -4,6 +4,109 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.8.0] — 2026-11-02
+
+**cyrius 6.6.20 → 6.7.9, the 6.7 language line, and every git dep moved with it.** No nein source
+change was needed. **754 unit + 18 integration assertions** pass, 5/5 fuzz harnesses pass, host /
+`--aarch64` / `--agnos` builds clean with no nein-side warning under `CYRIUS_TYPE_CHECK=1`, every
+CI gate green locally. 394 public fns, API snapshot unchanged.
+
+**A minor, not a patch, because of what it asks of consumers.** bote-core 3.4.x needs **cyrius ≥
+6.7.2** (bote 3.4.9 measured it: 6.6.20 stops at `src/log.cyr` with `expected '=', got identifier
+'BOTE_LOG_LINE_BYTES'`), and nein's `[deps.bote-core]` resolves transitively into every consumer.
+
+### ⚠ Consumers — cyrius 6.7.2 or later
+
+A consumer still on cyrius 6.6.x **stays on nein 1.7.1**, which is the newest nein built on 6.6.20.
+Today that is every known consumer: daimon 2.4.4 (6.6.20, pins nein 1.7.0), stiva 3.0.22 (6.6.10)
+and aegis 1.1.8 (6.6.2). Each takes 1.8.0 when it moves its own pin to 6.7.x; nothing in nein's API
+changes underneath them.
+
+### Checked — the 6.7 language changes against nein's source
+
+6.7.x changes what some existing code *means*, not only whether it compiles, so the tree was swept
+for each construct rather than trusting a green build:
+
+- **6.7.3: `!` is a real operator.** Until then the lexer silently dropped a lone `!`, so
+  `if (!ok)` compiled as `if (ok)`. A grep over `src/`, `tests/`, the benches and the fuzz drivers,
+  with strings and comments stripped, finds **no lone `!`**, so nothing in nein changes meaning.
+- **Newly reserved words** (`trait` 6.7.0, `const` 6.7.2, `true` / `false` 6.7.3, `do` 6.7.5,
+  `dyn` 6.7.8): none is used as an identifier. The only hits are comments.
+- **6.7.0 `impl` `self`, 6.7.8 narrow `*T` dereference, 6.7.9 pointer arithmetic through operators
+  and unary `-` / `~` on constants:** nein has no `impl` blocks, no typed-pointer declarations and
+  no unary operator on a constant, so none of them reaches it.
+
+### Changed — pins
+
+| dep | was | now | pinned to cyrius | | dep | was | now | pinned to cyrius |
+|---|---|---|---|---|---|---|---|---|
+| cyrius | 6.6.20 | **6.7.9** | | | sigil | 3.13.10 | **3.13.11** | 6.7.5 |
+| bote-core | 3.3.17 | **3.4.10** | 6.7.9 | | patra | 1.15.2 | **1.16.0** | 6.7.5 |
+| libro | 2.10.8 | **2.11.0** | 6.7.9 | | majra | 2.9.3 | **2.12.0** | 6.7.9 |
+
+libro, majra and bote are each at the newest tag pinned at or below 6.7.9 (the next of each pins
+6.7.18), and agree with each other: bote 3.4.10 pins libro 2.11.0 + majra 2.12.0, and libro 2.11.0
+pins patra 1.16.0. `lib/` holds the same 63 modules as 1.7.1, and `cyrius.lock` was regenerated
+from an empty `lib/` and is byte-identical across a second `lib sync` → `deps` → `deps --verify`.
+
+### Changed — sigil and patra pin what the toolchain actually compiles
+
+sigil is **3.13.11, not the newest eligible 3.13.15**. The cyrius snapshot ships sigil and patra as
+stdlib leaves, and for sigil cyrius keeps the snapshot copy over the dep artifact (`refusing to
+overwrite stdlib leaf 'sigil'`), so the snapshot's version is what reaches the binary whatever the
+pin says. The 6.7.9 snapshot folds **sigil 3.13.11 / patra 1.16.0**; sigil 3.13.12–3.13.15 also pin
+6.7.9 but were tagged after it. A first pass pinned 3.13.15 and recorded a commit in `cyrius.lock` for
+code that never compiled in. The pin now matches the snapshot, and `lib/sigil.cyr` /
+`lib/patra.cyr` are byte-identical to the pinned tags' `dist/` bundles.
+
+This is what every earlier release did (6.6.6 folded 3.12.18 / 1.14.3, 6.6.20 folded 3.13.10 /
+1.15.2). At 1.7.1 it coincided with "newest tag pinned at or below the toolchain", which is why
+that was the only rule `dependencies.md` stated. It now states both.
+
+libro 2.11.0 asks for sigil 3.13.12; nein's root pin wins (`cyrius deps` notes `sigil 3.13.12
+(wanted by libro) not used`). Overriding libro's sigil choice is half of what the explicit pin is for.
+
+### Changed — bote 3.3 → 3.4: what an MCP host sees
+
+- **Tool definitions are checked and schemas compiled at registration** (bote 3.4.8).
+  `registry_register` now refuses a malformed definition, and refused tools are simply absent.
+  **All six nein tools are accepted.** The registration test asserts each lands in the registry and
+  `registry_len == 6`, so a refusal fails the suite. nein's input schemas declare no properties, so
+  bote enforces nothing beyond them and argument checking stays where it was, in nein's handlers.
+- **Results are coerced to CallToolResults** (3.4.8). nein's handlers already return one
+  (`_mcp_result`), so their output is unchanged.
+- **Control bytes are escaped in MCP envelopes** (3.4.6). The escaper nein's envelope uses,
+  `_json_emit_escaped`, copied bytes below 0x20 other than LF / CR / TAB through raw, so an envelope
+  carrying one was not valid JSON. bote now emits `\b \f` or `\u00XX`, and nein's envelopes inherit
+  that with no change on nein's side.
+
+### Performance
+
+0 regressions. Compared by hand across **all 48 benchmarks** against the last committed baseline
+(1.6.10 on cyrius 6.5.33). 1.8.0 over two runs; 1.7.1's ns figures over two, its µs figures one:
+
+| bench | 1.6.10 | 1.7.1 | 1.8.0 | | bench | 1.6.10 | 1.7.1 | 1.8.0 |
+|---|---|---|---|---|---|---|---|---|
+| `nein_ok` | 15 | 5–6 | 5–6 | | `validate_addr/ipv4` | 145 | 161–164 | **134–137** |
+| `validate_identifier/short` | 62 | 39 | 39–40 | | `firewall_1000_rules_validate` | 282 µs | 249 µs | 249–254 µs |
+| `nat_validate` | 435 | 367–369 | 364–376 | | `engine_100_agents_validate` | 594 µs | 543 µs | 543–562 µs |
+| `deep_protocol_validate` | 628 | 552–559 | 573–583 | | `firewall_1000_rules_render` | 1.21 ms | 1.24 ms | 1.23–1.27 ms |
+
+ns unless marked. 1.7.1's one consistent slowdown, `validate_addr/ipv4`, is gone; it is now 5–8%
+faster than the baseline. Every µs / ms bench is within noise of the baseline. The one single-run
+outlier, `basic_host_firewall` at +17.4% (that run's max was 2× its min), read −3.4% on the second run.
+
+⚠ **Why "by hand": the bench-regression gate is blind above 1 µs.** `scripts/bench-regression.sh`
+parses `([0-9]+)(ns|us|ms) avg`, and `cyrius bench` prints fractional µs / ms (`1.028us`,
+`1.270ms`), so every benchmark at or above 1 µs (**27 of 48**, including every large-ruleset one)
+is skipped without a word. The gate reported "22 checked" at 1.7.1 and "21 checked" here only
+because `set_render` crossed 1 µs between runs. `scripts/bench-track.sh` parses decimals
+correctly, so the committed baselines are sound. Only the gate is affected. Recorded in the roadmap;
+not changed in this release.
+
+Binary size, 1.7.1 → 1.8.0: host 2,300,536 → **2,342,176 bytes**, `--aarch64` 2,656,600 →
+**2,722,800**, `--agnos` 2,276,576 → **2,318,232**.
+
 ## [1.7.1] — 2026-11-02
 
 **cyrius 6.6.6 → 6.6.20, and every git dep moved to the newest tag pinned at or below it.** The dep

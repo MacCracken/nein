@@ -100,7 +100,7 @@ ACCEPTED_TRANSITIVES=(
                  # lands in lib/ for every consumer; nein reaches none of it
                  # (no cx target). Arrived with the 6.6.2 -> 6.6.6 bump at
                  # 1.6.12 — it does not exist in the 6.6.4 snapshot.
-    "sys"        # `lib/sigil.cyr` includes it directly, and the sigil 3.13.10
+    "sys"        # `lib/sigil.cyr` includes it directly, and the sigil 3.13.11
                  # sidecar names it: sigil's `agnosys_uname` calls `sys_uname`
                  # from lib/sys.cyr rather than a raw syscall(63).
     "boxed"      # cyrius 6.6.0: the boxed Result/Option surface

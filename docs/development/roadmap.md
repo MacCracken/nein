@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-11-02 (post v1.7.1 — cyrius 6.6.6 → 6.6.20 and every git dep moved to the newest tag pinned at or below it; the lock-regeneration trap below is new. Previously 2026-09-10, post v1.6.11 — the cyrius 6.6.2 value-form migration: 104 validator error paths were failing OPEN, see the CHANGELOG and the trap below. Before that 2026-08-21, post v1.6.10 — every open P(-1) audit finding closed except two deliberately-deferred MEDIUM. v1.6.8 deleted `rust-old/`. v1.6.7 closed
+Last refresh: 2026-11-02 (post v1.8.0 — cyrius 6.6.20 → 6.7.9 and the dep set with it; consumers need cyrius ≥ 6.7.2 for bote-core 3.4.x, so 6.6.x consumers stay on 1.7.1. New: the bench-regression gate is blind above 1 µs (P1 below), and sigil / patra pin the toolchain snapshot's fold. Earlier the same day, post v1.7.1 — cyrius 6.6.6 → 6.6.20, and the lock-regeneration trap below. Previously 2026-09-10, post v1.6.11 — the cyrius 6.6.2 value-form migration: 104 validator error paths were failing OPEN, see the CHANGELOG and the trap below. Before that 2026-08-21, post v1.6.10 — every open P(-1) audit finding closed except two deliberately-deferred MEDIUM. v1.6.8 deleted `rust-old/`. v1.6.7 closed
 every functional gap the Rust→Cyrius port-completeness audit turned up,
 including one shipped bug where `dry_run` was write-only; v1.6.8 lifted the
 Rust tree's supply-chain policy into a first-party gate and removed the tree.
@@ -98,6 +98,32 @@ cost a round of investigation:
 
 ---
 
+## P1 — the bench-regression gate is blind above 1 µs (found at 1.8.0)
+
+`scripts/bench-regression.sh` parses each result with
+`([0-9]+)(ns|us|ms)[[:space:]]+avg` — whole numbers only — and `cyrius bench`
+prints fractional µs and ms (`1.028us`, `1.270ms`). Every benchmark at or above
+1 µs is therefore dropped from the current-run map, and the comparison loop
+iterates that map, so the drop is **silent**: **27 of 48 benchmarks are never
+checked**, including every large-ruleset one (`firewall_1000_rules_render`,
+`engine_100_agents_*`, `bridge_large_*`). The gate printed "22 checked" at 1.7.1
+and "21 checked" at 1.8.0 only because `set_render` sits on the 1 µs line.
+`scripts/bench-track.sh` parses decimals, so the committed baselines are sound.
+
+The fix is two parts and both matter:
+
+1. Parse `[0-9.]+` and convert to whole ns, as `bench-track.sh` already does.
+2. **Fail on a baseline benchmark missing from the current run.** Part 1 alone
+   fixes this instance; part 2 is what stops the next format change from
+   silently shrinking the gate again.
+
+Expect the first fixed run to put 27 benchmarks under the µs threshold for the
+first time. At 1.8.0 all 27 were within noise of the 1.6.10 baseline, by hand
+(see the CHANGELOG), so it should pass. Verify by injection: drop a decimal
+bench from the output and confirm the gate fails.
+
+---
+
 ## P1 — stop comparing benchmarks across machines
 
 `scripts/bench-track.sh` records a baseline on whatever machine cuts the
@@ -126,7 +152,7 @@ Whichever lands, drop the ns threshold back toward 50% and shrink or remove
 
 ---
 
-## Current state — v1.7.1
+## Current state — v1.8.0
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 21 modules
@@ -137,7 +163,8 @@ integration guard, 48 benchmarks, 5 per-target fuzz drivers, single-file
 clean; aarch64 cross-build green; `capacity --check` is a real gate again
 as of 1.6.5. libro / majra / bote / sigil / patra consumed as git deps
 (daimon recipe) via `cyrius lib sync` + `cyrius deps`; no vendored bundles.
-Pinned at cyrius 6.6.20 with the same dep set daimon ships on it (1.7.1).
+Pinned at cyrius 6.7.9 (1.8.0); consumers need ≥ 6.7.2, and 6.6.x consumers
+stay on 1.7.1, the last release on 6.6.20.
 sigil + patra carry explicit `[deps.*]` pins (full `dist/sigil.cyr`) so
 libro 2.8.x's thin sigil sub-bundles don't collide with the full crypto
 bundle. Full `[deps]` rationale lives in
