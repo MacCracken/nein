@@ -174,9 +174,11 @@ is output or checking the repairs added — none is the same work done slower:**
 | `rule_validate/complex` | 761 | 890 | +17% | strict address parsing, range checks (I-3, I-9) |
 | `validate_identifier/short` | 62 | 37 | −40% | |
 
-⚠ **The bench-regression gate fails on the first two** (beyond the 90% ns threshold). They are
-deliberate correctness trade-offs: commit with `[bench-regression-ack]`, or record a 1.8.2 baseline
-(`scripts/bench-track.sh`).
+**A 1.8.2 baseline is recorded** in `docs/benchmarks/history.csv` (48 benchmarks, commit
+`0e86152`), so the bench-regression gate compares against this release from now on: 48 of 48
+checked, 0 regressions. The first two rows above exceed the 90% threshold against 1.6.10 and are the
+deliberate cost of correct output. No baseline was recorded at 1.7.1, 1.8.0 or 1.8.1 — the comparison
+above spans all four releases.
 
 ## [1.8.1] — 2026-11-02
 
