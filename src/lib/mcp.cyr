@@ -8,13 +8,14 @@
 # result_cstr, where `args` is the raw JSON `arguments` object (cstr) and
 # the return is a `{"content":[...],"isError":bool}` envelope cstr.
 #
-# Tools (merged agent-ergonomic + diff surface):
-#   nein_status   {}                                  -> table/rule summary
-#   nein_allow    {protocol,port,source?,table?,chain?} -> add accept rule (live)
-#   nein_deny     {protocol,port,source?,table?,chain?} -> add drop rule (live)
-#   nein_validate {protocol,port,source?,table?,chain?} -> ok / error (no apply)
-#   nein_list     {table?,chain?}                      -> live rules (filtered)
-#   nein_diff     {rules:[{protocol,port,verdict}]}    -> nft ops vs live (preview)
+# Tools (merged agent-ergonomic + diff surface), by class (1.9.0):
+#   nein_validate {protocol,port,source?,table?,chain?} -> ok / error      OFFLINE
+#   nein_status   {}                                  -> table/rule summary READS_LIVE
+#   nein_list     {table?,chain?}                      -> live rules        READS_LIVE
+#   nein_diff     {rules:[{protocol,port,verdict}]}    -> nft ops vs live   READS_LIVE
+#   nein_allow    {protocol,port,source?,table?,chain?} -> add accept rule  MUTATES
+#   nein_deny     {protocol,port,source?,table?,chain?} -> add drop rule    MUTATES
+# Without a host gate only OFFLINE runs; see the gate section.
 #
 # Depends on the bote-core bundle ([deps.bote-core] -> lib/bote-core.cyr): the
 # dispatcher/registry/schema/jsonx surface + _json_emit_escaped. Backing
@@ -176,24 +177,143 @@ fn nein_mcp_ok(msg: cstring): cstring { return _mcp_result(msg, 0); }
 fn nein_mcp_err(msg: cstring): cstring { return _mcp_result(msg, 1); }
 
 # ================================================================
-# Access-control gate (1.6.1 setup for daimon's 1.6.2 tools).
-# The host may register nein's tools WITH a gate fn — fn(name, claims) ->
-# 1 permit / 0 deny — via nein_tools_register_gated. Each handler consults
-# it first. `claims` is whatever bote hands the handler: 0 when the host
-# configures no auth, and (bote 3.7.5) a NUL-terminated heap copy of the
-# verified token when HTTP or WebSocket auth is configured — a copy the
+# Tool table — single source of truth for the 6 tools.
+# Both integration paths (bote-dispatcher registration, and the daimon-style
+# dispatch adapter) and the gate read these accessors, so names, descriptions
+# and classes never drift between them. A host that dispatches by name
+# (daimon's model) registers descriptors from nein_tool_name / nein_tool_desc
+# and routes with nein_mcp_dispatch; its gate classifies with nein_tool_class.
+# ================================================================
+
+# What a tool can reach (1.9.0, audit M-3). Through 1.8.2 the table said only
+# read-only or not, and read-only covered three tools that run `nft -a list
+# ruleset` as root and hand back the live ruleset — set elements, allowed
+# sources, comments — which hosts took as safe to expose.
+enum NeinToolClass {
+    NEIN_TOOL_OFFLINE = 1;      # touches nothing outside the process: nein_validate
+    NEIN_TOOL_READS_LIVE = 2;   # runs nft as root, returns live state: nein_status / nein_list / nein_diff
+    NEIN_TOOL_MUTATES = 3;      # changes the live firewall: nein_allow / nein_deny
+}
+
+fn nein_tool_count(): i64 { return 6; }
+
+fn nein_tool_name(i: i64): cstring {
+    if (i == 0) { return "nein_status"; }
+    if (i == 1) { return "nein_allow"; }
+    if (i == 2) { return "nein_deny"; }
+    if (i == 3) { return "nein_validate"; }
+    if (i == 4) { return "nein_list"; }
+    if (i == 5) { return "nein_diff"; }
+    return "";
+}
+
+fn nein_tool_desc(i: i64): cstring {
+    if (i == 0) { return "get current nftables firewall status (table count, rule count); args {}"; }
+    if (i == 1) { return "add an accept rule to the live firewall; args {protocol, port, source?, table?, chain?}"; }
+    if (i == 2) { return "add a drop rule to the live firewall; args {protocol, port, source?, table?, chain?}"; }
+    if (i == 3) { return "validate a port-rule request (no apply); args {protocol, port, source?, table?, chain?}"; }
+    if (i == 4) { return "list live firewall rules, optionally filtered; args {table?, chain?}"; }
+    if (i == 5) { return "preview nft ops to reach target rules (no apply); args {rules:[{protocol,port,verdict}]}"; }
+    return "";
+}
+
+# The table index of a tool name, or -1 (NULL, or not a nein tool). A gate is
+# handed a name; this is how it finds the class without restating the table.
+fn nein_tool_index(name: cstring): i64 {
+    if (name == 0) { return 0 - 1; }
+    var i = 0;
+    while (i < nein_tool_count()) {
+        if (streq(name, nein_tool_name(i)) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# NEIN_TOOL_OFFLINE / _READS_LIVE / _MUTATES, or 0 for an index outside the
+# table — so `nein_tool_class(nein_tool_index(name))` is 0 for an unknown name,
+# which no gate should permit.
+fn nein_tool_class(i: i64): i64 {
+    if (i == 3) { return NEIN_TOOL_OFFLINE; }      # nein_validate
+    if (i == 0 || i == 4 || i == 5) { return NEIN_TOOL_READS_LIVE; }   # status / list / diff
+    if (i == 1 || i == 2) { return NEIN_TOOL_MUTATES; }   # allow / deny
+    return 0;
+}
+
+# 1 = does not change the firewall (MCP readOnlyHint); 0 = mutating. ⚠ Not
+# "safe to expose": three of the four read the live ruleset as root — gate on
+# nein_tool_class. Unchanged since 1.6.1 for hosts that read it.
+fn nein_tool_read_only(i: i64): i64 {
+    if (nein_tool_class(i) == NEIN_TOOL_MUTATES) { return 0; }
+    return 1;
+}
+
+# 1 = the mutating tools (the firewall_admin profile); 0 otherwise.
+fn nein_tool_admin(i: i64): i64 {
+    if (nein_tool_class(i) == NEIN_TOOL_MUTATES) { return 1; }
+    return 0;
+}
+
+# ================================================================
+# Access-control gate — the host's policy, consulted before every tool acts.
+#
+# gate_fp = fn(tool_name: cstring, claims: i64) -> NEIN_GATE_PERMIT to permit;
+# ANY other value denies. `claims` is whatever bote hands the handler: 0 when
+# the host configures no auth, and (bote 3.7.5) a NUL-terminated heap copy of
+# the verified token when HTTP or WebSocket auth is configured — a copy the
 # handler may keep (bote_req_claims_kept). nein passes it to the gate
 # unchanged and never dereferences it; reading it is the host's policy.
-# With no gate (plain nein_tools_register) behavior is unchanged.
+#
+# 1.9.0 contract (audit M-2 / M-3), replacing 1.6.1's "1 permit / 0 deny":
+#   - Permit is one distinctive value. nein calls the gate through a run-time
+#     pointer (fncall2), and cyrius truncates a Result returned that way to
+#     its tag: a gate written to return Ok / Err read Err (tag 1) as permit.
+#     A bool, a Result tag, -1, an error code and (being above the 47/48-bit
+#     user-space range of x86_64 and aarch64) any pointer all now DENY. A 1.8
+#     gate returning 1 denies everything — fails closed until migrated.
+#   - One gate per process, installed once. The handler ABI (args, claims)
+#     carries no registration, so a gate cannot be held per dispatcher; what
+#     1.9.0 closes is the replacement — through 1.8.2 any later
+#     nein_tools_register_gated or nein_mcp_set_gate(0) silently swapped or
+#     removed the gate for every dispatcher already serving. Installing the
+#     gate already installed is a no-op; any other install is refused.
+#   - With no gate installed, only the offline tool (nein_validate) runs. The
+#     live readers and the mutating pair need a gate that permits them —
+#     through 1.8.2, plain nein_tools_register ran all six, nein_allow and
+#     nein_deny included, for any caller.
 # ================================================================
+
+enum NeinGateVerdict {
+    NEIN_GATE_PERMIT = 0x4E45494E2D4F4B21;   # "NEIN-OK!" as ASCII bytes
+}
 
 var _nein_gate = 0;
 
-# Returns 0 if the tool is permitted (no gate, or gate says permit), else
-# an "access denied" error envelope the handler returns directly.
+# Install `gate_fp` as the process's gate. 0 when it is now the gate (just
+# installed, or already the one installed); 1 when refused — a NULL gate, or a
+# different gate already installed — with the installed gate left in place.
+# Compare-and-swap, so two threads installing at once cannot both win.
+fn _nein_gate_install(gate_fp: i64): i64 {
+    if (gate_fp == 0) {
+        var sk_null = "nein.mcp: refused a NULL host gate (a gate cannot be cleared)";
+        sakshi_error(sk_null, strlen(sk_null));
+        return 1;
+    }
+    if (atomic_cas(&_nein_gate, 0, gate_fp) == 1) { return 0; }
+    if (atomic_load(&_nein_gate) == gate_fp) { return 0; }
+    var sk_repl = "nein.mcp: refused to replace the installed host gate (one gate per process)";
+    sakshi_error(sk_repl, strlen(sk_repl));
+    return 1;
+}
+
+# Returns 0 if the tool is permitted, else an "access denied" error envelope
+# the handler returns directly, before it touches anything.
 fn _nein_gate_check(name: cstring, claims: i64): cstring {
-    if (_nein_gate == 0) { return 0; }
-    if (fncall2(_nein_gate, name, claims) == 1) { return 0; }
+    var gate = atomic_load(&_nein_gate);
+    if (gate == 0) {
+        if (nein_tool_class(nein_tool_index(name)) == NEIN_TOOL_OFFLINE) { return 0; }
+        return _mcp_err("access denied: no host gate installed for a tool that reads or changes the live firewall");
+    }
+    if (fncall2(gate, name, claims) == NEIN_GATE_PERMIT) { return 0; }
     return _mcp_err("access denied: tool gated by host policy");
 }
 
@@ -293,6 +413,11 @@ fn _mcp_apply_verdict(args: cstring, verdict: cstring, label: cstring): cstring 
     var rule = _mcp_build_rule(args, verdict);
     var res_t, res_v = add_rule_live("inet", table, chain, rule);
     if (is_err_result(res_t) == 1) {
+        # 1.9.0 (audit S-8): nft may have committed. An agent that reads
+        # "failed" retries, and a retried add duplicates the rule.
+        if (res_v == NEIN_ERR_OUTCOME_UNKNOWN) {
+            return _mcp_err("apply outcome unknown: the rule may be live; check with nein_list before retrying");
+        }
         return _mcp_err("apply failed (needs root + nft; verify the table/chain exist)");
     }
     var sb = str_builder_new();
@@ -477,68 +602,22 @@ fn _nein_diff_handler(args: cstring, claims: i64): cstring {
 # ================================================================
 # Registration — mount nein's tools on an existing bote dispatcher.
 # Each descriptor carries bote ToolAnnotations (read-only vs destructive)
-# and profile tags (firewall / firewall_admin) so a host can filter and
-# gate them by side-effect without any dependency on bote's reserved
-# claims. This is what daimon's 1.6.2 firewall tools build on.
+# and profile tags (firewall, plus firewall_read / firewall_admin by class)
+# so a client can list them by what they reach. Access is the gate's.
 # ================================================================
 
-# Profile vecs: read-only tools -> {firewall}; mutating -> {firewall,
-# firewall_admin} so a host can expose the admin set only to privileged
-# agents (tools/list?profile=...).
-fn _nein_pf_ro(): i64 {
+# Profile tags by class. `firewall` is on all six, so tools/list?profile=
+# firewall lists every nein tool, as it always has; `firewall_read` (1.9.0)
+# marks the live readers and `firewall_admin` the mutating pair. A profile
+# is a listing filter a client chooses (bote's tools/list), not access
+# control — that is the gate's job.
+fn _nein_profiles(i: i64): i64 {
     var v = vec_new();
     vec_push(v, "firewall");
+    var c = nein_tool_class(i);
+    if (c == NEIN_TOOL_READS_LIVE) { vec_push(v, "firewall_read"); }
+    if (c == NEIN_TOOL_MUTATES) { vec_push(v, "firewall_admin"); }
     return v;
-}
-
-fn _nein_pf_admin(): i64 {
-    var v = vec_new();
-    vec_push(v, "firewall");
-    vec_push(v, "firewall_admin");
-    return v;
-}
-
-# --- Tool table — single source of truth for the 6 tools ----------------
-# Both integration paths (bote-dispatcher registration below, and the
-# daimon-friendly dispatch adapter) read from these accessors, so names /
-# descriptions / read-only classification never drift between them. A host
-# that dispatches by name (daimon's model) uses nein_tool_name/desc/
-# read_only/admin to register descriptors and nein_mcp_dispatch to route.
-
-fn nein_tool_count(): i64 { return 6; }
-
-fn nein_tool_name(i: i64): cstring {
-    if (i == 0) { return "nein_status"; }
-    if (i == 1) { return "nein_allow"; }
-    if (i == 2) { return "nein_deny"; }
-    if (i == 3) { return "nein_validate"; }
-    if (i == 4) { return "nein_list"; }
-    if (i == 5) { return "nein_diff"; }
-    return "";
-}
-
-fn nein_tool_desc(i: i64): cstring {
-    if (i == 0) { return "get current nftables firewall status (table count, rule count); args {}"; }
-    if (i == 1) { return "add an accept rule to the live firewall; args {protocol, port, source?, table?, chain?}"; }
-    if (i == 2) { return "add a drop rule to the live firewall; args {protocol, port, source?, table?, chain?}"; }
-    if (i == 3) { return "validate a port-rule request (no apply); args {protocol, port, source?, table?, chain?}"; }
-    if (i == 4) { return "list live firewall rules, optionally filtered; args {table?, chain?}"; }
-    if (i == 5) { return "preview nft ops to reach target rules (no apply); args {rules:[{protocol,port,verdict}]}"; }
-    return "";
-}
-
-# 1 = read-only (no side effects); 0 = mutating (live apply). Hosts should
-# gate the mutating tools to privileged agents.
-fn nein_tool_read_only(i: i64): i64 {
-    if (i == 1) { return 0; }   # nein_allow
-    if (i == 2) { return 0; }   # nein_deny
-    return 1;                    # status / validate / list / diff
-}
-
-# 1 = firewall_admin profile (the mutating tools); 0 = firewall only.
-fn nein_tool_admin(i: i64): i64 {
-    if (nein_tool_read_only(i) == 0) { return 1; }
-    return 0;
 }
 
 fn _nein_handler(i: i64): i64 {
@@ -582,21 +661,26 @@ fn _nein_register_one(dispatcher: i64, td: i64, handler_fp: i64): i64 {
 
 fn _nein_reg(dispatcher: i64, i: i64): i64 {
     var ann = ann_read_only();
-    var pf = _nein_pf_ro();
-    if (nein_tool_read_only(i) == 0) {
-        ann = ann_destructive();
-        pf = _nein_pf_admin();
-    }
+    if (nein_tool_class(i) == NEIN_TOOL_MUTATES) { ann = ann_destructive(); }
     var td = tool_def_new(nein_tool_name(i), nein_tool_desc(i), schema_new("object", 0, vec_new()));
     td = tool_def_with_annotations(td, ann);
-    td = tool_def_with_profiles(td, pf);
+    td = tool_def_with_profiles(td, _nein_profiles(i));
     return _nein_register_one(dispatcher, td, _nein_handler(i));
 }
 
 # Returns the number of tools bote refused: 0 when all six registered.
 # (Through 1.8.1 it returned 0 unconditionally, so a caller that ignores the
 # result is unaffected; one that checks `== 0` now gets a true answer.)
+#
+# The tools run under the PROCESS's gate — whichever is installed, now or
+# later, by any component. A host that mounts nein on two dispatchers with
+# different trust (a stdio loop and an unauthenticated HTTP endpoint, say)
+# gets one policy for both; the gate must tell them apart through `claims`.
 fn nein_tools_register(dispatcher: i64): i64 {
+    if (atomic_load(&_nein_gate) == 0) {
+        var sk_ng = "nein.mcp: tools registered with no host gate — only nein_validate runs until one is installed";
+        sakshi_warn(sk_ng, strlen(sk_ng));
+    }
     var refused = 0;
     var i = 0;
     while (i < nein_tool_count()) {
@@ -606,13 +690,17 @@ fn nein_tools_register(dispatcher: i64): i64 {
     return refused;
 }
 
-# Like nein_tools_register, but installs a host access-control gate:
-# `gate_fp` = fn(tool_name: cstring, claims: i64) -> 1 permit / 0 deny.
-# Every handler consults it before acting; a denied call returns an
-# "access denied" envelope and never touches the firewall. Returns the
-# refused count, as nein_tools_register does.
+# Like nein_tools_register, but first installs the host access-control gate
+# (see the gate section: permit is NEIN_GATE_PERMIT, one gate per process).
+# Every handler consults it before acting; a denied call returns an "access
+# denied" envelope and never touches the firewall. Returns the refused count,
+# as nein_tools_register does — and when the gate itself is refused (NULL, or
+# another gate is installed) registers nothing and returns nein_tool_count(),
+# so this call never mounts tools under a gate other than the one it names.
+# (Tools mounted by plain nein_tools_register have no such guarantee: they run
+# under whatever gate the process installs.)
 fn nein_tools_register_gated(dispatcher: i64, gate_fp: i64): i64 {
-    _nein_gate = gate_fp;
+    if (_nein_gate_install(gate_fp) != 0) { return nein_tool_count(); }
     return nein_tools_register(dispatcher);
 }
 
@@ -622,23 +710,18 @@ fn nein_tools_register_gated(dispatcher: i64, gate_fp: i64): i64 {
 # descriptors from the tool table and forwards every "nein_*" call to
 # nein_mcp_dispatch. Install the gate first with nein_mcp_set_gate.
 
-# Install the access-control gate for the dispatch-adapter path (same
-# gate the gated register uses, minus the dispatcher).
+# Install the access-control gate for the dispatch-adapter path (the same
+# one gate the gated register installs). 0 when `gate_fp` is the gate; 1 when
+# refused — NULL, or a different gate already installed, which stays. Through
+# 1.8.2 it returned 0 and replaced whatever was there, NULL included.
 fn nein_mcp_set_gate(gate_fp: i64): i64 {
-    _nein_gate = gate_fp;
-    return 0;
+    return _nein_gate_install(gate_fp);
 }
 
 # Route a tool call by name -> the handler's MCP result envelope cstr, or
 # an "unknown tool" error envelope. Handlers consult the installed gate.
 fn nein_mcp_dispatch(name: cstring, args: cstring, claims: i64): cstring {
-    if (name == 0) { return _mcp_err("unknown nein tool"); }   # was streq(0): a crash (audit M-7)
-    var i = 0;
-    while (i < nein_tool_count()) {
-        if (streq(name, nein_tool_name(i)) == 1) {
-            return fncall2(_nein_handler(i), args, claims);
-        }
-        i = i + 1;
-    }
-    return _mcp_err("unknown nein tool");
+    var i = nein_tool_index(name);   # NULL is -1: was streq(0), a crash (audit M-7)
+    if (i < 0) { return _mcp_err("unknown nein tool"); }
+    return fncall2(_nein_handler(i), args, claims);
 }

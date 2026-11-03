@@ -19,6 +19,11 @@
 #
 # Crypto comes from sigil (Ed25519 + hex + sha256); apply reuses apply.cyr.
 # Key material sizes (sigil): sk = 64 bytes (seed32||pk32), pk = 32, sig = 64.
+#
+# ⚠ A v1 envelope is not bound to a time, a sequence or a host: it verifies
+# forever, wherever it is presented. Since 1.9.0 the v2 envelope (end of this
+# file) signs a seq, an expiry and a scope with the body; use it for anything
+# a verifier applies. v1 is kept for existing at-rest stores and goes in 2.0.
 
 # ================================================================
 # Envelope constants
@@ -164,14 +169,35 @@ fn sign_ruleset(fw: i64, sk: i64, key_id: cstring): i64 {
 }
 
 # ================================================================
-# Parsing — SignedRuleset record
-#   [pubkey_hex:8][sig_hex:8][keyid:8][body_data:8][body_len:8] = 40 bytes
+# Parsing — SignedRuleset record, shared by v1 and v2 (1.9.0)
+#   [pubkey_hex:8][sig_hex:8][keyid:8][body_data:8][body_len:8]
+#   [version:8][scope:8][seq:8][not_after:8] = 72 bytes
+# A v1 record has version 1, scope "" and seq / not_after 0, so every accessor
+# is safe on either (through 1.8.2 the record was 40 bytes, v1 only).
 # ================================================================
 
 fn signed_pubkey_hex(sr: i64): cstring { return load64(sr); }
 fn signed_sig_hex(sr: i64): cstring { return load64(sr + 8); }
 fn signed_keyid(sr: i64): cstring { return load64(sr + 16); }
 fn signed_body(sr: i64): i64 { return _sign_str(load64(sr + 24), load64(sr + 32)); }
+fn signed_version(sr: i64): i64 { return load64(sr + 40); }
+fn signed_scope(sr: i64): cstring { return load64(sr + 48); }
+fn signed_seq(sr: i64): i64 { return load64(sr + 56); }
+fn signed_not_after(sr: i64): i64 { return load64(sr + 64); }
+
+fn _sign_record(pubkey_hex: cstring, sig_hex: cstring, keyid: cstring, body_data: i64, body_len: i64): i64 {
+    var sr = alloc(72);
+    store64(sr, pubkey_hex);
+    store64(sr + 8, sig_hex);
+    store64(sr + 16, keyid);
+    store64(sr + 24, body_data);
+    store64(sr + 32, body_len);
+    store64(sr + 40, 1);
+    store64(sr + 48, "");                 # no scope: empty, never NULL
+    store64(sr + 56, 0);
+    store64(sr + 64, 0);
+    return sr;
+}
 
 # Extract a `prefix`-tagged header value (up to end-of-line) from the
 # header region hay[0,limit). Returns an alloc'd NUL-terminated cstr, or 0.
@@ -241,14 +267,13 @@ fn parse_signed_ruleset(signed: i64): i64 {
     }
     var body_len = body_stop - body_start;
     if (body_len < 0) { body_len = 0; }
+    # A NUL in the body (1.9.0). Signing has refused one since 1.8.2, so no
+    # genuine v1 envelope carries one — while every v2 signed message starts
+    # with "nein-sig-v2\0". Refusing it here means a v2 signature can never be
+    # passed off as a v1 signature over a "body" that is a v2 message.
+    if (memchr(data + body_start, 0, body_len) >= 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
 
-    var sr = alloc(40);
-    store64(sr, pubkey_hex);
-    store64(sr + 8, sig_hex);
-    store64(sr + 16, keyid);
-    store64(sr + 24, data + body_start);
-    store64(sr + 32, body_len);
-    return Ok(sr);
+    return Ok(_sign_record(pubkey_hex, sig_hex, keyid, data + body_start, body_len));
 }
 
 # ================================================================
@@ -326,4 +351,377 @@ fn apply_signed_ruleset_hex(signed: i64, pubkey_hex: cstring): i64 {
     var pk = alloc(32);
     hex_decode_into(pubkey_hex, 64, pk);
     return apply_signed_ruleset(signed, pk);
+}
+
+# ================================================================
+# v2 — replay-bound envelopes (1.9.0)
+# ================================================================
+#
+# A v1 envelope verifies forever: any ruleset ever signed with the trusted key
+# applies again, so an older "accept 22" outlives a newer "drop 22", and one
+# host's ruleset applies on another (audit 2026-08-21 MEDIUM, re-confirmed
+# 2026-11-03). v2 signs, besides the body, a sequence number, an expiry and a
+# scope, so the verifier can refuse a stale, expired or misdirected envelope:
+#
+#   nein-sig: v2
+#   nein-sig-alg: ed25519
+#   nein-sig-keyid: <label>
+#   nein-sig-scope: <host or role, 1-64 of [A-Za-z0-9._:-]>
+#   nein-sig-seq: <decimal, 1 .. 2^63-1>
+#   nein-sig-not-after: <decimal unix seconds; 0 = no expiry>
+#   nein-sig-pubkey: <64 hex>
+#   nein-sig-digest: <64 hex sha256(body)>   (checked against the body)
+#   nein-sig-sig: <128 hex>
+#   -----BEGIN NFT RULESET-----
+#   <body>
+#   -----END NFT RULESET-----
+#
+# The headers are in clear so an operator can read them, and the verifier
+# rebuilds the signed message from them:
+#
+#   "nein-sig-v2\0" || seq u64be || not_after u64be
+#     || u32be len(scope) || scope || u32be len(keyid) || keyid || body
+#
+# Every field before the body has a fixed or prefixed length, so no two
+# (fields, body) pairs share a message; the tag's NUL keeps it apart from any
+# v1 signed body, which can hold no NUL. The parser is strict where v1's is
+# lenient: exactly these lines, in this order, each once, and nothing after
+# the END line but one newline, no NUL in a header, hex in lowercase — so a
+# host that reads the clear headers itself reads the values nein verified.
+#
+# nein stays stateless. The caller keeps, per (key, scope), the last seq it
+# applied, passes `min_seq` = that + 1 (or that, to allow re-applying the
+# current ruleset, e.g. at boot), and records the returned seq only after the
+# apply succeeds. A host that adopts v2 must stop calling the v1 functions:
+# a v1 envelope is not bound, so accepting one IS the replay.
+
+# 1..64 bytes of [A-Za-z0-9._:-]: a host name, or a "role:web" label.
+fn _sign_valid_scope(scope: cstring): i64 {
+    if (scope == 0) { return 0; }
+    var n = strlen(scope);
+    if (n == 0 || n > 64) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var c = load8(scope + i);
+        var ok = _is_ident_char(c);
+        if (c == 46 || c == 58) { ok = 1; }   # '.' ':'
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# A decimal in 0 .. 2^63-1, digits only, no sign or leading zero; -1 if not.
+fn _sign_parse_u63(s: cstring): i64 {
+    if (s == 0) { return 0 - 1; }
+    var n = strlen(s);
+    if (n == 0 || n > 19) { return 0 - 1; }
+    if (n > 1 && load8(s) == 48) { return 0 - 1; }
+    var max = "9223372036854775807";
+    var i = 0;
+    while (i < n) {
+        var c = load8(s + i);
+        if (c < 48 || c > 57) { return 0 - 1; }
+        i = i + 1;
+    }
+    if (n == 19) {
+        # Same length, so the first differing digit decides; above max wraps.
+        var k = 0;
+        while (k < 19 && load8(s + k) == load8(max + k)) { k = k + 1; }
+        if (k < 19 && load8(s + k) > load8(max + k)) { return 0 - 1; }
+    }
+    var v = 0;
+    i = 0;
+    while (i < n) {
+        v = v * 10 + (load8(s + i) - 48);
+        i = i + 1;
+    }
+    return v;
+}
+
+fn _sign_put_be(p: i64, v: i64, nbytes: i64): i64 {
+    var i = 0;
+    while (i < nbytes) {
+        store8(p + i, (v >> ((nbytes - 1 - i) * 8)) & 255);
+        i = i + 1;
+    }
+    return p + nbytes;
+}
+
+# The v2 signed message (see the format above), as a fresh Str.
+fn _sign_v2_message(keyid: cstring, scope: cstring, seq: i64, not_after: i64, body_data: i64, body_len: i64): i64 {
+    var tag = "nein-sig-v2";
+    var tlen = strlen(tag) + 1;               # with its NUL
+    var slen = strlen(scope);
+    var klen = strlen(keyid);
+    var total = tlen + 8 + 8 + 4 + slen + 4 + klen + body_len;
+    var m = alloc(total);
+    memcpy(m, tag, tlen);
+    var p = m + tlen;
+    p = _sign_put_be(p, seq, 8);
+    p = _sign_put_be(p, not_after, 8);
+    p = _sign_put_be(p, slen, 4);
+    memcpy(p, scope, slen);
+    p = p + slen;
+    p = _sign_put_be(p, klen, 4);
+    memcpy(p, keyid, klen);
+    p = p + klen;
+    memcpy(p, body_data, body_len);
+    return _sign_str(m, total);
+}
+
+# What sign_ruleset_body refuses in a body, shared with v2: an envelope
+# delimiter (1.6.10) or a NUL (1.8.2). 0 when the body is signable.
+fn _sign_body_refusal(data: i64, len: i64): i64 {
+    if (_body_has_delimiter(data, len) == 1) { return NEIN_ERR_SIG_MALFORMED; }
+    if (memchr(data, 0, len) >= 0) { return NEIN_ERR_SIG_MALFORMED; }
+    return 0;
+}
+
+# Sign a rendered body as a v2 envelope. `scope` names where it may apply;
+# `seq` (>= 1) orders it after every envelope signed before for that scope;
+# `not_after` is the last unix second it verifies (0 for no expiry).
+# Returns Ok(Str envelope) | Err(NEIN_ERR_SIG_KEY) for a NULL / mismatched key
+# or invalid keyid | Err(NEIN_ERR_SIG_MALFORMED) for an invalid scope, seq,
+# not_after, or a body sign_ruleset_body would refuse.
+fn sign_ruleset_body_v2(body: i64, sk: i64, key_id: cstring, scope: cstring, seq: i64, not_after: i64): i64 {
+    if (body == 0 || sk == 0) { return nein_err(NEIN_ERR_SIG_KEY); }
+    var kid = key_id;
+    if (kid == 0) { kid = "unnamed"; }
+    if (is_err_result(validate_identifier(kid)) == 1) { return nein_err(NEIN_ERR_SIG_KEY); }
+    if (_sign_valid_scope(scope) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (seq < 1 || not_after < 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    var body_data = str_data(body);
+    var body_len = str_len(body);
+    var refusal = _sign_body_refusal(body_data, body_len);
+    if (refusal != 0) { return nein_err(refusal); }
+
+    var msg = _sign_v2_message(kid, scope, seq, not_after, body_data, body_len);
+    var sig = alloc(64);
+    if (ed25519_sign(sk, str_data(msg), str_len(msg), sig) != 0) { return nein_err(NEIN_ERR_SIG_KEY); }
+    var digest = alloc(32);
+    sha256(body_data, body_len, digest);
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "nein-sig: v2\nnein-sig-alg: ed25519\nnein-sig-keyid: ");
+    str_builder_add_cstr(sb, kid);
+    str_builder_add_cstr(sb, "\nnein-sig-scope: ");
+    str_builder_add_cstr(sb, scope);
+    str_builder_add_cstr(sb, "\nnein-sig-seq: ");
+    str_builder_add_int(sb, seq);
+    str_builder_add_cstr(sb, "\nnein-sig-not-after: ");
+    str_builder_add_int(sb, not_after);
+    str_builder_add_cstr(sb, "\nnein-sig-pubkey: ");
+    str_builder_add_cstr(sb, hex_encode(sk + 32, 32));
+    str_builder_add_cstr(sb, "\nnein-sig-digest: ");
+    str_builder_add_cstr(sb, hex_encode(digest, 32));
+    str_builder_add_cstr(sb, "\nnein-sig-sig: ");
+    str_builder_add_cstr(sb, hex_encode(sig, 64));
+    str_builder_add_cstr(sb, "\n");
+    str_builder_add_cstr(sb, _sign_begin());
+    str_builder_add_cstr(sb, "\n");
+    str_builder_add_cstr(sb, _sign_body_cstr(body_data, body_len));
+    str_builder_add_cstr(sb, "\n");
+    str_builder_add_cstr(sb, _sign_end());
+    str_builder_add_cstr(sb, "\n");
+    return Ok(str_builder_build(sb));
+}
+
+# Validate `fw`, render it, and sign the body as v2.
+fn sign_ruleset_v2(fw: i64, sk: i64, key_id: cstring, scope: cstring, seq: i64, not_after: i64): i64 {
+    var vr1_t, vr1_v = firewall_validate(fw);
+    if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    return sign_ruleset_body_v2(firewall_render(fw), sk, key_id, scope, seq, not_after);
+}
+
+# Read the line at *pos_ptr, which must start with `prefix`; return the rest
+# of it (to the '\n', which must be there) as a fresh cstring and move
+# *pos_ptr past the newline. 0 when the line is not that header, or when the
+# value holds a NUL: every check after this one reads the value as a C string,
+# so `web-01\0.evil` would be judged — and signed — as `web-01`, while a reader
+# of the envelope saw the rest (found in review before 1.9.0 shipped).
+fn _sign_take_line(data: i64, len: i64, pos_ptr: i64, prefix: cstring): cstring {
+    var pos = load64(pos_ptr);
+    var plen = strlen(prefix);
+    if (pos + plen > len) { return 0; }
+    if (memeq(data + pos, prefix, plen) == 0) { return 0; }
+    var start = pos + plen;
+    var p = start;
+    while (p < len && load8(data + p) != 10) { p = p + 1; }
+    if (p >= len) { return 0; }
+    var vlen = p - start;
+    if (memchr(data + start, 0, vlen) >= 0) { return 0; }
+    var out = alloc(vlen + 1);
+    memcpy(out, data + start, vlen);
+    store8(out + vlen, 0);
+    store64(pos_ptr, p + 1);
+    return out;
+}
+
+# Exactly `n` lowercase hex digits, as hex_encode writes them. sigil decodes
+# either case, so accepting `A-F` would let one signature appear in 2^k
+# spellings — harmless to nein, but not the one envelope the format promises.
+fn _sign_lower_hex(s: cstring, n: i64): i64 {
+    if (strlen(s) != n) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var c = load8(s + i);
+        if ((c < 48 || c > 57) && (c < 97 || c > 102)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Parse a v2 envelope into a SignedRuleset record. Structure, charsets and
+# the digest — does NOT verify the signature, so nothing in the record is
+# trusted until verify_ruleset_v2 says so. Returns Ok(ptr) | Err: SIG_VERSION
+# for a v1 (or other) envelope, SIG_UNSUPPORTED_ALG, else SIG_MALFORMED.
+fn parse_signed_ruleset_v2(signed: i64): i64 {
+    if (signed == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    var data = str_data(signed);
+    var len = str_len(signed);
+    var pos = 0;
+
+    var ver = _sign_take_line(data, len, &pos, "nein-sig: ");
+    if (ver == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (streq(ver, "v2") == 0) { return nein_err(NEIN_ERR_SIG_VERSION); }
+    var alg = _sign_take_line(data, len, &pos, "nein-sig-alg: ");
+    if (alg == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (streq(alg, "ed25519") == 0) { return nein_err(NEIN_ERR_SIG_UNSUPPORTED_ALG); }
+    var keyid = _sign_take_line(data, len, &pos, "nein-sig-keyid: ");
+    var scope = _sign_take_line(data, len, &pos, "nein-sig-scope: ");
+    var seq_s = _sign_take_line(data, len, &pos, "nein-sig-seq: ");
+    var na_s = _sign_take_line(data, len, &pos, "nein-sig-not-after: ");
+    var pubkey_hex = _sign_take_line(data, len, &pos, "nein-sig-pubkey: ");
+    var digest_hex = _sign_take_line(data, len, &pos, "nein-sig-digest: ");
+    var sig_hex = _sign_take_line(data, len, &pos, "nein-sig-sig: ");
+    if (keyid == 0 || scope == 0 || seq_s == 0 || na_s == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (pubkey_hex == 0 || digest_hex == 0 || sig_hex == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+
+    if (is_err_result(validate_identifier(keyid)) == 1) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (_sign_valid_scope(scope) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    var seq = _sign_parse_u63(seq_s);
+    var not_after = _sign_parse_u63(na_s);
+    if (seq < 1 || not_after < 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (_sign_lower_hex(pubkey_hex, 64) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (_sign_lower_hex(digest_hex, 64) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (_sign_lower_hex(sig_hex, 128) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+
+    # BEGIN on the next line; END on the last, followed by at most one '\n'.
+    var blen = strlen(_sign_begin());
+    if (pos + blen + 1 > len) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (memeq(data + pos, _sign_begin(), blen) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (load8(data + pos + blen) != 10) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    var body_start = pos + blen + 1;
+    var stop = len;
+    if (stop > body_start && load8(data + stop - 1) == 10) { stop = stop - 1; }
+    var elen = strlen(_sign_end());
+    if (stop - elen - 1 < body_start) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (memeq(data + stop - elen, _sign_end(), elen) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (load8(data + stop - elen - 1) != 10) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    var body_len = stop - elen - 1 - body_start;
+    if (_sign_body_refusal(data + body_start, body_len) != 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+
+    # The digest is an audit aid, but one that is checked: a displayed digest
+    # that disagrees with the body would mislead whoever reads it.
+    var digest = alloc(32);
+    sha256(data + body_start, body_len, digest);
+    var hdr_digest = alloc(32);
+    hex_decode_into(digest_hex, 64, hdr_digest);
+    if (memeq(digest, hdr_digest, 32) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+
+    var sr = _sign_record(pubkey_hex, sig_hex, keyid, data + body_start, body_len);
+    store64(sr + 40, 2);
+    store64(sr + 48, scope);
+    store64(sr + 56, seq);
+    store64(sr + 64, not_after);
+    return Ok(sr);
+}
+
+# Verify a parsed v2 record's signature against 32 trusted pubkey bytes.
+fn _sign_verify_parsed_v2(sr: i64, pubkey: i64): i64 {
+    var hdr_pk = alloc(32);
+    if (hex_decode_into(signed_pubkey_hex(sr), 64, hdr_pk) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (memeq(hdr_pk, pubkey, 32) == 0) { return nein_err(NEIN_ERR_SIG_KEY_MISMATCH); }
+    var sig = alloc(64);
+    if (hex_decode_into(signed_sig_hex(sr), 128, sig) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    var msg = _sign_v2_message(signed_keyid(sr), signed_scope(sr), signed_seq(sr), signed_not_after(sr),
+        load64(sr + 24), load64(sr + 32));
+    if (ed25519_verify(pubkey, str_data(msg), str_len(msg), sig) == 1) { return nein_ok(); }
+    return nein_err(NEIN_ERR_BAD_SIGNATURE);
+}
+
+# Parse, verify, and bound-check: Ok(record) | Err. Arguments are checked first
+# (SIG_MALFORMED for a NULL, an invalid expected scope, min_seq < 0 or
+# now <= 0); the signature next; and only an authentic envelope is judged on
+# its scope (SIG_SCOPE), seq (SIG_STALE) and expiry (SIG_EXPIRED).
+fn _sign_verify_v2(signed: i64, pubkey: i64, scope: cstring, min_seq: i64, now: i64): i64 {
+    if (signed == 0 || pubkey == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (_sign_valid_scope(scope) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    if (min_seq < 0 || now <= 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    var pr_t, pr_v = parse_signed_ruleset_v2(signed);
+    if (is_err_result(pr_t) == 1) { return Err(pr_v); }
+    var sr = pr_v;
+    var vr_t, vr_v = _sign_verify_parsed_v2(sr, pubkey);
+    if (is_err_result(vr_t) == 1) { return Err(vr_v); }
+    if (streq(signed_scope(sr), scope) == 0) { return nein_err(NEIN_ERR_SIG_SCOPE); }
+    if (signed_seq(sr) < min_seq) { return nein_err(NEIN_ERR_SIG_STALE); }
+    var na = signed_not_after(sr);
+    if (na != 0 && now > na) { return nein_err(NEIN_ERR_SIG_EXPIRED); }
+    return Ok(sr);
+}
+
+# Verify a v2 envelope for `scope`, accepting only seq >= min_seq and, when
+# the envelope has an expiry, now <= not_after (`now` in unix seconds, from a
+# clock the caller trusts). Ok(seq) | Err. Fail-closed; a v1 envelope is
+# Err(NEIN_ERR_SIG_VERSION).
+fn verify_ruleset_v2(signed: i64, pubkey: i64, scope: cstring, min_seq: i64, now: i64): i64 {
+    var r_t, r_v = _sign_verify_v2(signed, pubkey, scope, min_seq, now);
+    if (is_err_result(r_t) == 1) { return Err(r_v); }
+    return Ok(signed_seq(r_v));
+}
+
+# 32 key bytes from a 64-char hex pubkey, or 0.
+fn _sign_pk_from_hex(pubkey_hex: cstring): i64 {
+    if (pubkey_hex == 0) { return 0; }
+    if (strlen(pubkey_hex) != 64) { return 0; }
+    if (hex_is_valid(pubkey_hex, 64) == 0) { return 0; }
+    var pk = alloc(32);
+    hex_decode_into(pubkey_hex, 64, pk);
+    return pk;
+}
+
+fn verify_ruleset_v2_hex(signed: i64, pubkey_hex: cstring, scope: cstring, min_seq: i64, now: i64): i64 {
+    var pk = _sign_pk_from_hex(pubkey_hex);
+    if (pk == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    return verify_ruleset_v2(signed, pk, scope, min_seq, now);
+}
+
+# Verify, and ONLY then apply, a v2 envelope; one private copy is verified and
+# applied (as apply_signed_ruleset, audit M-6). Ok(seq) once nft has applied
+# it — the caller records seq as its new floor then, and not before. Err from
+# verification applies nothing; Err from the apply is apply's, and for
+# NEIN_ERR_OUTCOME_UNKNOWN the ruleset may be live: raise the floor to the seq
+# verify_ruleset_v2 returns for the same bytes. Never take a floor from
+# parse_signed_ruleset_v2, which does not verify: a buffer rewritten to
+# `nein-sig-seq: 9223372036854775807` would set the floor past every envelope
+# the signer will ever issue, freezing the firewall where it stands.
+fn apply_signed_ruleset_v2(signed: i64, pubkey: i64, scope: cstring, min_seq: i64, now: i64): i64 {
+    if (signed == 0 || pubkey == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    var n = str_len(signed);
+    var own_bytes = alloc(n + 1);
+    memcpy(own_bytes, str_data(signed), n);
+    store8(own_bytes + n, 0);
+    var r_t, r_v = _sign_verify_v2(str_new(own_bytes, n), pubkey, scope, min_seq, now);
+    if (is_err_result(r_t) == 1) { return Err(r_v); }   # fail-closed: never apply
+    var sr = r_v;
+    var a_t, a_v = apply_ruleset_str(signed_body(sr));
+    if (is_err_result(a_t) == 1) { return Err(a_v); }
+    return Ok(signed_seq(sr));
+}
+
+fn apply_signed_ruleset_v2_hex(signed: i64, pubkey_hex: cstring, scope: cstring, min_seq: i64, now: i64): i64 {
+    var pk = _sign_pk_from_hex(pubkey_hex);
+    if (pk == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
+    return apply_signed_ruleset_v2(signed, pk, scope, min_seq, now);
 }

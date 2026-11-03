@@ -40,6 +40,21 @@ enum NeinError {
     NEIN_ERR_SIG_UNSUPPORTED_ALG = 11; # nein-sig-alg: value != ed25519
     NEIN_ERR_SIG_KEY_MISMATCH = 12;   # header pubkey != caller-supplied pubkey
     NEIN_ERR_SIG_KEY = 13;            # null / short key material passed to sign
+    # 1.9.0. Additive — values 1..13 unchanged.
+    #
+    # OUTCOME_UNKNOWN (audit S-8): nft was started on a ruleset and nein cannot
+    # learn whether it committed — the child was reaped elsewhere (SIGCHLD set
+    # to SIG_IGN, or a host reaper won the race), was killed at the deadline,
+    # or died on a signal. nft commits a batch atomically, so the firewall
+    # holds either all of it or none of it, but which one is unknown. Through
+    # 1.8.2 this was NFT_FAILED, and a caller that retried an additive apply
+    # duplicated its rules. Re-read the live ruleset (diff) before acting again.
+    NEIN_ERR_OUTCOME_UNKNOWN = 14;
+    # Replay-bound (v2) signed rulesets. Returned only for an envelope whose
+    # signature verified, so each names a property of an authentic envelope.
+    NEIN_ERR_SIG_SCOPE = 15;          # signed for another scope (host / role)
+    NEIN_ERR_SIG_STALE = 16;          # seq below the caller's floor: a replay or rollback
+    NEIN_ERR_SIG_EXPIRED = 17;        # now is past the signed not-after
 }
 
 # --- Result helpers ---

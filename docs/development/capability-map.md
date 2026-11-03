@@ -7,7 +7,7 @@ small enough that a generator script isn't needed yet — agnosys's
 `scripts/gen-capability-map.sh` pattern would be the template if it
 gets one).
 
-**Last refresh:** 2026-11-03 (v1.8.2 — the apply path moved from pipes to memfds and a pidfd; the syscall set and filesystem paths changed)
+**Last refresh:** 2026-11-03 (v1.9.0 — `mcp`: the live readers are their own class; `sign`: v2 is computation-only, no clock read; no syscall added. Previously v1.8.2 — the apply path moved from pipes to memfds and a pidfd; the syscall set and filesystem paths changed)
 **nein version:** 1.6.10
 **cyrius version:** 6.5.33
 
@@ -184,16 +184,18 @@ race documented in threat model T-3.
 
 Signing + verification over the rendered nft body (Ed25519 via
 [sigil](https://github.com/MacCracken/sigil), v1.6.1). `sign_keygen` /
-`sign_ruleset` / `verify_ruleset` are computation-only; the syscall surface
-opens only when `apply_signed_ruleset` chains a verified body through the
-apply layer (fail-closed — verify or never touch nft).
+`sign_ruleset` / `verify_ruleset` and their v2 forms (1.9.0) are
+computation-only — v2 takes `now` from the caller rather than reading a clock —
+and the syscall surface opens only when `apply_signed_ruleset` /
+`apply_signed_ruleset_v2` chains a verified body through the apply layer
+(fail-closed — verify or never touch nft).
 
 ### `mcp` (`src/lib/mcp.cyr`)
 
 | | Count |
 |---|---|
 | Direct syscalls | 0 |
-| `sys_*` wrappers | 0 directly; apply's full set transitively — including from two READ-ONLY tools |
+| `sys_*` wrappers | 0 directly; apply's full set transitively — from the three `READS_LIVE` tools as well as the two `MUTATES` |
 | Subprocess binaries | 0 directly; `nft` transitively |
 | Filesystem paths | 0 |
 
@@ -202,13 +204,13 @@ MCP tool dispatch surface over [bote](https://github.com/MacCracken/bote)
 diff functions.
 
 **"Read-only" is about the firewall, not about syscalls** (corrected v1.6.10).
-`nein_status` and `nein_list` are annotated read-only because they do not
-*modify* the ruleset — but both fork and execve `nft` to read it
+`nein_status`, `nein_list` and `nein_diff` are annotated read-only because they
+do not *modify* the ruleset — but all three fork and execve `nft` to read it
 (`list_ruleset` / `list_ruleset_with_handles`), so they carry apply's entire
-syscall footprint. Only `nein_validate` is genuinely syscall-free. A sandbox
-profile that grants the read-only tool set still needs fork + execve and the
-apply layer's memfd / pidfd syscalls above — and the three readers return the
-live ROOT ruleset (see the host guide; a separate class is planned for 1.9.0).
+syscall footprint, and return the live ROOT ruleset. Since 1.9.0 the tool
+table says so: they are class `NEIN_TOOL_READS_LIVE` (profile `firewall_read`),
+denied until a host gate permits them. Only `nein_validate`
+(`NEIN_TOOL_OFFLINE`) is genuinely syscall-free.
 
 ## Capabilities (Linux)
 

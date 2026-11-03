@@ -477,11 +477,6 @@ fn _target_in_live(target_rule: i64, live_rules: i64): i64 {
     return 0;
 }
 
-# Mirror: is live rule present in target?
-fn _live_in_target(live_rule: i64, target_rules: i64): i64 {
-    return _target_in_live(live_rule, target_rules);
-}
-
 # Every name an op interpolates is checked (1.8.2, audit P-5). Through 1.8.1
 # none was: a live chain created through `nft -j` with the name
 # `A<TAB>handle<TAB>2;delete<TAB>table<TAB>inet<TAB>filter;#` produced a

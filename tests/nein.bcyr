@@ -16,6 +16,15 @@ include "src/lib/bridge.cyr"
 include "src/lib/engine.cyr"
 include "src/lib/config.cyr"
 include "src/lib/netns.cyr"
+include "src/lib/apply.cyr"
+include "src/lib/inspect.cyr"
+include "src/lib/diff.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+include "lib/sigil.cyr"
+include "src/lib/sign.cyr"
+include "lib/bote-core.cyr"
+include "src/lib/mcp.cyr"
 
 # --- validate ---
 
@@ -425,9 +434,47 @@ fn bench_engine_100_agents_to_firewall() { pe_to_firewall(_bench_engine_100); re
 fn bench_geoip_10_countries_to_firewall() { geoip_to_firewall(_bench_geoip_10); return 0; }
 fn bench_mesh_to_firewall() { mesh_to_firewall(_bench_mesh_cfg); return 0; }
 
+# --- signed rulesets + MCP gate (1.9.0) ---
+# v1 against v2 on the same body, so the replay binding's cost is on record:
+# v2 signs a message that copies the body behind a 12-byte tag and its bound
+# fields, and its parser checks the digest, so it hashes the body once more.
+var _bench_sk = 0;
+var _bench_pk = 0;
+var _bench_body = 0;
+var _bench_env1 = 0;
+var _bench_env2 = 0;
+var _bench_env2_1000 = 0;
+
+fn _bench_gate(name: cstring, claims: i64): i64 { return NEIN_GATE_PERMIT; }
+
+fn _bench_setup_sign() {
+    _bench_sk = alloc(64);
+    _bench_pk = alloc(32);
+    sign_keygen(_bench_sk, _bench_pk);
+    _bench_body = firewall_render(basic_host_firewall());
+    var a_t, a_v = sign_ruleset_body(_bench_body, _bench_sk, "bench");
+    _bench_env1 = a_v;
+    var b_t, b_v = sign_ruleset_body_v2(_bench_body, _bench_sk, "bench", "host-1", 42, 0);
+    _bench_env2 = b_v;
+    var c_t, c_v = sign_ruleset_body_v2(firewall_render(_bench_fw_1000), _bench_sk, "bench", "host-1", 42, 0);
+    _bench_env2_1000 = c_v;
+    nein_mcp_set_gate(&_bench_gate);
+    return 0;
+}
+
+fn bench_sign_v1() { sign_ruleset_body(_bench_body, _bench_sk, "bench"); return 0; }
+fn bench_verify_v1() { verify_ruleset(_bench_env1, _bench_pk); return 0; }
+fn bench_sign_v2() { sign_ruleset_body_v2(_bench_body, _bench_sk, "bench", "host-1", 42, 0); return 0; }
+fn bench_verify_v2() { verify_ruleset_v2(_bench_env2, _bench_pk, "host-1", 42, 1800000000); return 0; }
+fn bench_verify_v2_1000_rules() { verify_ruleset_v2(_bench_env2_1000, _bench_pk, "host-1", 42, 1800000000); return 0; }
+fn bench_parse_v2() { parse_signed_ruleset_v2(_bench_env2); return 0; }
+fn bench_mcp_gate_check() { _nein_gate_check("nein_validate", 0); return 0; }
+fn bench_mcp_dispatch_validate() { nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":443}", 0); return 0; }
+
 fn main() {
     alloc_init();
     _bench_setup_scale();
+    _bench_setup_sign();
     var all = vec_new();
     var b = 0;
 
@@ -492,6 +539,16 @@ fn main() {
     b = bench_new("engine_100_agents_to_firewall"); bench_run(b, &bench_engine_100_agents_to_firewall, 200); vec_push(all, b);
     b = bench_new("geoip_10_countries_to_firewall"); bench_run(b, &bench_geoip_10_countries_to_firewall, 10000); vec_push(all, b);
     b = bench_new("mesh_to_firewall"); bench_run(b, &bench_mesh_to_firewall, 10000); vec_push(all, b);
+
+    # --- signed rulesets + MCP gate (1.9.0) ---
+    b = bench_new("sign_v1"); bench_run(b, &bench_sign_v1, 500); vec_push(all, b);
+    b = bench_new("verify_v1"); bench_run(b, &bench_verify_v1, 500); vec_push(all, b);
+    b = bench_new("sign_v2"); bench_run(b, &bench_sign_v2, 500); vec_push(all, b);
+    b = bench_new("verify_v2"); bench_run(b, &bench_verify_v2, 500); vec_push(all, b);
+    b = bench_new("verify_v2_1000_rules"); bench_run(b, &bench_verify_v2_1000_rules, 200); vec_push(all, b);
+    b = bench_new("parse_v2"); bench_run(b, &bench_parse_v2, 10000); vec_push(all, b);
+    b = bench_new("mcp_gate_check"); bench_run(b, &bench_mcp_gate_check, 100000); vec_push(all, b);
+    b = bench_new("mcp_dispatch_validate"); bench_run(b, &bench_mcp_dispatch_validate, 100000); vec_push(all, b);
 
     bench_report_all(all);
     return 0;

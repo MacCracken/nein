@@ -1,0 +1,118 @@
+# Integration test: what an apply reports when nein cannot learn nft's fate
+# (1.9.0, audit S-8).
+#
+# nft commits a batch atomically, so after `nft -f -` the firewall holds all
+# of it or none of it. When the child is reaped elsewhere (SIGCHLD set to
+# SIG_IGN), killed at the deadline, or dies on a signal, nein cannot tell
+# which, and an apply must say NEIN_ERR_OUTCOME_UNKNOWN — through 1.8.2 it said
+# NEIN_ERR_NFT_FAILED, and a caller that retried an additive apply duplicated
+# its rules. A read (`nft list`) changes nothing, so for it the same cases stay
+# NEIN_ERR_NFT_FAILED, and a definite refusal stays what it was.
+#
+# Runs anywhere: nft is replaced by small /bin/sh stand-ins through
+# nein_set_nft_path, written to a fresh directory under /tmp and removed after.
+# No root, no nft, no network namespace.
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/apply.cyr"
+
+var _ao_dir = 0;
+
+# "<dir>/<name>" as a fresh cstring.
+fn _ao_path(name: cstring): cstring {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, _ao_dir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, name);
+    return str_data(str_builder_build(sb));
+}
+
+# Write an executable stand-in for nft. Closed before any exec (ETXTBSY).
+fn _ao_script(name: cstring, body: cstring): cstring {
+    var p = _ao_path(name);
+    var fd = sys_open(p, 1 | 64 | 512 | 524288, 493);   # O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0755
+    if (fd < 0) { return 0; }
+    var text = "#!/bin/sh\n";
+    sys_write(fd, text, strlen(text));
+    sys_write(fd, body, strlen(body));
+    sys_close(fd);
+    return p;
+}
+
+# Apply a one-line ruleset through `nft` = the stand-in at `path`; Err code or 0.
+fn _ao_apply_code(path: cstring): i64 {
+    nein_set_nft_path(path);
+    var r_t, r_v = apply_ruleset_cstr("table inet nein_outcome { }\n");
+    return nein_err_code(r_t, r_v);
+}
+
+# A read (`nft list ruleset`) through the stand-in; Err code or 0.
+fn _ao_list_code(path: cstring): i64 {
+    nein_set_nft_path(path);
+    var r_t, r_v = list_ruleset();
+    return nein_err_code(r_t, r_v);
+}
+
+fn test_outcome() {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/tmp/nein-outcome-");
+    str_builder_add_int(sb, sys_getpid());
+    _ao_dir = str_data(str_builder_build(sb));
+    assert(sys_mkdir(_ao_dir, 448) == 0, "scratch dir created");   # 0700
+
+    var ok = _ao_script("ok", "exit 0\n");
+    var fail = _ao_script("fail", "exit 1\n");
+    var killed = _ao_script("killed", "kill -9 $$\n");
+    var slow = _ao_script("slow", "exec sleep 5\n");
+    assert(ok != 0 && fail != 0 && killed != 0 && slow != 0, "stand-ins written");
+    var prev = nein_nft_path();
+
+    # Baseline: a clean exit is Ok, a nonzero exit is a definite failure, and
+    # a missing binary never ran nft (exit 127).
+    assert_eq(_ao_apply_code(ok), 0, "clean exit applies");
+    assert_eq(_ao_list_code(ok), 0, "clean exit reads");
+    assert_eq(_ao_apply_code(fail), NEIN_ERR_NFT_FAILED, "nonzero exit is a definite failure");
+    assert_eq(_ao_apply_code(_ao_path("missing")), NEIN_ERR_PERMISSION_DENIED, "missing nft never ran");
+
+    # Died on a signal: an apply may have committed first.
+    assert_eq(_ao_apply_code(killed), NEIN_ERR_OUTCOME_UNKNOWN, "apply killed by a signal: outcome unknown");
+    assert_eq(_ao_list_code(killed), NEIN_ERR_NFT_FAILED, "read killed by a signal: plain failure");
+
+    # Reaped elsewhere: with SIGCHLD ignored the kernel discards the status,
+    # so waitpid has nothing to report even for a clean exit.
+    signal_ignore(17);
+    assert_eq(_ao_apply_code(ok), NEIN_ERR_OUTCOME_UNKNOWN, "SIGCHLD ignored: apply outcome unknown");
+    assert_eq(_ao_list_code(ok), NEIN_ERR_NFT_FAILED, "SIGCHLD ignored: read is a plain failure");
+    signal_default(17);
+    assert_eq(_ao_apply_code(ok), 0, "SIGCHLD restored: apply reports again");
+
+    # Killed at the deadline (shortened from 60 s for the test).
+    _NEIN_NFT_DEADLINE_MS = 300;
+    assert_eq(_ao_apply_code(slow), NEIN_ERR_OUTCOME_UNKNOWN, "apply killed at the deadline: outcome unknown");
+    assert_eq(_ao_list_code(slow), NEIN_ERR_NFT_FAILED, "read killed at the deadline: plain failure");
+    _NEIN_NFT_DEADLINE_MS = 60000;
+
+    nein_set_nft_path(prev);
+    sys_unlink(ok);
+    sys_unlink(fail);
+    sys_unlink(killed);
+    sys_unlink(slow);
+    assert(sys_rmdir(_ao_dir) == 0, "scratch dir removed");
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    test_outcome();
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

@@ -45,11 +45,18 @@ fn country_cidrs_v6(cb: i64): i64 { return load64(cb + 16); }
 # Layout: [countries:8][table_name:8][hook:8] = 24 bytes
 # ================================================================
 
+# The default hook is prerouting (1.9.0, audit B-9). Through 1.8.2 it was
+# input, which sees only packets addressed to this host: traffic forwarded to
+# a container, or DNAT'd to one (stiva's port maps), never passed the block.
+# Prerouting sees every inbound packet before routing decides, and at
+# priority -10 runs after conntrack (-200) and DNAT (-100), neither of which
+# rewrites the source the block matches. `geoip_set_hook(bl, HOOK_INPUT)`
+# restores the old scope.
 fn geoip_new(): i64 {
     var bl = alloc(24);
     store64(bl, vec_new());
     store64(bl + 8, "nein_geoip");
-    store64(bl + 16, HOOK_INPUT);
+    store64(bl + 16, HOOK_PREROUTING);
     return bl;
 }
 

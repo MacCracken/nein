@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Last refresh: **2026-11-03** (v1.8.2 — the apply path's memfds and deadline; buffer list).
+Last refresh: **2026-11-03** (v1.9.0 — public-fn count; `sign` and `mcp` descriptions. Previously v1.8.2 — the apply path's memfds and deadline; buffer list).
 
 ## Design Philosophy
 
@@ -60,8 +60,8 @@ src/
     apply.cyr         — nft execution layer (fork+pipe+execve)
     inspect.cyr       — Live firewall status parser
     diff.cyr          — Live-rule diff + idempotent apply
-    sign.cyr          — Ed25519 ruleset signing (v1.6.1)
-    mcp.cyr           — MCP tool surface over bote (v1.6.0)
+    sign.cyr          — Ed25519 ruleset signing (v1.6.1; replay-bound v2, v1.9.0)
+    mcp.cyr           — MCP tool surface over bote (v1.6.0; gate contract, v1.9.0)
 ```
 
 Each `.cyr` file is `include`d from `src/main.cyr` in dependency order:
@@ -98,8 +98,8 @@ else is pure rendering and can run with no permissions.
 ## Type Boundary
 
 The public-fn surface is tracked in
-[`docs/api-surface.snapshot`](../api-surface.snapshot) (394 fns as of
-v1.6.4). The CI gate fails on unexplained adds or removes.
+[`docs/api-surface.snapshot`](../api-surface.snapshot) (410 fns as of
+v1.9.0). The CI gate fails on unexplained adds or removes.
 
 Conventions:
 

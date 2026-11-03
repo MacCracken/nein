@@ -1,6 +1,6 @@
 # Threat Model
 
-Last refresh: **2026-11-03** (v1.8.2 — T-4 rewritten for the memfd apply path after the 2026-11-03 P(-1) audit; T-3's override is copied, not borrowed. Previously 2026-08-21, v1.6.10 — T-4 rewritten and T-7 corrected after that audit. Earlier passes added T-9 signed-ruleset trust (v1.6.1), T-10 MCP
+Last refresh: **2026-11-03** (v1.9.0 — T-9 gains the replay-bound v2 envelope and its residual risk; T-10 rewritten for the 1.9.0 gate contract: tool classes, offline-only default, one permit value, install-once. Previously v1.8.2 — T-4 rewritten for the memfd apply path after the 2026-11-03 P(-1) audit; T-3's override is copied, not borrowed. Previously 2026-08-21, v1.6.10 — T-4 rewritten and T-7 corrected after that audit. Earlier passes added T-9 signed-ruleset trust (v1.6.1), T-10 MCP
 destructive-tool access control (v1.6.0) and T-11 MCP argument injection and
 output escaping; the v1.4.0 refresh hardened T-3 to a single pinned absolute
 path.)
@@ -163,11 +163,14 @@ memfd design (2026-11-03 audit S-4).
 
 **Residual risk.**
 
-- A caller whose host sets SIGCHLD to `SIG_IGN`, or reaps children itself,
-  can see `waitpid` fail after nft committed; apply then returns `Err` for a
-  ruleset that is in place, and a caller that retries an *additive* apply
-  duplicates rules. Re-diff (`nein_diff`) rather than re-apply; a distinct
-  "outcome unknown" result is planned for 1.9.0 (audit S-8).
+- When nein cannot learn nft's fate — the host sets SIGCHLD to `SIG_IGN` or
+  reaps children itself, nft is killed at the deadline, or it dies on a
+  signal — an apply returns `NEIN_ERR_OUTCOME_UNKNOWN` (1.9.0, audit S-8):
+  the batch is committed whole or not at all, but which is unknown. Through
+  1.8.2 this was `NEIN_ERR_NFT_FAILED`, and a caller that retried an
+  *additive* apply duplicated rules. The residual is the caller's: on this
+  code, re-diff (`nein_diff`) rather than re-apply. A read (`nft list`) in
+  the same cases is a plain `NEIN_ERR_NFT_FAILED`.
 - `close_range` needs Linux 5.9 and `pidfd_open` 5.3. On older kernels the
   first is skipped (nein's own descriptors are still close-on-exec) and the
   wait falls back to an unbounded `waitpid`.
@@ -327,15 +330,35 @@ envelope to roll the firewall back to a weaker but validly-signed state.
   verify against it fails deterministically rather than silently
   accepting weak material.
 
+- **Replay / rollback / misdirection: the v2 envelope (1.9.0).**
+  `sign_ruleset_v2` signs a domain-separated message — `"nein-sig-v2\0"`,
+  a `seq`, a `not_after`, a length-prefixed `scope` and `keyid`, then the
+  body — and carries those fields in clear headers the verifier rebuilds
+  the message from. `verify_ruleset_v2(signed, pk, scope, min_seq, now)`
+  checks the signature first and only then the bounds: another scope is
+  `NEIN_ERR_SIG_SCOPE`, `seq < min_seq` is `NEIN_ERR_SIG_STALE`, a passed
+  expiry is `NEIN_ERR_SIG_EXPIRED`. The parser is strict (each header
+  once, in order, nothing after END, no NUL in a header, hex in lowercase,
+  the digest checked) and is fuzzed
+  with a uniqueness oracle (`fuzz/sign_v2_parse.fcyr`): an input that
+  verifies must be the envelope that was signed. Cross-version reuse is
+  closed both ways — the v2 message holds a NUL, which v1 signing refuses
+  and (since 1.9.0) v1 parsing refuses too.
+
 **Residual risk.**
-- **Replay / rollback is not defended.** The signed message is the body
-  bytes alone — no nonce, timestamp, or monotonic version counter. A
-  captured, still-valid envelope re-verifies and re-applies
-  indefinitely; an attacker who can substitute an older signed ruleset
-  can roll the firewall back to a weaker-but-signed state.
-  Freshness / anti-rollback (a generation counter or wall-clock bound
-  checked by the operator) is a verifier-side control, out of
-  `sign.cyr`'s scope today — tracked as future hardening.
+- **Replay defence needs the verifier's state, and v2.** nein is
+  stateless: the floor (`min_seq`) is the caller's last applied seq per
+  (key, scope), which the caller must persist after a successful apply
+  and raise on `NEIN_ERR_OUTCOME_UNKNOWN` — to a seq `verify_ruleset_v2`
+  returned, never one parsed without verification. A verifier that keeps no floor
+  gets only scope and expiry checks. **v1 envelopes are unbound** and
+  verify forever; a verifier that still accepts v1 can be replayed
+  through it, so a host adopting v2 must stop calling the v1 functions
+  (planned removal: 2.0). `now` comes from the caller's clock: a verifier
+  whose clock can be set back extends every expiry. A verifier at 1.8.2 or
+  older lacks the v1 NUL refusal and would accept a v1 wrapper around a v2
+  message as authentic; it cannot become a ruleset (its apply refuses the
+  NUL, and nft the bytes).
 - **Secret-key custody is the operator's.** nein never persists `sk`
   (64 bytes, `seed32||pk32`); at-rest protection of the signing key is
   the signer's responsibility.
@@ -345,70 +368,58 @@ envelope to roll the firewall back to a weaker but validly-signed state.
   `apply_signed_ruleset*` as its sole apply entry point; nein does not
   globally forbid unsigned apply.
 
-### T-10 — MCP destructive-tool access control (`mcp.cyr`, v1.6.0)
+### T-10 — MCP access control (`mcp.cyr`, v1.6.0; contract 1.9.0)
 
 **Threat.** `mcp.cyr` exposes nein as MCP tools an agent host can
 drive. Two of the six — `nein_allow` and `nein_deny` — perform a
-**live** `add_rule_live` against the running firewall. An agent that
-reaches the dispatcher could invoke the mutating tools directly, or
-slip past a host's intended gate, and change the live ruleset (open a
-port, drop traffic) without operator intent.
+**live** `add_rule_live` against the running firewall; three more —
+`nein_status`, `nein_list`, `nein_diff` — run `nft -a list ruleset` as
+root and return live state (set elements, allowed sources, comments).
+An agent that reaches the dispatcher could change the ruleset, or read
+it, without operator intent — directly, or by slipping past the gate.
 
 **Mitigation.**
-- **Side-effect classification travels with every tool.**
-  `nein_tool_read_only` marks `nein_allow`/`nein_deny` as mutating
-  (`0`) and the other four as read-only (`1`); `nein_tool_admin`
-  promotes the mutating pair to the `firewall_admin` profile. On the
-  bote-dispatcher path (`_nein_reg`) the mutating tools get
-  `ann_destructive()` annotations and the `{firewall, firewall_admin}`
-  profile vec, while read-only tools get `ann_read_only()` and
-  `{firewall}`. A host can therefore filter/gate by side-effect
-  (`tools/list?profile=firewall_admin`) and expose the admin set only
-  to privileged agents — without any dependency on bote's reserved
-  `claims`.
-- **Fail-closed gate primitive, consulted first in every handler.**
-  When a gate is installed — `nein_tools_register_gated(d, gate_fp)`
-  (dispatcher path) or `nein_mcp_set_gate(gate_fp)` (daimon
-  dispatch-adapter path) — each handler's first act is
-  `_nein_gate_check(name, claims)`, which permits only when
-  `fncall2(_nein_gate, name, claims) == 1` and otherwise returns the
-  `"access denied"` envelope **before** any validate/apply. A denied
-  mutating call never reaches `add_rule_live`.
-- **Single source of truth for both integration paths.** The
-  bote-dispatcher registration and the daimon-friendly
-  `nein_mcp_dispatch` adapter both read the same
-  `nein_tool_name/desc/read_only/admin` table, so a tool cannot be
-  classified destructive on one path and read-only on the other.
+- **A class for every tool, by what it reaches (1.9.0, audit M-3).**
+  `nein_tool_class(i)`: `NEIN_TOOL_OFFLINE` (`nein_validate`),
+  `NEIN_TOOL_READS_LIVE` (status / list / diff), `NEIN_TOOL_MUTATES`
+  (allow / deny); `0` for an unknown index, and `nein_tool_index(name)`
+  is `-1` for an unknown name, so a gate keyed on the class denies what it
+  cannot classify. On the bote path the classes are also profile tags
+  (`firewall` on all, `firewall_read`, `firewall_admin`) and annotations.
+  One table feeds both integration paths and the gate.
+- **No gate, offline only (1.9.0).** Until the host installs a gate,
+  `_nein_gate_check` permits only `NEIN_TOOL_OFFLINE`. Through 1.8.2 the
+  default was fail-open: an ungated register exposed live `allow` /
+  `deny` to any caller that reached the transport.
+- **Permit is one value (1.9.0, audit M-2).** The gate permits only by
+  returning `NEIN_GATE_PERMIT` (`0x4E45494E2D4F4B21`), a constant above the
+  x86_64 / aarch64 user-space range, so no bool, `Result` tag, error code
+  or pointer equals it. Through 1.8.2 permit was `== 1`, and `fncall2`
+  truncates a `Result` to its tag — a gate returning `Err` permitted.
+- **One gate, installed once (1.9.0).** `_nein_gate_install` sets the gate
+  by compare-and-swap from empty; re-installing the same gate is a no-op,
+  and replacing or clearing it is refused, logged, and leaves the
+  installed gate in place. `nein_tools_register_gated` under a refused
+  gate mounts nothing. Through 1.8.2 any later register or `set_gate(0)`
+  replaced or removed the gate for every dispatcher already serving.
+- **Consulted first in every handler**, before argument parsing, nft,
+  or apply; a denied call returns "access denied" and never touches the
+  firewall.
 
 **Residual risk.**
-- **The default registration is ungated (fail-open).** Plain
-  `nein_tools_register`, or `nein_mcp_dispatch` with no prior
-  `nein_mcp_set_gate`, leaves `_nein_gate == 0`, and `_nein_gate_check`
-  then returns "permit" for every tool — including the destructive
-  pair. nein ships the fail-closed *primitive* and the classification
-  metadata; **enforcing** it is the host's responsibility. A host that
-  mounts the tools with the plain register exposes live `allow`/`deny`
-  to any agent that can reach the transport. Hosts driving nein should
-  install the gate (gated register / `set_gate`) and deny
-  `firewall_admin` tools by default.
-- **No per-agent identity yet.** bote's `claims` is a reserved `0` in
-  the 2.x ABI, so the gate decides on tool name + whatever ambient host
-  policy `gate_fp` encodes — it cannot yet distinguish *which* agent is
-  calling. Per-agent authorization must wait for bote to populate
-  `claims`; the seam is threaded claims-ready
-  (`fncall2(_nein_gate, name, claims)`) so no signature change is
-  needed when it lands.
-- **Process-global, last-writer-wins gate.** `_nein_gate` is a single
-  module-scope slot; the final `register_gated`/`set_gate` wins and the
-  setting is shared across every dispatcher in the process. A host
-  standing up multiple dispatchers with different policies cannot
-  express per-dispatcher gating through this seam.
-- **Read-only tools still disclose live topology.**
-  `nein_status`/`nein_list`/`nein_diff` return live table/chain/rule
-  state to any permitted agent. They are correctly classed read-only
-  (no mutation), but a host that treats "read-only" as "safe for all
-  agents" leaks firewall topology; the `{firewall}` profile lets a host
-  withhold even the read set from unprivileged agents.
+- **One policy per process.** The handler ABI `(args, claims)` carries
+  no registration, so a host with several dispatchers cannot give them
+  different gates — tools mounted by plain `nein_tools_register` run
+  under whatever gate is installed, before or after — and the gate must
+  decide from the tool name and `claims`.
+- **The gate is only as good as the host's identity.** `claims` is `0`
+  unless the host runs bote with auth (3.7.5+ hands the verified token);
+  a host without caller identity cannot tell agents apart and should
+  deny `READS_LIVE` and `MUTATES` outright (daimon does, for `MUTATES`).
+- **`read_only` is not "safe".** `nein_tool_read_only` keeps its MCP
+  meaning (does not change the firewall) and is `1` for the live
+  readers; a gate keyed on it, as 1.8-era gates were, exposes the live
+  ruleset. Gate on `nein_tool_class`.
 
 ### T-11 — MCP tool-argument injection (`mcp.cyr`, v1.6.0)
 

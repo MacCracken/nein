@@ -18,7 +18,7 @@ exactly as it already does for the full bote bundle.
 # host cyrius.cyml
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
-tag = "1.6.10"
+tag = "1.9.0"
 modules = ["dist/nein-mcp.cyr"]
 ```
 
@@ -56,12 +56,12 @@ while (i < nein_tool_count()) {
     i = i + 1;
 }
 
-# install the access-control gate BEFORE serving calls
-nein_mcp_set_gate(&host_firewall_gate);
+# install the access-control gate BEFORE serving calls; it installs once
+if (nein_mcp_set_gate(&host_firewall_gate) != 0) { /* refused: fail startup */ }
 
 # dispatch — in mcp_dispatch_builtin, route nein_* names to nein
 fn mcp_dispatch_builtin(name, args) {
-    if (_starts_with(name, "nein_") == 1) {
+    if (nein_tool_index(name) >= 0) {           # a table lookup, not a prefix test
         return nein_mcp_dispatch(name, args, claims);   # -> MCP result envelope cstr
     }
     ...
@@ -82,7 +82,7 @@ nein_tools_register_gated(dispatcher, &host_firewall_gate);
 
 This registers all six descriptors (with annotations + profiles) and binds
 handlers on the dispatcher. `nein_tools_register(dispatcher)` is the
-ungated variant.
+ungated variant: until a gate is installed, only `nein_validate` runs (1.9.0).
 
 Since 1.8.2 each tool goes through bote's `dispatcher_register_tool`: the
 definition and its handler land under one registries write lock, and bote
@@ -99,52 +99,81 @@ bound the handler in two separate writes (a call landing between them on a
 threaded server found the tool and no handler), and ignored a refusal while
 still binding the handler.
 
-## The access-control gate
+## The access-control gate (1.9.0 contract)
 
-`gate_fp` is `fn(tool_name: cstring, claims: i64) -> 1 permit / 0 deny`. The
-host owns agent identity (daimon's `agent.cyr`); nein just calls the gate
-before each tool acts and returns an "access denied" envelope on `0`,
-**never touching the firewall**. `claims` is whatever bote hands the
+`gate_fp` is `fn(tool_name: cstring, claims: i64) -> i64`. nein calls it before
+each tool acts and runs the tool **only when it returns `NEIN_GATE_PERMIT`**;
+any other value — `0`, `1`, `-1`, a `Result`, a pointer — is a denial, answered
+with an "access denied" envelope **before the firewall is touched**. The host
+owns agent identity (daimon's `agent.cyr`). `claims` is whatever bote hands the
 handler, passed through unchanged: `0` when the host configures no auth, and
-(as of bote 3.7.5) a NUL-terminated heap copy of the verified token when HTTP
-or WebSocket auth is configured. A host running bote with auth can gate on
-it; one without auth, or one using the dispatch adapter below, gates on its
-own agent context. nein never reads `claims` itself.
+(bote 3.7.5+) a NUL-terminated heap copy of the verified token when HTTP or
+WebSocket auth is configured. nein never reads `claims` itself.
 
-### ⚠ Two gate hazards (1.8.2 audit, contract changes planned for 1.9.0)
+Classify with the tool table, by what each tool can reach:
 
-- **Return exactly `1` or `0` — never a `Result`.** nein calls the gate through
-  a run-time function pointer (`fncall2`), and cyrius truncates a `Result`
-  returned that way to its tag with no diagnostic. A `Result` gate's `Err` has
-  tag `1` — which nein reads as **permit** — and its `Ok` reads as deny. A gate
-  written the way nein's own "Packed Result for fallible operations" guideline
-  suggests is therefore inverted. (daimon's gate returns `1` / `0`, so it is
-  unaffected.)
-- **There is one gate per process.** `_nein_gate` is a single variable shared
-  by both paths: a second `nein_tools_register_gated`, or
-  `nein_mcp_set_gate(0)`, replaces or removes the gate for every dispatcher
-  already registered. Install it once, at startup.
+| class | tools | what it does |
+|---|---|---|
+| `NEIN_TOOL_OFFLINE` | `nein_validate` | checks arguments; touches nothing outside the process |
+| `NEIN_TOOL_READS_LIVE` | `nein_status`, `nein_list`, `nein_diff` | runs `nft -a list ruleset` **as root** and returns live state — `list` and `diff` verbatim: set elements, allowed sources, comments |
+| `NEIN_TOOL_MUTATES` | `nein_allow`, `nein_deny` | changes the live firewall |
 
-1.9.0 replaces this contract (a permit value that is neither `0` nor `1`, and a
-gate per registration), together with daimon.
+```
+fn host_firewall_gate(name, claims) {
+    var c = nein_tool_class(nein_tool_index(name));   # 0 for a name nein does not know
+    if (c == NEIN_TOOL_OFFLINE) { return NEIN_GATE_PERMIT; }
+    if (c == NEIN_TOOL_READS_LIVE && host_may_read_firewall(claims) == 1) { return NEIN_GATE_PERMIT; }
+    if (c == NEIN_TOOL_MUTATES && host_is_firewall_admin(claims) == 1) { return NEIN_GATE_PERMIT; }
+    return 0;
+}
+```
 
-Classify by side-effect using the tool table:
+The rules, and what each closes:
 
-- `nein_tool_read_only(i)` — `1` for `status` / `validate` / `list` / `diff`,
-  `0` for `allow` / `deny` (live apply). ⚠ "Read-only" means *does not change
-  the firewall*, not *harmless to expose*: `status`, `list` and `diff` run
-  `nft -a list ruleset` **as root** and return the live ruleset (`list` and
-  `diff` verbatim — set elements, allowed sources, comments), and each call
-  spawns a root nft. Only `validate` touches nothing. Do not expose the three
-  readers to unauthenticated or low-trust callers; a separate "reads the live
-  firewall" class is planned for 1.9.0.
-- `nein_tool_admin(i)` — `1` for the mutating tools (the `firewall_admin`
-  profile). Expose read-only firewall tools to low-trust agents; gate the
-  mutating set to privileged agents.
+- **Permit is one value.** nein calls the gate through a run-time pointer
+  (`fncall2`), and cyrius truncates a `Result` returned that way to its tag with
+  no diagnostic. Through 1.8.2 permit was `1`, so a gate returning `Err` (tag 1)
+  **permitted** (audit M-2). `NEIN_GATE_PERMIT` is a 64-bit constant above the
+  user-space address range, so no bool, tag, error code or pointer equals it.
+- **One gate per process, installed once.** `nein_mcp_set_gate` and
+  `nein_tools_register_gated` share one gate. Installing the gate already
+  installed is a no-op (`0`); a different gate, or `0` to clear it, is
+  **refused** (`1`) and the installed gate stays. `nein_tools_register_gated`
+  under a refused gate mounts nothing and returns `nein_tool_count()`. Through
+  1.8.2 a later call silently replaced or removed the gate for every
+  dispatcher already serving. (A gate per registration is not possible: the
+  handler ABI `(args, claims)` carries no registration.) Tools mounted with
+  plain `nein_tools_register` run under whatever gate the process installs,
+  before or after; a host serving two dispatchers of different trust gets one
+  policy for both and must tell callers apart through `claims`.
+- **No gate, offline only.** Until a gate is installed, `nein_validate` runs and
+  the other five answer "access denied: no host gate installed". Through 1.8.2
+  an ungated host ran all six, `nein_allow` and `nein_deny` included.
 
-On the bote-Dispatcher path the same split is carried by bote
-`ToolAnnotations` (read-only vs destructive) and the `firewall` /
-`firewall_admin` profile tags, filterable via `tools/list?profile=`.
+`nein_tool_read_only(i)` and `nein_tool_admin(i)` keep their 1.6.1 meaning
+(`read_only` = does not change the firewall, the MCP `readOnlyHint`), but
+**`read_only` is not "safe to expose"**: three of the four read the live
+ruleset as root. Gate on `nein_tool_class`.
+
+On the bote-Dispatcher path the classes are also carried as profile tags —
+`firewall` on all six, `firewall_read` on the live readers, `firewall_admin` on
+the mutating pair — filterable with `tools/list?profile=`, and as bote
+`ToolAnnotations` (read-only vs destructive). A profile is a listing filter
+the client chooses, not access control; the gate is the access control.
+
+### Migrating a 1.8 gate
+
+A 1.8 gate returns `1` to permit, which 1.9.0 reads as a denial — an
+unmigrated host fails closed (every nein tool denied, `nein_validate`
+included), never open. To migrate:
+
+1. Return `NEIN_GATE_PERMIT` where the gate returned `1`.
+2. Decide the live readers separately. A gate that permitted every
+   `nein_tool_read_only(i) == 1` tool exposed the live ruleset to every caller;
+   permit `NEIN_TOOL_READS_LIVE` only to callers allowed to see it.
+3. Install once at startup, and check the result.
+4. A host that called `nein_tools_register` without a gate and relied on the
+   live tools must now install one.
 
 ## Arguments (1.8.2)
 
@@ -158,9 +187,29 @@ leading zero, fraction or exponent). Tool results are unchanged in shape.
 
 ## Signing (optional)
 
-The bundle also exports the signed-ruleset surface: `sign_ruleset(fw, sk,
-keyid)`, `verify_ruleset(signed, pubkey)`, and fail-closed
-`apply_signed_ruleset(signed, pubkey)` (Ed25519 over the rendered nft body).
-Use it if the host stores/serves rulesets and wants at-rest tamper
-detection before apply. Build envelope helpers `nein_mcp_ok` / `nein_mcp_err`
+The bundle also exports the signed-ruleset surface (Ed25519 over the rendered
+nft body). Use **v2** (1.9.0) for anything a verifier applies:
+
+```
+# signer: seq increases per scope; not_after is a unix second, or 0 for none
+var s_t, env = sign_ruleset_v2(fw, sk, "fleet-key", "web-01", seq, now + 86400);
+
+# verifier: keeps last_seq per (key, scope), records it only after Ok
+var a_t, a_v = apply_signed_ruleset_v2(env, trusted_pk, "web-01", last_seq + 1, now);
+if (is_err_result(a_t) == 0) { last_seq = a_v; persist(last_seq); }
+```
+
+`verify_ruleset_v2` / `apply_signed_ruleset_v2` refuse an envelope signed for
+another scope (`NEIN_ERR_SIG_SCOPE`), below the floor (`NEIN_ERR_SIG_STALE` — a
+replay or rollback), or past its expiry (`NEIN_ERR_SIG_EXPIRED`), and a v1
+envelope (`NEIN_ERR_SIG_VERSION`). On `NEIN_ERR_OUTCOME_UNKNOWN` from the apply,
+the ruleset may be live: raise the floor to the seq `verify_ruleset_v2` returns
+for the same bytes, then diff. Never take a floor from `parse_signed_ruleset_v2`,
+which does not verify — a rewritten `nein-sig-seq` would freeze every later
+envelope out as stale.
+
+The v1 functions (`sign_ruleset`, `verify_ruleset`, `apply_signed_ruleset`)
+remain for existing stores, but a v1 envelope verifies forever, anywhere —
+accepting one is the replay v2 exists to stop. A host that adopts v2 should
+stop calling them. Build envelope helpers `nein_mcp_ok` / `nein_mcp_err`
 are public so host-side firewall tools emit the identical MCP envelope.

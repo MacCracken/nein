@@ -4,6 +4,176 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.9.0] — 2026-11-03
+
+**The consumer-contract minor: the three MEDIUMs the 2026-11-03 audit deferred to 1.9.0, and two
+of its LOWs.** Signed rulesets can be bound against replay (v2 envelope); the MCP host gate has a
+contract that a `Result`, a stray `1` or a second registration cannot subvert, and the tools say
+which of them read the live firewall; an apply whose fate cannot be learned says so; GeoIP sees
+forwarded traffic. bote **3.7.6 → 3.8.0**. **993 unit** (was 870) + **41 integration** (was 18)
+assertions, a new fuzz driver with a uniqueness oracle, 8 new benchmarks. An independent review of
+the change before release found a parser defect and a test gap, both fixed here (see Tests).
+
+⚠ **Breaking for MCP hosts and GeoIP consumers.** Read "Breaking" before upgrading. Every break
+fails closed: an unmigrated host gate denies every nein tool; it never permits more than before.
+
+### Breaking
+
+- **The gate permits only on `NEIN_GATE_PERMIT`** (audit M-2). Through 1.8.2 a gate permitted by
+  returning `1`; now `1`, `0`, `-1`, any `Result` and any pointer deny. nein calls the gate through
+  `fncall2`, which truncates a `Result` to its tag, so a gate returning `Err` (tag 1) **permitted**.
+  `NEIN_GATE_PERMIT` is `0x4E45494E2D4F4B21`, above the x86_64 / aarch64 user-space range, so no
+  bool, tag, error code or pointer equals it. **Migration:** `return 1;` → `return NEIN_GATE_PERMIT;`.
+- **No gate, offline only** (M-3). Until a host installs a gate, only `nein_validate` runs; the other
+  five answer `access denied: no host gate installed …`. Through 1.8.2 an ungated
+  `nein_tools_register` ran all six — `nein_allow` / `nein_deny` included — for any caller that
+  reached the transport. **Migration:** a host that relied on ungated live tools installs a gate.
+- **One gate per process, installed once** (M-2). `nein_mcp_set_gate` now returns `0` when the gate
+  is installed (or was already this gate) and `1` when refused — a different gate, or `0` to clear —
+  and the installed gate stays. `nein_tools_register_gated` under a refused gate mounts nothing and
+  returns `nein_tool_count()`. Through 1.8.2 each call replaced the gate for every dispatcher already
+  serving, and `nein_mcp_set_gate(0)` removed it. A gate per registration, which the audit sketched,
+  cannot be expressed: the handler ABI `(args, claims)` carries no registration, so tools mounted by
+  plain `nein_tools_register` run under whatever gate the process installs (it logs a warning when
+  none is installed yet). **Migration:** install once at startup and check the result.
+- **GeoIP hooks prerouting by default** (B-9, part). The `input` default saw only packets addressed
+  to the host; forwarded and DNAT'd container traffic (stiva's port maps) never met the block. The
+  chain is `type filter hook prerouting priority -10` — after conntrack and DNAT, neither of which
+  rewrites the source it matches. **Migration:** `geoip_set_hook(bl, HOOK_INPUT)` for the old scope.
+- **`NEIN_ERR_OUTCOME_UNKNOWN` (14)** replaces `NEIN_ERR_NFT_FAILED` for an apply whose fate nein
+  cannot learn (S-8): the child was reaped elsewhere (SIGCHLD set to `SIG_IGN`, a host reaper won),
+  killed at the 60 s deadline, or died on a signal. nft commits a batch whole or not at all, but
+  which is unknown, and a caller that retried an additive apply on `NFT_FAILED` duplicated its rules.
+  Reads (`nft list`) in the same cases stay `NFT_FAILED`. **Migration:** on this code, re-diff
+  before acting again. `nein_allow` / `nein_deny` say "apply outcome unknown … check with nein_list".
+
+### Added — replay-bound signed rulesets (v2)
+
+A v1 envelope verifies forever, wherever it is presented: an older "accept 22" outlives a newer
+"drop 22", and one host's ruleset applies on another (MEDIUM since 2026-08-21). v2 signs, with the
+body, a sequence number, an expiry and a scope:
+
+- `sign_ruleset_v2(fw, sk, keyid, scope, seq, not_after)` / `sign_ruleset_body_v2(body, …)` — `scope`
+  1–64 of `[A-Za-z0-9._:-]` (a host or a `role:` label), `seq` ≥ 1, `not_after` a unix second or `0`.
+- `verify_ruleset_v2(signed, pk, scope, min_seq, now)` → `Ok(seq)`; `verify_ruleset_v2_hex`.
+- `apply_signed_ruleset_v2(signed, pk, scope, min_seq, now)` → `Ok(seq)` once applied (verifies and
+  applies one private copy); `apply_signed_ruleset_v2_hex`.
+- `parse_signed_ruleset_v2`, and `signed_version` / `signed_scope` / `signed_seq` /
+  `signed_not_after` on the record both versions now share (72 bytes; v1 records read 1 / 0 / 0 / 0).
+- Errors, returned only after the signature verifies: `NEIN_ERR_SIG_SCOPE` (15), `NEIN_ERR_SIG_STALE`
+  (16, `seq < min_seq` — a replay or rollback), `NEIN_ERR_SIG_EXPIRED` (17).
+
+The signed message is `"nein-sig-v2\0" ‖ seq u64be ‖ not_after u64be ‖ u32be len ‖ scope ‖ u32be len
+‖ keyid ‖ body`: every field before the body has a fixed or prefixed length, so the encoding is
+injective. The headers are in clear and the verifier rebuilds the message from them; the parser is
+strict (each header once, in order, nothing after END but one newline, no NUL in a header, hex in
+lowercase) and checks the digest, so a host reading the headers itself reads what nein verified. nein stays stateless: the caller keeps the
+last applied seq per (key, scope), passes `min_seq` = that + 1 (or that, to re-apply the current one
+at boot), and records the returned seq only after `Ok` — raising it on `OUTCOME_UNKNOWN` to the seq
+`verify_ruleset_v2` returns for those bytes, never one parsed without verification (a rewritten
+`nein-sig-seq: 9223372036854775807` would freeze every later envelope out as stale). A v1
+envelope is `NEIN_ERR_SIG_VERSION` to the v2 functions and vice versa; **a host that adopts v2 must
+stop calling the v1 functions**, whose removal is planned for 2.0.
+
+### Added — MCP tool classes
+
+- `nein_tool_class(i)` → `NEIN_TOOL_OFFLINE` (`nein_validate`), `NEIN_TOOL_READS_LIVE` (`nein_status`
+  / `nein_list` / `nein_diff`: `nft -a list ruleset` as root, live state returned), or
+  `NEIN_TOOL_MUTATES` (`nein_allow` / `nein_deny`); `0` past the table.
+- `nein_tool_index(name)` → the table index, or `-1` (NULL, or not a nein tool) — what a gate needs,
+  and what `nein_mcp_dispatch` now routes by.
+- Profile `firewall_read` on the live readers, beside `firewall` (still on all six) and
+  `firewall_admin` (the mutating pair). Profiles filter `tools/list`; access is the gate's.
+- `nein_tool_read_only` / `nein_tool_admin` are unchanged, and `read_only` still means "does not
+  change the firewall" — not "safe to expose". Gate on the class.
+
+### Security
+
+- **v1 parsing refuses a body containing NUL.** Every v2 signed message holds a NUL (the tag), and
+  v1 signing has refused NUL since 1.8.2, so this closes the one cross-version path: a v2 signature
+  presented as a v1 signature over a "body" equal to the v2 message. The unit test proves the
+  signature does verify over that message, and that v1 now refuses it.
+- The M-2 / M-3 / S-8 / B-9 changes above. **Every MEDIUM-or-higher finding of the 2026-11-03
+  audit is now fixed**; the audit report carries the status.
+
+### Changed — pins
+
+bote-core **3.7.6 → 3.8.0** (tool output schemas, result judging, cancellation on every transport;
+`ToolDef` grows 80 → 104 B, which nein builds only through bote's constructors; the handler ABI and
+minimum cyrius 6.7.13 are unchanged). Its core sidecar adds the `sys` leaf, already in nein's
+resolved tree and accepted by the supply-chain gate. The lock moves by two lines, re-resolved from an
+empty `lib/` and byte-identical on a second pass.
+
+### Tests
+
+- **Found in review, fixed before release.** An independent review of the 1.9.0 change found:
+  - the v2 parser accepted a **NUL inside a header line**: every later check read the value as a C
+    string, so `nein-sig-scope: web-01.dc1\0.evil.example` (or a keyid carrying a smuggled
+    `-----BEGIN NFT RULESET-----…` after a NUL) verified, with bytes nein never signed visible to any
+    other reader of the envelope. Refused now, and uppercase hex with it (a second spelling of one
+    signature);
+  - **no test showed the v2 signature covers the body** — the digest check caught every body edit
+    first, and a mutant that left the body out of the signed message passed all 987 tests. A body
+    edit with the digest rewritten to match is now `BAD_SIGNATURE`;
+  - the fuzz driver could not insert a NUL or write uppercase hex, so its uniqueness oracle could not
+    see either. It now does both, and fails against each mutant (and against the `\r` one);
+  - gate tests matched "access denied", which the no-gate denial also contains; they now match the
+    gate's own message, and the bundle smoke test proves the gate is consulted and survives a clear.
+- `tests/nein.tcyr` **870 → 993**: `sign_v2` (round trip; scope / stale / expiry bounds at their
+  edges; each clear header rewritten breaks the signature; duplicate, reordered and trailing lines
+  refused; downgrade both ways; the cross-version case; sign- and verify-side argument refusals;
+  `_sign_parse_u63` at `2^63-1` and past it; apply blocked before nft, `Ok(seq)` through a stand-in
+  nft, `OUTCOME_UNKNOWN` with SIGCHLD ignored), the no-gate default, refuse-replace / refuse-clear,
+  a 1.8-style gate, a `Result` gate and a pointer gate all denying, classes and profiles, GeoIP's
+  default hook.
+- **`tests/integration/apply_outcome.tcyr`** (14, new): nft stood in by `/bin/sh` scripts — signal
+  death, deadline kill (deadline shortened to 300 ms), SIGCHLD ignored, nonzero exit, missing binary
+  — apply against read. No root or nft needed; runs on CI.
+- `mcp_consume_smoke` 10 → 19: the 1.9.0 surface through `dist/nein-mcp.cyr`.
+- **`fuzz/sign_v2_parse.fcyr`** (new, 7th driver): 20,000 mutations of envelopes signed with a fixed
+  key, biased to line boundaries, NUL insertion and uppercase hex among them. Oracles: record well-formed; **uniqueness** (an input that verifies
+  is its seed, or the seed without its final newline); **cross-version** (no mutation verifies as
+  v1). Checked against a mutant parser that strips a trailing `\r` from header values: the first
+  version of the driver let it through (no lone `\r` in its alphabet), the shipped one fails it.
+  Clean under `--bounds` and `--poison=ab`. Three hand-made parser mutants (strip a trailing `\r`,
+  allow a header NUL, allow uppercase hex) each fail it.
+- `nft_load` loads the prerouting GeoIP ruleset in real nft 1.1.7.
+- Coverage floors raised: API test coverage **65% → 68%** (281/410, every 1.9.0 fn called), doc
+  coverage **17% → 19%** (79/410).
+
+### Performance
+
+Against the 1.8.2 baseline, same machine (factor 1.001×): 48 of 48 compared, 0 regressions. The new
+benchmarks, as recorded in the 1.9.0 baseline:
+
+| bench | ns | |
+|---|---|---|
+| `sign_v1` / `sign_v2` | 1,850,000 / 1,889,000 | v2 +2.1% |
+| `verify_v1` / `verify_v2` | 5,492,000 / 5,541,000 | v2 +0.9%: the binding costs a body copy and one more SHA-256 (the digest check) next to Ed25519 |
+| `verify_v2_1000_rules` | 8,631,000 | |
+| `parse_v2` | 7,571 | strict header walk + digest |
+| `mcp_gate_check` | 10 | |
+| `mcp_dispatch_validate` | 2,737 | |
+
+`firewall_1000_rules_validate` reads +24% (249 → ~310 µs) and is **not** a change in nein: its
+sources are byte-identical to 1.8.2, the 1.8.2 bench file measures 258 µs against the 1.9.0 sources,
+and bisecting the bench file's new includes moves it between 263 and 305 µs — code layout in the
+bench binary. Recorded in `docs/development/traps.md`. **A 1.9.0 baseline is recorded** in
+`docs/benchmarks/history.csv` (56 benchmarks, 2026-11-03T19:01:09Z), and the bench-regression gate
+passes against it: 56 of 56, factor 0.999×, 0 regressions.
+
+### Documentation
+
+- `docs/guides/mcp-host-integration.md`: the 1.9.0 gate contract, the class table, an example gate,
+  "Migrating a 1.8 gate", and v2 signing with the verifier's seq bookkeeping.
+- Threat model: T-9 gains v2 and its residual (the floor is the caller's; v1 is unbound; `now` is the
+  caller's clock); T-10 rewritten for the contract; T-4's S-8 residual now names the error code.
+- `SECURITY.md` (1.9.x supported; T-9 / T-10 properties; bote 3.8.0), `capability-map.md`,
+  `dependencies.md`, `supply-chain-policy.md`, `testing.md`, `traps.md` (three new: `fncall2` reads a
+  `Result` as its tag; a fuzzer only finds what its alphabet can spell; layout moves a benchmark),
+  the audit report's status, the roadmap (1.9.0 removed; daimon's and aegis's migrations; v1 signing
+  retired in 2.0), README, CONTRIBUTING, CLAUDE.md.
+
 ## [1.8.2] — 2026-11-03
 
 **The P(-1) audit after three toolchain moves: 4 HIGH, 18 MEDIUM and 28 LOW found; every HIGH,

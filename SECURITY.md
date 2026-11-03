@@ -38,6 +38,7 @@ Issues mapped to a numbered threat in the threat model expedite triage
 
 | Version | Supported |
 | ------- | --------- |
+| 1.9.x   | Yes       |
 | 1.8.x   | Yes       |
 | 1.7.x   | Yes       |
 | 1.6.x   | Yes       |
@@ -48,7 +49,7 @@ Issues mapped to a numbered threat in the threat model expedite triage
 The Rust-era line (≤ 0.90.0) lived in `rust-old/` as a reference
 checkout — it is not maintained. The Cyrius port baseline is v1.0.0.
 
-## Security Properties (current, v1.6.x)
+## Security Properties (current, v1.9.x)
 
 The properties below are enforced today. Each ties back to a numbered
 threat in the threat model.
@@ -76,9 +77,21 @@ threat in the threat model.
   execve, resets the signal mask and SIGPIPE / SIGXFSZ, sets a
   parent-death signal and closes every inherited descriptor. The parent
   waits on a pidfd with a 60 s deadline (a wedged nft is killed) and
-  checks `waitpid`'s result. A ruleset containing NUL is refused. Execve
+  checks `waitpid`'s result; when nft's fate cannot be learned (reaped
+  elsewhere, killed, dead on a signal) an apply reports
+  `NEIN_ERR_OUTCOME_UNKNOWN` (1.9.0), not a failure a caller might retry.
+  A ruleset containing NUL is refused. Execve
   failure routes to `sys_exit(127)` in the child; the parent observes that
   exit and returns `Err(NEIN_ERR_PERMISSION_DENIED)`.
+- **Replay-bound signed rulesets** (T-9, 1.9.0). A v2 envelope signs a
+  sequence number, an expiry and a scope with the body;
+  `verify_ruleset_v2` / `apply_signed_ruleset_v2` refuse an envelope for
+  another scope, below the caller's floor, or expired — after the
+  signature verifies, never instead of it. v1 envelopes stay unbound.
+- **MCP access control** (T-10, 1.9.0). Every tool has a class (offline,
+  reads-live, mutates); with no host gate only the offline tool runs; a gate
+  permits only by returning `NEIN_GATE_PERMIT`, and is installed once —
+  never silently replaced or cleared.
 - **No `sys_system`** (T-1 / T-3). CI security scan hard-fails on any
   `\bsys_system\s*\(` match in `src/`. The shell-quoting attack
   surface is precisely what fork+execve with an explicit argv avoids.
@@ -86,7 +99,7 @@ threat in the threat model.
   each resolved dep. `cyrius deps --verify` in CI fails on hash
   mismatch. Cyrius itself is pinned in `cyrius.cyml`
   (`cyrius = "6.7.18"`). nein's git dep set (`cyrius.cyml` `[deps.*]`,
-  as of 1.8.2): libro 2.11.3, majra 2.13.0, bote 3.7.6 (`bote-core`),
+  as of 1.9.0): libro 2.11.3, majra 2.13.0, bote 3.8.0 (`bote-core`),
   sigil 3.13.15, patra 1.16.6 —
   sigil + patra carry explicit pins. sakshi dropped out of the git set at
   1.6.5 (libro 2.8.8 no longer pulls it transitively); it now resolves

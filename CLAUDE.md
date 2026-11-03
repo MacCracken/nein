@@ -8,7 +8,7 @@
 - **License**: GPL-3.0-only
 - **Language**: Cyrius (sovereign systems language, compiled by cycc; pinned `cyrius = "6.7.18"` in `cyrius.cyml`)
 - **Version**: SemVer, version file at `VERSION`
-- **Status**: 1.8.2 — Cyrius port complete + MCP/Ed25519-signing surface (mcp 1.6.0, sign 1.6.1, daimon dispatch adapter 1.6.2); toolchain moves 1.7.1–1.8.1 (cyrius 6.6.20 → 6.7.18, every dep at its latest release); 1.8.2 is the P(-1) audit after them ([docs/audit/2026-11-03-audit.md](docs/audit/2026-11-03-audit.md): 4 HIGH / 18 MEDIUM / 28 LOW found, every HIGH and 16 MEDIUM fixed; the rest planned in the roadmap). 870 unit + 18 integration assertions + an nft load test, 48 benchmarks, 6 fuzz drivers, 397 public fns. CI gates: fmt/lint/vet/deny/capacity/type-check/aarch64-cross/security-scan/doc-coverage/test-coverage/supply-chain/api-surface/bench-regression/fuzz/integration/dist-staleness
+- **Status**: 1.9.0 — Cyrius port complete + MCP/Ed25519-signing surface (mcp 1.6.0, sign 1.6.1, daimon dispatch adapter 1.6.2); toolchain moves 1.7.1–1.8.1 (cyrius 6.6.20 → 6.7.18, every dep at its latest release); 1.8.2 the P(-1) audit after them ([docs/audit/2026-11-03-audit.md](docs/audit/2026-11-03-audit.md)); 1.9.0 the consumer-contract minor that closes its deferred MEDIUMs (replay-bound v2 signing, MCP gate contract + tool classes, outcome-unknown applies, GeoIP on prerouting; bote 3.8.0). 993 unit + 41 integration assertions + an nft load test, 56 benchmarks, 7 fuzz drivers, 410 public fns. CI gates: fmt/lint/vet/deny/capacity/type-check/aarch64-cross/security-scan/doc-coverage/test-coverage/supply-chain/api-surface/bench-regression/fuzz/integration/dist-staleness
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)
@@ -131,11 +131,11 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 - **Tests + benchmarks are the way.** Two coverage gates, both ratchets at the
   currently-measured figure — raise them as coverage improves, never lower them
   to make a build pass:
-  - **API test coverage** — `scripts/test-coverage.sh`, floor **65%** (262/397
-    public fns called by a test, 1.8.2). This is reference coverage: a fn called once
+  - **API test coverage** — `scripts/test-coverage.sh`, floor **68%** (281/410
+    public fns called by a test, 1.9.0). This is reference coverage: a fn called once
     counts. It catches "shipped an API, never tested it" — the exact failure that
     let the v1.6.7 `dry_run` bug through.
-  - **Doc coverage** — `scripts/doc-coverage.sh`, floor **17%** (71/397, 1.8.2). Low by
+  - **Doc coverage** — `scripts/doc-coverage.sh`, floor **19%** (79/410, 1.9.0). Low by
     design of the surface, not neglect: the logic-carrying modules are at or near
     100% (config 17/17, validate 8/8, error 3/3) and the deficit is one-line
     accessors under section comments.

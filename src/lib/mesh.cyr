@@ -74,18 +74,6 @@ fn _mesh_cstr_concat(a: cstring, b: cstring): cstring {
     return out;
 }
 
-fn _mesh_cstr_concat3(a: cstring, b: cstring, c: cstring): cstring {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, a);
-    str_builder_add_cstr(sb, b);
-    str_builder_add_cstr(sb, c);
-    var s = str_builder_build(sb);
-    var out = alloc(str_len(s) + 1);
-    memcpy(out, str_data(s), str_len(s));
-    store8(out + str_len(s), 0);
-    return out;
-}
-
 # Build "meta skuid N" raw match string
 fn _raw_meta_skuid(uid: i64): cstring {
     var sb = str_builder_new();

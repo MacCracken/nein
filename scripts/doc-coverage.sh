@@ -36,8 +36,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Measured floor. 1.6.9: 68/391 = 17%.
-MIN_PCT=17
+# Measured floor. 1.6.9: 68/391 = 17%. 1.9.0: 79/410 = 19%.
+MIN_PCT=19
 
 while [ $# -gt 0 ]; do
     case "$1" in

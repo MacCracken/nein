@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-11-03 (post v1.8.2 — the P(-1) audit after three toolchain moves; every HIGH and 16 of 18 MEDIUM fixed, the rest planned below. Rewritten as forward-looking only: completed items removed, open work organised into 1.9.x → 2.0.0 and post-2.x.)
+Last refresh: 2026-11-03 (post v1.9.0 — the consumer-contract minor: replay-bound v2 signing, the MCP gate contract and tool classes, outcome-unknown applies, GeoIP on prerouting. Every 2026-11-03 audit MEDIUM is now fixed. Forward-looking only: completed items removed.)
 
 This file tracks **what is next**. Shipped history lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); audit findings and their status in
@@ -9,14 +9,15 @@ lessons that cost a round of investigation in [`traps.md`](traps.md).
 
 ---
 
-## Where things stand — v1.8.2
+## Where things stand — v1.9.0
 
 nein is feature-complete for the consumers identified at port time (stiva,
-daimon, aegis, sutra): 21 modules, 397 public fns, 870 unit + 18 integration
-assertions, 48 benchmarks, 6 fuzz drivers, and a load test that has real nft
+daimon, aegis, sutra): 21 modules, 410 public fns, 993 unit + 41 integration
+assertions, 56 benchmarks, 7 fuzz drivers, and a load test that has real nft
 parse every builder's output. Pinned at cyrius 6.7.18 with every dependency at
-its latest release. Consumers still on cyrius 6.6.x stay on nein 1.7.1, the
-last release built on 6.6.20.
+its latest release (bote 3.8.0). Every MEDIUM-or-higher finding of the
+2026-11-03 audit is fixed; the open LOWs are below. Consumers still on cyrius
+6.6.x stay on nein 1.7.1, the last release built on 6.6.20.
 
 Everything below is driven by a consumer, by the language, or by a finding
 deferred with a reason — not by speculation.
@@ -24,43 +25,6 @@ deferred with a reason — not by speculation.
 ---
 
 ## 1.9.x → 2.0.0
-
-### 1.9.0 — consumer-contract changes, made with the consumers
-
-Each of these changes what a consumer writes or what it receives, so each is
-designed against the consumer that holds the other side, and they ship
-together in one minor.
-
-- **Replay binding for signed rulesets** — with **aegis**, which holds the
-  trusted key. Today any envelope ever signed with the trusted key verifies
-  and applies forever; an older "accept 22" outlives a newer "drop 22"
-  (2026-08-21 MEDIUM, re-confirmed 2026-11-03). Sketch from the audit: a
-  `nein-sig: v2` envelope whose signature covers a domain-separated message —
-  version, monotonic `seq`, `not_after`, a `scope` (host or role), `keyid`,
-  body — carried in clear headers the verifier rebuilds the message from.
-  nein stays stateless: `verify_ruleset_v2(signed, pk, scope, min_seq)` returns
-  the seq; aegis keeps the last applied seq per (key, scope), persists it only
-  after a successful apply, and refuses v1 once a floor is set (otherwise the
-  downgrade is the replay).
-- **MCP host-gate contract** — with **daimon** (audit M-2). The gate is called
-  through a run-time pointer, so a gate returning a `Result` is truncated to
-  its tag and `Err` reads as *permit*; and one process-wide `_nein_gate` is
-  replaced by any later registration. Plan: a permit value that is neither `0`
-  nor `1`, and a gate held per registration. 1.8.2 documents the hazard in the
-  host guide.
-- **A "reads the live firewall" tool class** — with **daimon** (audit M-3).
-  `nein_status` / `nein_list` / `nein_diff` run `nft -a list ruleset` as root
-  and return the ruleset, yet are classed read-only in the plain `firewall`
-  profile, which hosts treat as safe to expose. Plan: a separate class and
-  profile (e.g. `firewall_read`), denied by default without claims; only
-  `nein_validate` stays in the harmless set.
-- **An "outcome unknown" apply result** (audit S-8). With SIGCHLD set to
-  SIG_IGN, or a reaper that wins the race, apply returns `Err` after nft has
-  committed, and a caller that retries an additive apply duplicates rules. A
-  distinct error code tells the caller to re-diff rather than re-apply.
-- **GeoIP on prerouting by default** (audit B-9, part). The default `input`
-  hook does not see forwarded or DNAT'd container traffic. A behaviour change
-  for every GeoIP consumer, so it rides the minor.
 
 ### 1.9.x — hardening and follow-ups
 
@@ -90,16 +54,28 @@ together in one minor.
   `BENCH_NS_THRESHOLD` were sized for that offset; after a few CI runs show the
   normalized spread (±27% on the first), drop them toward 50% and retire the
   per-bench override.
-- **Raise the coverage ratchets.** API test coverage is gated at 65% (direction
-  of travel 80%), doc coverage at 17% (the deficit is one-line accessors). Raise
+- **Raise the coverage ratchets.** API test coverage is gated at 68% (direction
+  of travel 80%), doc coverage at 19% (the deficit is one-line accessors). Raise
   each floor to the measured figure as it moves; never lower one.
 - **Consumer adoption** (work in the consumers' repos, tracked here):
-  daimon's half of the 1.6.2 MCP integration (`[deps.nein]` →
-  `dist/nein-mcp.cyr`, route `nein_*` to `nein_mcp_dispatch`, wire the gate to
-  agent identity) — and daimon, stiva and aegis moving to cyrius ≥ 6.7.2 to
-  take 1.8.x and its audit fixes. stiva writes its ruleset to a fixed
-  `/tmp/stiva-nft-ruleset.nft` before `nft -f` (predictable path for a root
-  process; reported, unverified) — stiva's to fix.
+  - **daimon → 1.9.0** (on 1.8.1 today). Its gate returns `1`, which 1.9.0
+    reads as a denial, so the bump fails closed until the gate returns
+    `NEIN_GATE_PERMIT` — and it permits every `nein_tool_read_only` tool, so
+    its unauthenticated `POST /v1/mcp/call` hands the live root ruleset to any
+    caller. Migrate per the host guide's "Migrating a 1.8 gate": classify with
+    `nein_tool_class`, deny `READS_LIVE` until daimon has caller identity
+    (its roadmap 2.5.x), check `nein_mcp_set_gate`'s result.
+  - **aegis → v2 signing**, once it signs rulesets at all (it consumes
+    `dist/nein.cyr`, which carries no signing, and is on cyrius 6.6.20 /
+    nein 1.7.1): keep the last applied seq per (key, scope), persist it only
+    after `apply_signed_ruleset_v2` returns `Ok`, raise it on
+    `NEIN_ERR_OUTCOME_UNKNOWN`, and never accept v1.
+  - stiva and aegis moving to cyrius ≥ 6.7.2 to take 1.8.x / 1.9.x and the
+    audit fixes. stiva writes its ruleset to a fixed
+    `/tmp/stiva-nft-ruleset.nft` before `nft -f` (predictable path for a root
+    process; reported, unverified) — stiva's to fix. GeoIP consumers: the
+    default hook is prerouting since 1.9.0 (`geoip_set_hook(bl, HOOK_INPUT)`
+    for the old scope).
 - **Full TOML struct parsing** — blocked on a richer `toml` in the stdlib;
   `config.cyr`'s enum dispatchers cover today's needs.
 - **Doctests** — blocked: `cyrius doctest` still reports `0 passed, 0 failed`
@@ -122,6 +98,10 @@ width), and every compound value is hand-laid with `alloc(N)` +
 - Replace the offset structs (`LiveRule`, rules, matches, NAT rules) with typed
   structs. That retires the `store64(lr + 16, …)` pattern — the root of the
   v1.5.5 block-stack OOB write — making the class unrepresentable.
+- Retire the v1 signed envelope (`sign_ruleset`, `verify_ruleset`,
+  `apply_signed_ruleset` and the `_hex` forms): it is unbound, and a verifier
+  that still accepts it can be replayed through it. v2 has been the answer
+  since 1.9.0; 2.0 is the first release allowed to remove a function.
 - Fold in any 1.9.x contract that proved awkward to express without types.
 
 No driver but the language: until it ships, everything fits under 1.x.
@@ -160,7 +140,7 @@ Driver-gated work that is best done once, on 2.0's typed model:
 - Don't ship docs-only releases — fold prose currency into the next release.
 - Don't add deps speculatively. New deps need a function nein actually calls.
 - A consumer-facing contract changes in a minor, designed with that consumer
-  (1.9.0 above) — not in a patch, and not by surprise.
+  (as 1.9.0's were) — not in a patch, and not by surprise.
 - Be careful what you call correct-by-construction. The v1.5.0 diff's
   byte-equality match was called that, and silently reordered rules (1.6.10,
   H-5); its live-rule parser was trusted, and deleted other tenants' rules and

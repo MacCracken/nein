@@ -1413,6 +1413,16 @@ fn test_geoip() {
     assert(str_contains_cstr(rendered, "1.0.0.0/8, 2.0.0.0/8") == 1, "v4 cidrs");
     assert(str_contains_cstr(rendered, "ip saddr @geo_cn drop") == 1, "v4 rule");
     assert(str_contains_cstr(rendered, "geoblock CN") == 1, "v4 comment");
+    # 1.9.0 (audit B-9): prerouting by default, so forwarded and DNAT'd
+    # container traffic meets the block too; input stays one call away.
+    assert_eq(geoip_hook(geoip_new()), HOOK_PREROUTING, "geoip default hook is prerouting");
+    assert(str_contains_cstr(rendered, "type filter hook prerouting priority -10") == 1, "v4 chain on prerouting");
+    assert(str_contains_cstr(rendered, "hook input") == 0, "no input hook by default");
+    var gi = geoip_new();
+    geoip_set_hook(gi, HOOK_INPUT);
+    geoip_block_country(gi, country_block_v4("CN", cidrs));
+    assert(is_ok(geoip_validate(gi)) == 1, "geoip on input still valid");
+    assert(str_contains_cstr(firewall_render(geoip_to_firewall(gi)), "hook input") == 1, "input hook on request");
 
     # Dual stack
     bl = geoip_new();
@@ -2795,12 +2805,29 @@ fn test_diff() {
 # integration tier, not here.
 # ================================================================
 
-# Host access-control gate for the gated-register test: permit only
-# nein_validate, deny everything else.
+# Host access-control gate. The gate installs once per process (1.9.0), so
+# the tests install this one and steer it: mode 0 permits only nein_validate,
+# mode 1 permits everything, mode 2 answers `1` the way a 1.8 gate did.
+var _test_gate_mode = 0;
 fn _test_mcp_gate(name: cstring, claims: i64): i64 {
-    if (streq(name, "nein_validate") == 1) { return 1; }
+    if (_test_gate_mode == 1) { return NEIN_GATE_PERMIT; }
+    if (_test_gate_mode == 2) { return 1; }
+    if (streq(name, "nein_validate") == 1) { return NEIN_GATE_PERMIT; }
     return 0;
 }
+
+# A second gate, for the refuse-replacement checks.
+fn _test_mcp_gate_other(name: cstring, claims: i64): i64 { return NEIN_GATE_PERMIT; }
+
+# A gate written the way the Packed-Result guideline suggests. Through 1.8.2
+# fncall2 truncated it to its tag and Err (tag 1) read as permit (audit M-2).
+fn _test_mcp_gate_result(name: cstring, claims: i64) {
+    if (streq(name, "nein_validate") == 1) { return Ok(0); }
+    return Err(NEIN_ERR_PERMISSION_DENIED);
+}
+
+# A gate that returns a pointer — a non-zero, non-one value that is not permit.
+fn _test_mcp_gate_ptr(name: cstring, claims: i64) { return "permit"; }
 
 # Event sink for the registration test (1.8.2): counts bote's
 # TOPIC_TOOL_REGISTERED events, which one-call registration publishes and
@@ -2820,6 +2847,26 @@ fn test_mcp() {
     assert(str_contains_cstr(str_from(okr), "hello") == 1, "ok envelope carries text");
     var errr = _mcp_err("nope");
     assert(str_contains_cstr(str_from(errr), "\"isError\":true") == 1, "err envelope isError=true");
+
+    # --- 1.9.0: with no gate installed only the offline tool runs ---
+    # Through 1.8.2 an ungated host ran all six, nein_allow and nein_deny too.
+    assert_eq(_nein_gate, 0, "no gate installed at start");
+    var ng_v = nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(ng_v), "\"isError\":false") == 1, "no gate: validate runs");
+    var ng_s = nein_mcp_dispatch("nein_status", "{}", 0);
+    assert(str_contains_cstr(str_from(ng_s), "no host gate installed") == 1, "no gate: status denied");
+    var ng_l = nein_mcp_dispatch("nein_list", "{}", 0);
+    assert(str_contains_cstr(str_from(ng_l), "no host gate installed") == 1, "no gate: list denied");
+    var ng_d = nein_mcp_dispatch("nein_diff", "{\"rules\":[{\"protocol\":\"tcp\",\"port\":22}]}", 0);
+    assert(str_contains_cstr(str_from(ng_d), "no host gate installed") == 1, "no gate: diff denied");
+    var ng_a = nein_mcp_dispatch("nein_allow", "{\"protocol\":\"tcp\",\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(ng_a), "no host gate installed") == 1, "no gate: allow denied");
+    var ng_dn = nein_mcp_dispatch("nein_deny", "{\"protocol\":\"tcp\",\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(ng_dn), "no host gate installed") == 1, "no gate: deny denied");
+
+    # Install the test gate, permitting everything, for the handler tests below.
+    _test_gate_mode = 1;
+    assert_eq(nein_mcp_set_gate(&_test_mcp_gate), 0, "gate installs");
 
     # --- nein_validate: accepts a well-formed request ---
     var v_ok = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":443}", 0);
@@ -2930,26 +2977,97 @@ fn test_mcp() {
     assert(str_contains_cstr(str_from(nein_mcp_ok("hi")), "\"isError\":false") == 1, "nein_mcp_ok envelope");
     assert(str_contains_cstr(str_from(nein_mcp_err("no")), "\"isError\":true") == 1, "nein_mcp_err envelope");
 
+    # --- 1.9.0: profiles by class ---
+    assert(tool_def_has_profile(registry_get(reg, "nein_status"), "firewall_read") == 1,
+      "nein_status in firewall_read profile");
+    assert(tool_def_has_profile(registry_get(reg, "nein_diff"), "firewall_read") == 1,
+      "nein_diff in firewall_read profile");
+    assert(tool_def_has_profile(registry_get(reg, "nein_validate"), "firewall_read") == 0,
+      "nein_validate NOT in firewall_read profile");
+    assert(tool_def_has_profile(registry_get(reg, "nein_validate"), "firewall_admin") == 0,
+      "nein_validate NOT in firewall_admin profile");
+    assert(tool_def_has_profile(registry_get(reg, "nein_allow"), "firewall_read") == 0,
+      "nein_allow NOT in firewall_read profile");
+    assert(tool_def_has_profile(registry_get(reg, "nein_validate"), "firewall") == 1,
+      "firewall profile still lists every tool");
+    assert(ann_read_only_hint(tool_def_annotations(registry_get(reg, "nein_diff"))) == 1,
+      "nein_diff annotated read-only");
+
     # --- gated register: gate permits only nein_validate ---
+    _test_gate_mode = 0;
     var greg = tool_registry_new();
     var gd = dispatcher_new(greg);
-    assert_eq(nein_tools_register_gated(gd, &_test_mcp_gate), 0, "gated register: none refused");
+    assert_eq(nein_tools_register_gated(gd, &_test_mcp_gate), 0, "gated register with the installed gate: none refused");
     var gv = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22}", 0);
     assert(str_contains_cstr(str_from(gv), "\"isError\":false") == 1, "gate permits validate");
     var gs = _nein_status_handler("{}", 0);
-    assert(str_contains_cstr(str_from(gs), "access denied") == 1, "gate denies status pre-nft");
+    assert(str_contains_cstr(str_from(gs), "tool gated by host policy") == 1, "gate denies status pre-nft");
     var gd2 = _nein_diff_handler("{\"rules\":[{\"protocol\":\"tcp\",\"port\":22}]}", 0);
-    assert(str_contains_cstr(str_from(gd2), "access denied") == 1, "gate denies diff pre-parse");
-    _nein_gate = 0;   # reset so nothing else is gated
+    assert(str_contains_cstr(str_from(gd2), "tool gated by host policy") == 1, "gate denies diff pre-parse");
+
+    # --- 1.9.0 (audit M-2): one gate per process, never replaced or cleared ---
+    assert_eq(nein_mcp_set_gate(&_test_mcp_gate), 0, "re-installing the same gate is a no-op");
+    assert_eq(nein_mcp_set_gate(&_test_mcp_gate_other), 1, "a different gate is refused");
+    assert_eq(_nein_gate, &_test_mcp_gate, "the installed gate stays after a refused replacement");
+    assert_eq(nein_mcp_set_gate(0), 1, "clearing the gate is refused");
+    assert_eq(_nein_gate, &_test_mcp_gate, "the installed gate stays after a refused clear");
+    var oreg = tool_registry_new();
+    var od = dispatcher_new(oreg);
+    assert_eq(nein_tools_register_gated(od, &_test_mcp_gate_other), 6, "gated register under another gate: all refused");
+    assert_eq(registry_len(oreg), 0, "gated register under another gate: nothing mounted");
+    var gs2 = _nein_status_handler("{}", 0);
+    assert(str_contains_cstr(str_from(gs2), "tool gated by host policy") == 1, "the original gate still decides");
+
+    # --- 1.9.0 (audit M-2): permit is NEIN_GATE_PERMIT and nothing else ---
+    _test_gate_mode = 2;
+    var g1v = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(g1v), "tool gated by host policy") == 1, "a gate answering 1 (1.8 contract) denies");
+    _test_gate_mode = 0;
+    # Other gates need the slot empty; tests may clear it, no public API can.
+    _nein_gate = 0;
+    assert_eq(nein_mcp_set_gate(&_test_mcp_gate_result), 0, "Result gate installs");
+    var grv = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(grv), "tool gated by host policy") == 1, "Result gate: Ok does not permit");
+    var grs = _nein_status_handler("{}", 0);
+    assert(str_contains_cstr(str_from(grs), "tool gated by host policy") == 1, "Result gate: Err no longer reads as permit");
+    _nein_gate = 0;
+    assert_eq(nein_mcp_set_gate(&_test_mcp_gate_ptr), 0, "pointer gate installs");
+    var gpv = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(gpv), "tool gated by host policy") == 1, "a pointer is not permit");
+    _nein_gate = 0;
+    assert_eq(nein_mcp_set_gate(&_test_mcp_gate), 0, "test gate re-installed");
 
     # --- 1.6.2 dispatch adapter: tool table + dispatch-by-name ---
     assert_eq(nein_tool_count(), 6, "tool table has 6 tools");
     assert(streq(nein_tool_name(0), "nein_status") == 1, "tool 0 is nein_status");
     assert(streq(nein_tool_name(3), "nein_validate") == 1, "tool 3 is nein_validate");
+    assert(str_contains_cstr(str_from(nein_tool_desc(3)), "no apply") == 1, "tool 3 described as no-apply");
+    assert(strlen(nein_tool_desc(6)) == 0, "no description past the table");
     assert_eq(nein_tool_read_only(0), 1, "nein_status is read-only");
     assert_eq(nein_tool_read_only(1), 0, "nein_allow is mutating");
     assert_eq(nein_tool_admin(1), 1, "nein_allow is admin-profile");
     assert_eq(nein_tool_admin(0), 0, "nein_status is not admin-profile");
+
+    # --- 1.9.0 (audit M-3): tool classes, and lookup by name ---
+    assert_eq(nein_tool_class(nein_tool_index("nein_validate")), NEIN_TOOL_OFFLINE, "validate is offline");
+    assert_eq(nein_tool_class(nein_tool_index("nein_status")), NEIN_TOOL_READS_LIVE, "status reads live");
+    assert_eq(nein_tool_class(nein_tool_index("nein_list")), NEIN_TOOL_READS_LIVE, "list reads live");
+    assert_eq(nein_tool_class(nein_tool_index("nein_diff")), NEIN_TOOL_READS_LIVE, "diff reads live");
+    assert_eq(nein_tool_class(nein_tool_index("nein_allow")), NEIN_TOOL_MUTATES, "allow mutates");
+    assert_eq(nein_tool_class(nein_tool_index("nein_deny")), NEIN_TOOL_MUTATES, "deny mutates");
+    assert_eq(nein_tool_index("nein_bogus"), 0 - 1, "unknown name has no index");
+    assert_eq(nein_tool_index(0), 0 - 1, "NULL name has no index");
+    assert_eq(nein_tool_class(0 - 1), 0, "no class for an unknown tool");
+    assert_eq(nein_tool_class(6), 0, "no class past the table");
+    var ci = 0;
+    var cok = 1;
+    while (ci < nein_tool_count()) {
+        if (nein_tool_index(nein_tool_name(ci)) != ci) { cok = 0; }
+        if (nein_tool_class(ci) == 0) { cok = 0; }
+        if ((nein_tool_class(ci) == NEIN_TOOL_MUTATES) != (nein_tool_read_only(ci) == 0)) { cok = 0; }
+        ci = ci + 1;
+    }
+    assert_eq(cok, 1, "every tool has an index, a class, and read_only agrees with it");
 
     var dv = nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":22}", 0);
     assert(str_contains_cstr(str_from(dv), "\"isError\":false") == 1, "dispatch nein_validate ok");
@@ -2959,12 +3077,12 @@ fn test_mcp() {
     assert(str_contains_cstr(str_from(dunk), "unknown nein tool") == 1, "dispatch unknown tool errs");
 
     # gate via the adapter path (nein_mcp_set_gate) — permit only validate
-    nein_mcp_set_gate(&_test_mcp_gate);
+    _test_gate_mode = 0;
     var gdv = nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":22}", 0);
     assert(str_contains_cstr(str_from(gdv), "\"isError\":false") == 1, "adapter gate permits validate");
     var gds = nein_mcp_dispatch("nein_status", "{}", 0);
-    assert(str_contains_cstr(str_from(gds), "access denied") == 1, "adapter gate denies status");
-    _nein_gate = 0;
+    assert(str_contains_cstr(str_from(gds), "tool gated by host policy") == 1, "adapter gate denies status");
+    _nein_gate = 0;   # test-only: leave the process ungated for later groups
 
     return 0;
 }
@@ -2998,6 +3116,8 @@ fn test_sign() {
 
     # verify with the correct key -> Ok
     assert(is_err_result(verify_ruleset(env, pk)) == 0, "verify correct key ok");
+    assert(is_err_result(verify_ruleset_hex(env, hex_encode(pk, 32))) == 0, "verify by hex key ok");
+    assert(is_err_result(verify_ruleset_hex(env, "abc")) == 1, "verify by short hex key errs");
 
     # verify with a different key -> key mismatch
     var sk2 = alloc(64);
@@ -3031,6 +3151,267 @@ fn test_sign() {
     # malformed envelope -> Err
     assert(is_err_result(parse_signed_ruleset(str_from("not an envelope"))) == 1, "malformed errs");
 
+    return 0;
+}
+
+# ================================================================
+# Replay-bound (v2) signed rulesets (1.9.0)
+# ================================================================
+
+# env[0, at) || ins || env[at + skip, len) as a fresh Str.
+fn _t_splice(env: i64, at: i64, skip: i64, ins: cstring): i64 {
+    var sb = str_builder_new();
+    var d = str_data(env);
+    var i = 0;
+    while (i < at) { str_builder_add_byte(sb, load8(d + i)); i = i + 1; }
+    str_builder_add_cstr(sb, ins);
+    i = at + skip;
+    while (i < str_len(env)) { str_builder_add_byte(sb, load8(d + i)); i = i + 1; }
+    return str_builder_build(sb);
+}
+
+# env[0, at) || NUL || tail || env[at, len) — a NUL a cstring cannot carry.
+fn _t_splice_nul(env: i64, at: i64, tail: cstring): i64 {
+    var sb = str_builder_new();
+    var d = str_data(env);
+    var i = 0;
+    while (i < at) { str_builder_add_byte(sb, load8(d + i)); i = i + 1; }
+    str_builder_add_byte(sb, 0);
+    str_builder_add_cstr(sb, tail);
+    while (i < str_len(env)) { str_builder_add_byte(sb, load8(d + i)); i = i + 1; }
+    return str_builder_build(sb);
+}
+
+# The Err code of a (tag, value) pair, or -1 when it is Ok.
+fn _t_code(t: i64, v: i64): i64 {
+    if (is_err_result(t) == 0) { return 0 - 1; }
+    return v;
+}
+
+fn _t_v2_code(env: i64, pk: i64, scope: cstring, min_seq: i64, now: i64): i64 {
+    var t, v = verify_ruleset_v2(env, pk, scope, min_seq, now);
+    return _t_code(t, v);
+}
+
+fn _t_v2hex_code(env: i64, pkh: cstring, scope: cstring, min_seq: i64, now: i64): i64 {
+    var t, v = verify_ruleset_v2_hex(env, pkh, scope, min_seq, now);
+    return _t_code(t, v);
+}
+
+fn _t_v1_code(env: i64, pk: i64): i64 {
+    var t, v = verify_ruleset(env, pk);
+    return _t_code(t, v);
+}
+
+fn _t_parse2_code(env: i64): i64 {
+    var t, v = parse_signed_ruleset_v2(env);
+    return _t_code(t, v);
+}
+
+fn _t_sign2_code(body: i64, sk: i64, kid: cstring, scope: cstring, seq: i64, na: i64): i64 {
+    var t, v = sign_ruleset_body_v2(body, sk, kid, scope, seq, na);
+    return _t_code(t, v);
+}
+
+fn _t_apply2hex_code(env: i64, pkh: cstring, scope: cstring, min_seq: i64, now: i64): i64 {
+    var t, v = apply_signed_ruleset_v2_hex(env, pkh, scope, min_seq, now);
+    return _t_code(t, v);
+}
+
+fn test_sign_v2() {
+    test_group("sign_v2");
+    var sk = alloc(64);
+    var pk = alloc(32);
+    assert(sign_keygen(sk, pk) == 1, "keygen ok");
+    var now = 1800000000;
+
+    var fw = firewall_new();
+    var t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(c, allow_tcp(22));
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+
+    var s_t, s_v = sign_ruleset_v2(fw, sk, "aegis-key", "web-01.dc1", 7, now + 3600);
+    assert(is_err_result(s_t) == 0, "v2 sign ok");
+    var env = s_v;
+    assert(str_contains_cstr(env, "nein-sig: v2\nnein-sig-alg: ed25519\nnein-sig-keyid: aegis-key\nnein-sig-scope: web-01.dc1\nnein-sig-seq: 7\nnein-sig-not-after: 1800003600\nnein-sig-pubkey: ") == 1,
+      "v2 headers in order, in clear");
+    assert(str_contains_cstr(env, "tcp dport 22 accept") == 1, "v2 carries the body");
+
+    # Round trip: Ok(seq).
+    var v_t, v_v = verify_ruleset_v2(env, pk, "web-01.dc1", 7, now);
+    assert(is_err_result(v_t) == 0, "v2 verifies");
+    assert_eq(v_v, 7, "v2 verify returns the seq");
+    var h_t, h_v = verify_ruleset_v2_hex(env, hex_encode(pk, 32), "web-01.dc1", 0, now);
+    assert(is_err_result(h_t) == 0 && h_v == 7, "v2 hex verify returns the seq");
+    assert_eq(_t_v2hex_code(env, "zz", "web-01.dc1", 0, now), NEIN_ERR_SIG_MALFORMED, "v2 bad hex key");
+
+    # Record accessors, for both versions.
+    var p_t, p_v = parse_signed_ruleset_v2(env);
+    assert(is_err_result(p_t) == 0, "v2 parses");
+    assert_eq(signed_version(p_v), 2, "v2 record version");
+    assert(streq(signed_scope(p_v), "web-01.dc1") == 1, "v2 record scope");
+    assert_eq(signed_seq(p_v), 7, "v2 record seq");
+    assert_eq(signed_not_after(p_v), now + 3600, "v2 record not_after");
+    assert(streq(signed_keyid(p_v), "aegis-key") == 1, "v2 record keyid");
+    var e1_t, e1_v = sign_ruleset(fw, sk, "aegis-key");
+    var q_t, q_v = parse_signed_ruleset(e1_v);
+    assert(is_err_result(q_t) == 0, "v1 still parses");
+    assert_eq(signed_version(q_v), 1, "v1 record version");
+    assert_eq(signed_seq(q_v), 0, "v1 record has no seq");
+    assert(signed_scope(q_v) != 0 && strlen(signed_scope(q_v)) == 0, "v1 record scope is empty, not NULL");
+
+    # The bounds — judged only once the signature verified.
+    assert_eq(_t_v2_code(env, pk, "web-02.dc1", 0, now), NEIN_ERR_SIG_SCOPE, "another scope refused");
+    assert_eq(_t_v2_code(env, pk, "web-01.dc1", 8, now), NEIN_ERR_SIG_STALE, "seq below the floor refused (replay)");
+    assert_eq(_t_v2_code(env, pk, "web-01.dc1", 0, now), 0 - 1, "no floor accepts");
+    assert_eq(_t_v2_code(env, pk, "web-01.dc1", 0, now + 3600), 0 - 1, "valid through its last second");
+    assert_eq(_t_v2_code(env, pk, "web-01.dc1", 0, now + 3601), NEIN_ERR_SIG_EXPIRED, "expired refused");
+    var n_t, n_v = sign_ruleset_v2(fw, sk, "aegis-key", "web-01.dc1", 8, 0);
+    assert_eq(_t_v2_code(n_v, pk, "web-01.dc1", 8, 9000000000000000000), 0 - 1, "not_after 0 never expires");
+    var k2 = alloc(64);
+    var p2 = alloc(32);
+    sign_keygen(k2, p2);
+    assert_eq(_t_v2_code(env, p2, "web-01.dc1", 0, now), NEIN_ERR_SIG_KEY_MISMATCH, "v2 wrong key");
+
+    # Downgrade both ways: v1 is not v2, v2 is not v1.
+    assert_eq(_t_v2_code(e1_v, pk, "web-01.dc1", 0, now), NEIN_ERR_SIG_VERSION, "v1 envelope refused by the v2 verifier");
+    assert_eq(_t_v1_code(env, pk), NEIN_ERR_SIG_VERSION, "v2 envelope refused by the v1 verifier");
+
+    # Each clear header is signed: a rewritten value breaks the signature.
+    var e2 = _t_splice(env, _sign_find(str_data(env), str_len(env), "nein-sig-seq: 7"), 15, "nein-sig-seq: 9");
+    assert_eq(_t_v2_code(e2, pk, "web-01.dc1", 0, now), NEIN_ERR_BAD_SIGNATURE, "rewritten seq breaks the signature");
+    var e3 = _t_splice(env, _sign_find(str_data(env), str_len(env), "web-01.dc1"), 10, "web-02.dc1");
+    assert_eq(_t_v2_code(e3, pk, "web-02.dc1", 0, now), NEIN_ERR_BAD_SIGNATURE, "rewritten scope breaks the signature");
+    var e4 = _t_splice(env, _sign_find(str_data(env), str_len(env), "1800003600"), 10, "1900003600");
+    assert_eq(_t_v2_code(e4, pk, "web-01.dc1", 0, now), NEIN_ERR_BAD_SIGNATURE, "rewritten expiry breaks the signature");
+    var e5 = _t_splice(env, _sign_find(str_data(env), str_len(env), "aegis-key"), 9, "aegis-kez");
+    assert_eq(_t_v2_code(e5, pk, "web-01.dc1", 0, now), NEIN_ERR_BAD_SIGNATURE, "rewritten keyid breaks the signature");
+    # The digest is checked, so a body edit is caught before the signature.
+    var e6 = _t_splice(env, _sign_find(str_data(env), str_len(env), "dport 22"), 8, "dport 23");
+    assert_eq(_t_v2_code(e6, pk, "web-01.dc1", 0, now), NEIN_ERR_SIG_MALFORMED, "edited body fails the digest");
+    # ...and with the digest rewritten to match, the SIGNATURE must catch it:
+    # the body is part of the signed message. (A mutant that left the body out
+    # of the message passed every test until this one.)
+    var b6 = signed_body(p_v);
+    var nb = _t_splice(str_new(str_data(b6), str_len(b6)), _sign_find(str_data(b6), str_len(b6), "dport 22"), 8, "dport 23");
+    var nd = alloc(32);
+    sha256(str_data(nb), str_len(nb), nd);
+    var dg_at = _sign_find(str_data(e6), str_len(e6), "nein-sig-digest: ") + 17;
+    var e7 = _t_splice(e6, dg_at, 64, hex_encode(nd, 32));
+    var p7_t, p7_v = parse_signed_ruleset_v2(e7);
+    assert(is_err_result(p7_t) == 0, "body edit with a matching digest parses");
+    assert_eq(_t_v2_code(e7, pk, "web-01.dc1", 0, now), NEIN_ERR_BAD_SIGNATURE, "body edit with a matching digest breaks the signature");
+
+    # No NUL in a header (found in review): every check reads a value as a C
+    # string, so the bytes after a NUL were unsigned and ignored, yet a reader
+    # of the envelope saw them.
+    var sc_nl = _sign_find(str_data(env), str_len(env), "web-01.dc1\n") + 10;
+    assert_eq(_t_v2_code(_t_splice_nul(env, sc_nl, ".evil.example"), pk, "web-01.dc1", 0, now),
+      NEIN_ERR_SIG_MALFORMED, "NUL tail on the scope refused");
+    var sq_nl = _sign_find(str_data(env), str_len(env), "nein-sig-seq: 7\n") + 15;
+    assert_eq(_t_v2_code(_t_splice_nul(env, sq_nl, "999"), pk, "web-01.dc1", 0, now),
+      NEIN_ERR_SIG_MALFORMED, "NUL tail on the seq refused");
+    var kd_nl = _sign_find(str_data(env), str_len(env), "aegis-key\n") + 9;
+    assert_eq(_t_v2_code(_t_splice_nul(env, kd_nl, "-----BEGIN NFT RULESET-----flush ruleset"), pk, "web-01.dc1", 0, now),
+      NEIN_ERR_SIG_MALFORMED, "NUL-smuggled body in the keyid refused");
+    # Hex in lowercase only: sigil decodes either case, so uppercase would be a
+    # second spelling of the same signature.
+    var sig_at = _sign_find(str_data(env), str_len(env), "nein-sig-sig: ") + 14;
+    var up = _t_splice(env, sig_at, 128, "");
+    var uh = str_builder_new();
+    var ui = 0;
+    var sgh = signed_sig_hex(p_v);
+    while (ui < 128) {
+        var ch = load8(sgh + ui);
+        if (ch >= 97 && ch <= 102) { ch = ch - 32; }
+        str_builder_add_byte(uh, ch);
+        ui = ui + 1;
+    }
+    var upper = _t_splice(up, sig_at, 0, str_data(str_builder_build(uh)));
+    assert_eq(_t_v2_code(upper, pk, "web-01.dc1", 0, now), NEIN_ERR_SIG_MALFORMED, "uppercase signature hex refused");
+
+    # Strict shape: each header once, in order, nothing after END.
+    var seq_at = _sign_find(str_data(env), str_len(env), "nein-sig-seq: 7\n");
+    var d1 = _t_splice(env, seq_at, 0, "nein-sig-seq: 99\n");
+    assert_eq(_t_v2_code(d1, pk, "web-01.dc1", 0, now), NEIN_ERR_SIG_MALFORMED, "duplicate header refused");
+    var scope_at = _sign_find(str_data(env), str_len(env), "nein-sig-scope: ");
+    var r1 = _t_splice(_t_splice(env, seq_at, 16, ""), scope_at, 0, "nein-sig-seq: 7\n");
+    assert_eq(_t_v2_code(r1, pk, "web-01.dc1", 0, now), NEIN_ERR_SIG_MALFORMED, "reordered headers refused");
+    var j1 = _t_splice(env, str_len(env), 0, "nft flush ruleset\n");
+    assert_eq(_t_v2_code(j1, pk, "web-01.dc1", 0, now), NEIN_ERR_SIG_MALFORMED, "trailing bytes after END refused");
+    var j2 = _t_splice(env, str_len(env) - 1, 1, "");
+    assert_eq(_t_v2_code(j2, pk, "web-01.dc1", 0, now), 0 - 1, "a missing final newline is fine");
+    assert_eq(_t_parse2_code(str_from("nein-sig: v2\n")), NEIN_ERR_SIG_MALFORMED, "truncated envelope refused");
+    assert_eq(_t_parse2_code(str_from("nein-sig: v3\n")), NEIN_ERR_SIG_VERSION, "unknown version refused");
+
+    # Cross-version (1.9.0): a v2 signature over its message cannot pass as a
+    # v1 signature over a body equal to that message — the message has a NUL.
+    var msg = _sign_v2_message("aegis-key", "web-01.dc1", 7, now + 3600, str_data(signed_body(p_v)), str_len(signed_body(p_v)));
+    var xb = str_builder_new();
+    str_builder_add_cstr(xb, "nein-sig: v1\nnein-sig-alg: ed25519\nnein-sig-keyid: aegis-key\nnein-sig-pubkey: ");
+    str_builder_add_cstr(xb, signed_pubkey_hex(p_v));
+    str_builder_add_cstr(xb, "\nnein-sig-sig: ");
+    str_builder_add_cstr(xb, signed_sig_hex(p_v));
+    str_builder_add_cstr(xb, "\n-----BEGIN NFT RULESET-----\n");
+    var mi = 0;
+    while (mi < str_len(msg)) { str_builder_add_byte(xb, load8(str_data(msg) + mi)); mi = mi + 1; }
+    str_builder_add_cstr(xb, "\n-----END NFT RULESET-----\n");
+    assert(ed25519_verify(pk, str_data(msg), str_len(msg), hex_decode(signed_sig_hex(p_v), 128)) == 1,
+      "the v2 signature does verify over its message");
+    assert_eq(_t_v1_code(str_builder_build(xb), pk), NEIN_ERR_SIG_MALFORMED, "but not as a v1 body");
+
+    # Sign-side refusals.
+    assert_eq(_t_sign2_code(str_from("x"), sk, "k", "web", 0, 0), NEIN_ERR_SIG_MALFORMED, "seq 0 refused");
+    assert_eq(_t_sign2_code(str_from("x"), sk, "k", "web", 1, 0 - 1), NEIN_ERR_SIG_MALFORMED, "negative not_after refused");
+    assert_eq(_t_sign2_code(str_from("x"), sk, "k", "", 1, 0), NEIN_ERR_SIG_MALFORMED, "empty scope refused");
+    assert_eq(_t_sign2_code(str_from("x"), sk, "k", "a b", 1, 0), NEIN_ERR_SIG_MALFORMED, "spaced scope refused");
+    assert_eq(_t_sign2_code(str_from("x"), sk, "k", 0, 1, 0), NEIN_ERR_SIG_MALFORMED, "NULL scope refused");
+    assert_eq(_t_sign2_code(str_from("x"), sk, "k", "role:web.dc-1_x", 1, 0), 0 - 1, "scope charset . : - _ accepted");
+    assert_eq(_t_sign2_code(str_from("x"), sk, "k",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1, 0), NEIN_ERR_SIG_MALFORMED, "65-byte scope refused");
+    assert_eq(_t_sign2_code(0, sk, "k", "web", 1, 0), NEIN_ERR_SIG_KEY, "NULL body refused");
+    assert_eq(_t_sign2_code(str_from("-----END NFT RULESET-----"), sk, "k", "web", 1, 0),
+      NEIN_ERR_SIG_MALFORMED, "delimiter in body refused");
+    var bad_sk = alloc(64);
+    memcpy(bad_sk, sk, 32);
+    memcpy(bad_sk + 32, p2, 32);
+    assert_eq(_t_sign2_code(str_from("x"), bad_sk, "k", "web", 1, 0), NEIN_ERR_SIG_KEY, "mismatched key half refused");
+
+    # Verify-side argument refusals.
+    assert_eq(_t_v2_code(env, pk, "web-01.dc1", 0 - 1, now), NEIN_ERR_SIG_MALFORMED, "negative floor refused");
+    assert_eq(_t_v2_code(env, pk, "web-01.dc1", 0, 0), NEIN_ERR_SIG_MALFORMED, "now 0 refused");
+    assert_eq(_t_v2_code(env, pk, "a b", 0, now), NEIN_ERR_SIG_MALFORMED, "invalid expected scope refused");
+    assert_eq(_t_v2_code(0, pk, "web-01.dc1", 0, now), NEIN_ERR_SIG_MALFORMED, "NULL envelope refused");
+    assert_eq(_t_v2_code(env, 0, "web-01.dc1", 0, now), NEIN_ERR_SIG_MALFORMED, "NULL key refused");
+
+    # Decimal fields.
+    assert_eq(_sign_parse_u63("0"), 0, "u63 0");
+    assert_eq(_sign_parse_u63("9223372036854775807"), 9223372036854775807, "u63 max");
+    assert_eq(_sign_parse_u63("9223372036854775808"), 0 - 1, "u63 max+1 refused");
+    assert_eq(_sign_parse_u63("9999999999999999999"), 0 - 1, "u63 wrap refused");
+    assert_eq(_sign_parse_u63("007"), 0 - 1, "u63 leading zero refused");
+    assert_eq(_sign_parse_u63("+7"), 0 - 1, "u63 sign refused");
+    assert_eq(_sign_parse_u63(""), 0 - 1, "u63 empty refused");
+
+    # Apply: verification failures never reach nft.
+    var a1_t, a1_v = apply_signed_ruleset_v2(env, pk, "web-02.dc1", 0, now);
+    assert_eq(_t_code(a1_t, a1_v), NEIN_ERR_SIG_SCOPE, "apply for another scope blocked pre-nft");
+    var a2_t, a2_v = apply_signed_ruleset_v2(env, pk, "web-01.dc1", 8, now);
+    assert_eq(_t_code(a2_t, a2_v), NEIN_ERR_SIG_STALE, "stale apply blocked pre-nft");
+    assert_eq(_t_apply2hex_code(env, "00", "web-01.dc1", 0, now), NEIN_ERR_SIG_MALFORMED, "apply bad hex key");
+    # With nft stood in by /bin/true, the apply succeeds and hands back the
+    # seq; with SIGCHLD ignored its fate is unknown, and it says so.
+    var prev = nein_nft_path();
+    nein_set_nft_path("/bin/true");
+    var a3_t, a3_v = apply_signed_ruleset_v2_hex(env, hex_encode(pk, 32), "web-01.dc1", 7, now);
+    assert(is_err_result(a3_t) == 0 && a3_v == 7, "applied: Ok(seq) for the caller to record");
+    signal_ignore(17);
+    var a4_t, a4_v = apply_signed_ruleset_v2(env, pk, "web-01.dc1", 7, now);
+    signal_default(17);
+    assert_eq(_t_code(a4_t, a4_v), NEIN_ERR_OUTCOME_UNKNOWN, "apply of unknown fate is not a plain failure");
+    nein_set_nft_path(prev);
     return 0;
 }
 
@@ -3136,6 +3517,7 @@ fn main() {
 
     # sign (Ed25519 signed rulesets)
     test_sign();
+    test_sign_v2();
 
     return assert_summary();
 }

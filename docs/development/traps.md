@@ -1,6 +1,6 @@
 # Traps
 
-Last refresh: **2026-11-03** (v1.8.2).
+Last refresh: **2026-11-03** (v1.9.0).
 
 Things that looked right, were wrong, and cost a round of investigation each.
 Kept so the next person does not re-step in them. This is reference, not a plan:
@@ -83,6 +83,33 @@ but the 6.7.9 snapshot folds 3.13.11; pinning 3.13.15 put a commit in `cyrius.lo
 that never reached the binary. Read the version from `~/.cyrius/versions/<pin>/lib/sigil.cyr`
 and confirm with `cmp lib/sigil.cyr ~/.cyrius/deps/sigil/<tag>/dist/sigil.cyr`. The full rule
 is in [`dependencies.md`](dependencies.md).
+
+**A function-pointer call reads a `Result` as its tag (1.9.0).** `fncall2(fp, a,
+b)` returns one register. A callee that returns a `Result` hands back its tag —
+`Ok` is `0`, `Err` is `1` — and nothing warns. The 1.6.1 MCP gate permitted on
+`== 1`, so a gate written the way "Packed Result for fallible operations"
+suggests had `Err` **permit** (audit M-2). Any contract crossing a run-time
+pointer needs a sentinel that no `bool`, tag, error code or pointer can equal —
+1.9.0's `NEIN_GATE_PERMIT` is a 64-bit value above the user-space address range.
+
+**A fuzzer only finds what its alphabet can spell (1.9.0).** The first
+`sign_v2_parse` run passed against a parser deliberately broken to strip a
+trailing `\r` from header values — a textbook ambiguity — because no mutation
+could insert a lone `\r` before a newline: the dictionary had `"\r\n"` (which
+also adds a line) and the byte-replace hit the newline itself. Before trusting
+a green fuzz run, break the code under test in the way the oracle is meant to
+catch and watch it fail; then keep the dictionary entry that made it fail. The
+same driver then missed a real defect a reviewer found — a NUL inside a header
+line — because every dictionary entry is a C string and cannot carry a NUL: the
+alphabet has to be checked against the bytes the input format can hold, not
+the ones a string literal can.
+
+**A benchmark can move 20% on layout alone (1.9.0).** Adding includes to
+`tests/nein.bcyr` moved `firewall_1000_rules_validate` 249 → ~310 µs with its
+code untouched. Bisecting the includes moved it back and forth (one subset
+305 µs, a larger one 263 µs) — placement, not cost. When one benchmark moves
+after a change that did not touch it, run the previous bench file against the
+new sources before calling it a regression or a win.
 
 Three toolchain subcommands do **not** do what their names suggest, and each
 cost a round of investigation:

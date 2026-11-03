@@ -42,8 +42,8 @@ Consumers:
 | `apply`    | Execute rulesets via `nft -f -` (fork+execve, ruleset staged in a memfd, deadline); batch + incremental rule ops |
 | `inspect`  | Query live firewall state — `status()` returns tables + rule count + raw ruleset |
 | `diff`     | Live-rule diff + idempotent apply — converge the live ruleset onto a target plan with the minimal nft op set |
-| `sign`     | Ed25519-signed rulesets — sign the rendered nft body, verify at-rest tampering before apply (added 1.6.1) |
-| `mcp`      | MCP tool descriptors + handlers exposing nein's firewall ops over bote's Dispatcher/ToolRegistry (added 1.6.0) |
+| `sign`     | Ed25519-signed rulesets — sign the rendered nft body, verify before apply; v2 (1.9.0) binds a seq, an expiry and a scope against replay (added 1.6.1) |
+| `mcp`      | MCP tool descriptors + handlers exposing nein's firewall ops over bote's Dispatcher/ToolRegistry, behind a host gate; tools classed offline / reads-live / mutates (added 1.6.0; gate contract 1.9.0) |
 
 ## Quick Start
 
@@ -139,6 +139,8 @@ var yy4 = vec_new(); vec_push(yy4, "192.0.2.0/24");
 var yy6 = vec_new(); vec_push(yy6, "2001:db8::/32");
 geoip_block_country(bl, country_block_dual("YY", yy4, yy6));
 
+# Hooks prerouting by default (1.9.0), so forwarded and DNAT'd container
+# traffic meets the block too; geoip_set_hook(bl, HOOK_INPUT) for host-only.
 var gt, out = firewall_render_checked(geoip_to_firewall(bl));
 if (is_err_result(gt) == 1) { return 1; }
 ```
@@ -233,9 +235,9 @@ cyrius lib sync                        # sync declared stdlib subset from pinned
 cyrius deps                            # resolve git bundles into ./lib/
 cyrius build src/main.cyr build/nein   # compile (x86_64)
 cyrius build --aarch64 src/main.cyr build/nein-aarch64
-cyrius test tests                      # all suites (870 unit + 18 integration assertions + an nft load test)
-cyrius bench tests/nein.bcyr           # run benchmarks (48 benchmarks)
-cyrius fuzz                            # 6 per-target fuzz drivers
+cyrius test tests                      # all suites (993 unit + 41 integration assertions + an nft load test)
+cyrius bench tests/nein.bcyr           # run benchmarks (56 benchmarks)
+cyrius fuzz                            # 7 per-target fuzz drivers
 ```
 
 Dependencies do not auto-resolve — `cyrius lib sync` copies the declared

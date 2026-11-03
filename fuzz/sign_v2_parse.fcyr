@@ -1,0 +1,192 @@
+# Fuzz: sign.cyr — the v2 (replay-bound) envelope parser and verifier.
+#
+# Added at 1.9.0 with the v2 envelope. Its clear headers carry the values a
+# verifier decides on (scope, seq, not-after), so the parser must read each of
+# them exactly one way; any second reading of the same signed bytes is a way
+# to present one signature with other values. Seeds are envelopes signed with
+# a fresh key, mutated 1-6x per iteration.
+#
+# Mutations replace, insert (dictionary, or a NUL then a dictionary entry),
+# delete, duplicate and truncate; the alphabet includes uppercase hex.
+#
+# Oracles, every iteration:
+#   - no crash / hang in parse_signed_ruleset_v2, verify_ruleset_v2, or the v1
+#     parse_signed_ruleset / verify_ruleset on the same bytes;
+#   - a parsed record is well-formed: version 2, a valid scope, seq >= 1,
+#     not_after >= 0, a valid keyid, and a body inside the input with no NUL
+#     or delimiter;
+#   - UNIQUENESS: an input that verifies under v2 is byte-for-byte its seed
+#     (or the seed without its final newline, the one variation the format
+#     allows) — anything else verifying is an ambiguity;
+#   - CROSS-VERSION: no mutation of a v2 envelope verifies under v1.
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/apply.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+include "lib/sigil.cyr"
+include "src/lib/sign.cyr"
+
+alloc_init();
+sakshi_set_level(0 - 1);
+var FZ_ITERS = 20000;
+var _fz_parsed = 0;
+var _fz_verified = 0;
+var _fz_s = 1442695040888963407;
+fn _rnd(n) {
+    _fz_s = _fz_s * 6364136223846793005 + 1442695040888963407;
+    return ((_fz_s >> 33) & 2147483647) % n;
+}
+fn _fail(why, raw: Str) {
+    println("fuzz/sign_v2_parse: FAIL");
+    print(why, strlen(why)); println("");
+    var i = 0;
+    while (i < str_len(raw)) {   # bytes may include NUL: print them one by one
+        var ch = load8(str_data(raw) + i);
+        if (ch == 0) { print("\\0", 2); } else { print(str_data(raw) + i, 1); }
+        i = i + 1;
+    }
+    println(""); syscall(SYS_EXIT, 1); return 0;
+}
+fn _join(a: Str, b: Str, c: Str): Str {
+    var sb = str_builder_new(); str_builder_add(sb, a); str_builder_add(sb, b);
+    str_builder_add(sb, c); return str_builder_build(sb);
+}
+fn _sub(s: Str, off, len): Str { return str_new(str_data(s) + off, len); }
+fn _same(a: Str, b: Str): i64 {
+    if (str_len(a) != str_len(b)) { return 0; }
+    return memeq(str_data(a), str_data(b), str_len(a));
+}
+
+# A fixed seed, so every run signs the same seeds and mutates them the same way.
+var SK = alloc(64);
+var PK = alloc(32);
+var SEED32 = alloc(32);
+var _ki = 0;
+while (_ki < 32) { store8(SEED32 + _ki, 7 * _ki + 1); _ki = _ki + 1; }
+ed25519_keypair(SEED32, SK, PK);
+
+var SEEDS = vec_new();
+fn _seed(body: cstring, kid: cstring, scope: cstring, seq, na) {
+    var t, v = sign_ruleset_body_v2(str_from(body), SK, kid, scope, seq, na);
+    if (is_err_result(t) == 1) { println("fuzz/sign_v2_parse: seed did not sign"); syscall(SYS_EXIT, 1); }
+    vec_push(SEEDS, v);
+    return 0;
+}
+_seed("table inet filter {\n\tchain input {\n\t\ttcp dport 22 accept\n\t}\n}",
+  "aegis-key", "web-01.dc1", 7, 1800003600);
+_seed("table inet t { }", "unnamed", "role:edge", 9223372036854775807, 0);
+_seed("x", "k", "a", 1, 1);
+
+var DICT = vec_new(); fn _d(t) { vec_push(DICT, t); return 0; }
+_d("nein-sig: v2\n"); _d("nein-sig: v1\n"); _d("nein-sig-alg: ed25519\n"); _d("nein-sig-keyid: k\n");
+_d("nein-sig-scope: web-02.dc1\n"); _d("nein-sig-seq: 8\n"); _d("nein-sig-seq: 07\n");
+_d("nein-sig-not-after: 0\n"); _d("nein-sig-pubkey: "); _d("nein-sig-digest: "); _d("nein-sig-sig: ");
+_d("-----BEGIN NFT RULESET-----\n"); _d("-----END NFT RULESET-----\n"); _d("\n"); _d("\r\n");
+_d("9223372036854775808"); _d("00"); _d("ff"); _d(": "); _d(" "); _d("\r"); _d("\t"); _d("0");
+var ALPHA = "0123456789abcdefABCDEF:-.\n \r";
+
+# A position: uniform, or (half the time) at a line boundary, where every
+# header ambiguity lives — a stray '\r', a duplicated or dropped line, bytes
+# after END.
+fn _pos(s: Str): i64 {
+    var n = str_len(s);
+    if (n == 0) { return 0; }
+    var p = _rnd(n + 1);
+    if (_rnd(2) == 0) { return p; }
+    while (p < n && load8(str_data(s) + p) != 10) { p = p + 1; }
+    return p + _rnd(2);
+}
+
+fn _mutate(s: Str): Str {
+    var n = str_len(s); var p = _pos(s); if (p > n) { p = n; }
+    var k = _rnd(7);
+    if (k == 0 && n > 0) {
+        var b = alloc(n + 1); memcpy(b, str_data(s), n); store8(b + n, 0);
+        var bp = p; if (bp >= n) { bp = n - 1; }
+        store8(b + bp, load8(ALPHA + _rnd(strlen(ALPHA))));
+        return str_new(b, n);
+    }
+    if (k == 1) { return _join(_sub(s, 0, p), str_from(vec_get(DICT, _rnd(vec_len(DICT)))), _sub(s, p, n - p)); }
+    var l = _rnd(48); if (p + l > n) { l = n - p; }
+    if (k == 2) { return _join(_sub(s, 0, p), str_from(""), _sub(s, p + l, n - p - l)); }
+    if (k == 3) { return _join(_sub(s, 0, p), _sub(s, p, l), _sub(s, p, n - p)); }
+    if (k == 4 && n > 0) {   # a NUL byte
+        var z = alloc(n + 1); memcpy(z, str_data(s), n); store8(z + n, 0);
+        store8(z + _rnd(n), 0);
+        return str_new(z, n);
+    }
+    if (k == 5) {   # insert a NUL, then a few bytes (a cstring DICT entry cannot carry one)
+        var nb = str_builder_new();
+        str_builder_add(nb, _sub(s, 0, p));
+        str_builder_add_byte(nb, 0);
+        str_builder_add_cstr(nb, vec_get(DICT, _rnd(vec_len(DICT))));
+        str_builder_add(nb, _sub(s, p, n - p));
+        return str_builder_build(nb);
+    }
+    return _sub(s, 0, p);
+}
+
+fn _check(raw: Str, seed: Str): i64 {
+    var n = str_len(raw);
+    var p_t, p_v = parse_signed_ruleset_v2(raw);
+    if (is_err_result(p_t) == 0) {
+        var sr = p_v;
+        if (signed_version(sr) != 2) { _fail("record version is not 2", raw); }
+        if (_sign_valid_scope(signed_scope(sr)) == 0) { _fail("record scope invalid", raw); }
+        if (signed_seq(sr) < 1 || signed_not_after(sr) < 0) { _fail("record seq / not_after out of range", raw); }
+        if (is_err_result(validate_identifier(signed_keyid(sr))) == 1) { _fail("record keyid invalid", raw); }
+        var bd = load64(sr + 24); var bl = load64(sr + 32);
+        if (bl < 0 || bd < str_data(raw) || bd + bl > str_data(raw) + n) { _fail("body outside the input", raw); }
+        if (_sign_body_refusal(bd, bl) != 0) { _fail("body holds a NUL or a delimiter", raw); }
+        _fz_parsed = _fz_parsed + 1;
+        var v_t, v_v = verify_ruleset_v2(raw, PK, signed_scope(sr), 0, 1);
+        if (is_err_result(v_t) == 0) {
+            _fz_verified = _fz_verified + 1;
+            var bare = _sub(seed, 0, str_len(seed) - 1);
+            if (_same(raw, seed) == 0 && _same(raw, bare) == 0) {
+                _fail("UNIQUENESS: a different input verifies", raw);
+            }
+            if (v_v != signed_seq(sr)) { _fail("verify returned another seq", raw); }
+        }
+    }
+    parse_signed_ruleset(raw);
+    if (is_err_result(verify_ruleset(raw, PK)) == 0) { _fail("CROSS-VERSION: a v2 mutation verifies as v1", raw); }
+    return 0;
+}
+
+# Fixed cases: every seed verifies, as does each without its final newline.
+var si = 0;
+while (si < vec_len(SEEDS)) {
+    var sd = vec_get(SEEDS, si);
+    var sp_t, sp_v = parse_signed_ruleset_v2(sd);
+    if (is_err_result(sp_t) == 1) { _fail("seed does not parse", sd); }
+    if (is_err_result(verify_ruleset_v2(sd, PK, signed_scope(sp_v), 0, 1)) == 1) { _fail("seed does not verify", sd); }
+    if (is_err_result(verify_ruleset_v2(_sub(sd, 0, str_len(sd) - 1), PK, signed_scope(sp_v), 0, 1)) == 1) {
+        _fail("seed without its final newline does not verify", sd);
+    }
+    _check(sd, sd);
+    si = si + 1;
+}
+var it = 0;
+while (it < FZ_ITERS) {
+    var seed = vec_get(SEEDS, _rnd(vec_len(SEEDS)));
+    var cur = seed;
+    var m = 1;
+    if (_rnd(2) == 0) { m = 1 + _rnd(6); }
+    while (m > 0) { cur = _mutate(cur); m = m - 1; }
+    _check(cur, seed);
+    it = it + 1;
+}
+# Parsed and verified counts, so a run that never reaches the verifier shows.
+print("fuzz/sign_v2_parse: parsed ", 27); print_num(_fz_parsed);
+print(", verified ", 11); print_num(_fz_verified); println("");
+println("fuzz/sign_v2_parse: ok");
+syscall(SYS_EXIT, 0);

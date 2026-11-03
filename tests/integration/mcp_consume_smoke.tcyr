@@ -11,6 +11,16 @@ include "lib/sigil.cyr"
 include "lib/bote-core.cyr"
 include "dist/nein-mcp.cyr"
 
+# A host gate under the 1.9.0 contract: permit the offline tool only — or,
+# with _smoke_deny_all set, nothing, so a denial proves the gate was asked
+# (with no gate at all, the offline tool would run).
+var _smoke_deny_all = 0;
+fn _smoke_gate(name: cstring, claims: i64): i64 {
+    if (_smoke_deny_all == 1) { return 0; }
+    if (nein_tool_class(nein_tool_index(name)) == NEIN_TOOL_OFFLINE) { return NEIN_GATE_PERMIT; }
+    return 0;
+}
+
 fn test_consume() {
     test_group("mcp_consume");
 
@@ -38,6 +48,26 @@ fn test_consume() {
     var sr_t, sr_v = sign_ruleset_body(body, sk, "smoke");
     assert(is_err_result(sr_t) == 0, "bundle sign_ruleset_body ok");
     assert(is_err_result(verify_ruleset(sr_v, pk)) == 0, "bundle verify round-trips");
+
+    # 1.9.0 surface: tool classes, the no-gate default, the gate contract, and
+    # the replay-bound v2 envelope — all reachable through the bundle.
+    assert_eq(nein_tool_class(nein_tool_index("nein_list")), NEIN_TOOL_READS_LIVE, "bundle: nein_list reads live");
+    var ng = nein_mcp_dispatch("nein_status", "{}", 0);
+    assert(str_contains_cstr(str_from(ng), "no host gate installed") == 1, "bundle: ungated status denied");
+    assert_eq(nein_mcp_set_gate(&_smoke_gate), 0, "bundle: gate installs");
+    _smoke_deny_all = 1;
+    var gd = nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":443}", 0);
+    assert(str_contains_cstr(str_from(gd), "tool gated by host policy") == 1, "bundle: the gate is consulted");
+    assert_eq(nein_mcp_set_gate(0), 1, "bundle: gate cannot be cleared");
+    var gd2 = nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":443}", 0);
+    assert(str_contains_cstr(str_from(gd2), "tool gated by host policy") == 1, "bundle: the gate survives a refused clear");
+    _smoke_deny_all = 0;
+    var gv = nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":443}", 0);
+    assert(str_contains_cstr(str_from(gv), "\"isError\":false") == 1, "bundle: gate permits validate");
+    var v2_t, v2_v = sign_ruleset_body_v2(body, sk, "smoke", "host-1", 3, 0);
+    assert(is_err_result(v2_t) == 0, "bundle sign_ruleset_body_v2 ok");
+    var vv_t, vv_v = verify_ruleset_v2(v2_v, pk, "host-1", 3, 1800000000);
+    assert(is_err_result(vv_t) == 0 && vv_v == 3, "bundle v2 verify returns the seq");
 
     return 0;
 }

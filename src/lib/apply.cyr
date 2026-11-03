@@ -257,11 +257,22 @@ fn _nein_log_nft_failure(msg: cstring, err_fd: i64): i64 {
     return 0;
 }
 
-# The child's fate as 0 (nft exited 0) or a NEIN_ERR code.
-fn _nein_nft_outcome(wr: i64, status: i64, err_fd: i64): i64 {
+# The child's fate as 0 (nft exited 0) or a NEIN_ERR code. `commits` is 1
+# when nft was handed a ruleset to apply (`nft -f -`) and 0 for a read
+# (`nft list ...`). Where nein cannot learn what the child did — killed at the
+# deadline, reaped by someone else, or dead on a signal — an apply may still
+# have committed (nft sends its batch, then waits for the kernel's answer), so
+# it is NEIN_ERR_OUTCOME_UNKNOWN (1.9.0, audit S-8), never a plain failure a
+# caller might retry. A read changes nothing, so for it the same is a failure.
+fn _nein_nft_unknown(commits: i64): i64 {
+    if (commits == 1) { return NEIN_ERR_OUTCOME_UNKNOWN; }
+    return NEIN_ERR_NFT_FAILED;
+}
+
+fn _nein_nft_outcome(wr: i64, status: i64, err_fd: i64, commits: i64): i64 {
     if (wr == _NEIN_ETIMEDOUT) {
-        _nein_log_nft_failure("nein.apply: nft outlived its deadline and was killed — failing closed", err_fd);
-        return NEIN_ERR_NFT_FAILED;
+        _nein_log_nft_failure("nein.apply: nft outlived its deadline and was killed", err_fd);
+        return _nein_nft_unknown(commits);
     }
     # The return value MUST be checked (1.6.10, audit MEDIUM). On failure
     # waitpid does not write `status`, which stays 0 — and the stdlib decodes 0
@@ -269,10 +280,11 @@ fn _nein_nft_outcome(wr: i64, status: i64, err_fd: i64): i64 {
     # unchecked wait reported a failed apply as SUCCESS. Reachable whenever the
     # host installs a SIGCHLD reaper or sets SIGCHLD to SIG_IGN, which process
     # supervisors — nein's own consumers — routinely do.
+    # Through 1.8.2 this returned NFT_FAILED, which read as "nothing applied".
     if (wr < 0) {
-        var sk_wait = "nein.apply: waitpid failed — child fate unknown, failing closed";
+        var sk_wait = "nein.apply: waitpid failed — child fate unknown (SIGCHLD ignored, or reaped elsewhere)";
         sakshi_error(sk_wait, strlen(sk_wait));
-        return NEIN_ERR_NFT_FAILED;
+        return _nein_nft_unknown(commits);
     }
     if (WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 127) {
@@ -288,14 +300,15 @@ fn _nein_nft_outcome(wr: i64, status: i64, err_fd: i64): i64 {
         sakshi_info(sk_ok, strlen(sk_ok));
         return 0;
     }
-    _nein_log_nft_failure("nein.apply: nft did not exit cleanly", err_fd);
-    return NEIN_ERR_NFT_FAILED;
+    _nein_log_nft_failure("nein.apply: nft died on a signal", err_fd);
+    return _nein_nft_unknown(commits);
 }
 #endif
 
 # ================================================================
 # Low-level: run `nft -f -` with the ruleset on stdin.
-# Returns Ok(0) on exit 0, Err(NEIN_ERR_*) on refusal or failure.
+# Returns Ok(0) on exit 0, Err(NEIN_ERR_*) on refusal or failure, and
+# Err(NEIN_ERR_OUTCOME_UNKNOWN) when nft ran and its fate cannot be learned.
 # ================================================================
 
 fn _run_nft_stdin(input_buf, input_len) {
@@ -373,7 +386,7 @@ fn _run_nft_stdin(input_buf, input_len) {
     sys_close(null_fd);
     var status = 0;
     var wr = _nein_wait_deadline(pid, &status);
-    var code = _nein_nft_outcome(wr, status, err_fd);
+    var code = _nein_nft_outcome(wr, status, err_fd, 1);
     sys_close(err_fd);
     sakshi_span_exit();
     if (code == 0) { return nein_ok(); }
@@ -435,7 +448,7 @@ fn _run_nft_capture(argv, nft_path) {
     sys_close(null_fd);
     var status = 0;
     var wr = _nein_wait_deadline(pid, &status);
-    var code = _nein_nft_outcome(wr, status, err_fd);
+    var code = _nein_nft_outcome(wr, status, err_fd, 0);
     sys_close(err_fd);
     if (code != 0) {
         sys_close(out_fd);

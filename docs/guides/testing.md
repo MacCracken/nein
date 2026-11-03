@@ -1,14 +1,14 @@
 # Testing Guide
 
-Last refresh: **2026-11-03** (v1.8.2). Replaces the Rust-era guide that
+Last refresh: **2026-11-03** (v1.9.0). Replaces the Rust-era guide that
 shipped with the v1.0.0 port.
 
 ## Unit Tests
 
-The full unit-test suite lives in `tests/nein.tcyr` — 870 assertions
-across 42 test groups (validators, rule rendering, NAT, sets/maps,
+The full unit-test suite lives in `tests/nein.tcyr` — 993 assertions
+across 55 test groups (validators, rule rendering, NAT, sets/maps,
 chains, tables, firewall validation, builders, policy, geoip, mesh,
-bridge, engine, config, netns, inspect, diff, sign, mcp).
+bridge, engine, config, netns, inspect, diff, sign, sign_v2, mcp).
 
 ```sh
 cyrius test tests/nein.tcyr
@@ -32,9 +32,16 @@ Apply-layer integration tests need:
   runtime via `nein_set_nft_path`; PATH is **not** consulted — see
   threat model T-3)
 
-The integration harness ships in `tests/integration/*.tcyr` — 18 assertions
-(8 `apply_smoke` + 10 `mcp_consume_smoke`) plus `nft_load` (1.8.2), run via
-`cyrius test tests/integration`.
+The integration harness ships in `tests/integration/*.tcyr` — 41 assertions
+(14 `apply_outcome` + 8 `apply_smoke` + 19 `mcp_consume_smoke`) plus
+`nft_load` (1.8.2), run via `cyrius test tests/integration`.
+
+**`apply_outcome` (1.9.0) needs nothing** — no root, no nft. It stands nft in
+with small `/bin/sh` scripts (through `nein_set_nft_path`, in a fresh
+`/tmp/nein-outcome-<pid>` it removes after) and checks what an apply reports
+when nft dies on a signal, is killed at a shortened deadline, or is reaped
+with SIGCHLD ignored: `NEIN_ERR_OUTCOME_UNKNOWN` for an apply, a plain
+failure for a read, and the definite outcomes unchanged.
 
 **`nft_load` has real nft parse every builder's output** (`nft -c -f`, as root
 inside a throwaway user + network namespace via `unshare -rn`, so it needs no
@@ -77,9 +84,18 @@ pass vacuously while measuring nothing.
 
 ## Benchmarks
 
-The benchmark suite lives in `tests/nein.bcyr` — 48 benchmarks
+The benchmark suite lives in `tests/nein.bcyr` — 56 benchmarks
 covering validators, rule rendering, full firewall generation,
-multi-agent engine, and namespace firewall.
+multi-agent engine, namespace firewall, and (since 1.9.0) signing — v1
+against v2 on the same body — and the MCP gate.
+
+⚠ **Code layout moves single benchmarks.** Adding includes to the bench
+binary (1.9.0: the sign and MCP modules) moved `firewall_1000_rules_validate`
+from 249 to ~310 µs with not one byte of its code changed; the same sources
+with the 1.8.2 bench file measure 258 µs, and adding a different subset of
+the includes moves it back to 263. A move confined to one benchmark after a
+change that did not touch its code is layout until shown otherwise — check
+by running the old bench file against the new sources.
 
 ```sh
 cyrius bench tests/nein.bcyr
@@ -142,9 +158,9 @@ every result to whole nanoseconds.
 
 ## Fuzzing
 
-The fuzz harness is 6 per-target drivers in `fuzz/*.fcyr` (`validate`,
-`config_parse`, `rule`, `nat`, `firewall`, and since 1.8.2 `diff_parse_live`),
-auto-discovered and run via:
+The fuzz harness is 7 per-target drivers in `fuzz/*.fcyr` (`validate`,
+`config_parse`, `rule`, `nat`, `firewall`, since 1.8.2 `diff_parse_live`, and
+since 1.9.0 `sign_v2_parse`), auto-discovered and run via:
 
 ```sh
 cyrius fuzz
@@ -159,7 +175,14 @@ mutation fuzzer (real nft 1.1.7 listings, 20,000 deterministic mutations,
 under a second) with strict semantic oracles — golden parses of every seed,
 header-backed attribution, valid live names, no op on a table the target
 does not contain. Run it under `cyrius fuzz --bounds` and `--poison` too; it
-is clean in both. (Through v1.6.9 this section claimed "500
+is clean in both. `sign_v2_parse` (20,000 mutations of envelopes signed with a
+fixed key, about 3 s) carries a **uniqueness** oracle — an input that verifies
+under v2 must be the envelope that was signed — and a cross-version one — no
+mutation verifies under v1. Its mutations favour line boundaries, where header
+ambiguities live, and include NUL insertion and uppercase hex; parsers made
+to strip a trailing `\r` from header values, to allow a NUL in one, or to
+allow uppercase hex each fail it. It prints how many inputs parsed and verified, so a run that never
+reaches the verifier shows. Also clean under `--bounds` and `--poison=ab`. (Through v1.6.9 this section claimed "500
 iterations under a 10-second wall clock timeout per file"; neither the
 iteration count nor the timeout ever existed.)
 
@@ -182,7 +205,7 @@ The current CI workflow (`.github/workflows/ci.yml`) gates:
 - `CYRIUS_TYPE_CHECK=1` build (zero nein-side warnings)
 - `CYRIUS_DCE=1` build on x86_64 + aarch64 cross-build
 - Unit + config + **integration** suites, and the benchmark run
-- `cyrius fuzz` — all 5 drivers
+- `cyrius fuzz` — all 7 drivers
 - API-surface snapshot diff (`scripts/api-surface.sh check`)
 - Doc-coverage floor (`scripts/doc-coverage.sh`)
 - Test-coverage floor (`scripts/test-coverage.sh`)
