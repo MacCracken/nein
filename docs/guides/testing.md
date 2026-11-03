@@ -90,7 +90,18 @@ Output shape: `<name>: <avg>(ns|us|ms) avg (min=… max=…) [N iters]`.
 ### Regression gate
 
 `scripts/bench-regression.sh` compares the current run against the
-most recent committed baseline in `docs/benchmarks/history.csv`. It
+most recent committed baseline in `docs/benchmarks/history.csv`.
+
+**Every delta is normalized by the run's machine factor** (1.8.2): the median
+current/baseline ratio across all benchmarks. Baselines are recorded on the
+release machine; CI runs on a slower shared runner (1.8.2: every benchmark
+1.23×–1.82× slower, median 1.43×), so raw deltas carry the machine difference.
+Each benchmark is judged against `baseline × factor` — a uniform shift cancels,
+a single regressed benchmark still stands out. The factor is printed on every
+run, and a factor above 2.0× fails the gate on its own (a very different
+machine, or a regression in most benchmarks at once — the case a median cannot
+see; locally the factor sits near 1.0, so a global regression shows up there
+directly). Override the limit with `BENCH_MAX_MACHINE_FACTOR`. It
 fires on > 90% (ns-bracket, abs > 50ns; `validate_iface` 120%) or
 > 80% (µs-bracket, abs ≥ 2µs) slowdown per benchmark, and on any
 benchmark in the baseline that the current run does not produce

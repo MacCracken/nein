@@ -25,10 +25,9 @@
 #     worst observed shift while still catching a micro-benchmark that
 #     genuinely doubles.
 #
-#     The real fix is to stop comparing across machines — either record
-#     baselines on CI hardware, or normalize each delta against the median
-#     delta of the whole run so a uniform shift cancels out. Tracked on the
-#     roadmap; the threshold bump is the stopgap.
+#     Since 1.8.2 every delta is ALSO normalized against the run's machine
+#     factor (see "Machine factor" below), so the cross-machine offset no
+#     longer has to fit inside the threshold at all.
 #
 #   baseline >= 1000ns (us-bracketed):
 #     fires on delta% > US_THRESHOLD (default 80%) AND
@@ -117,6 +116,33 @@ if [ ${#BASELINE[@]} -eq 0 ]; then
     exit 0
 fi
 
+# --- Machine factor (1.8.2) -------------------------------------------
+# Baselines are recorded on the release machine (scripts/bench-track.sh); CI
+# runs this on a shared GitHub runner that is uniformly slower. The 1.8.2
+# release run measured EVERY benchmark 1.23x-1.82x slower than its baseline
+# (median 1.43x), and `geoip_10_countries_to_firewall` at +81.4% failed the
+# 80% threshold — a machine difference, not a regression: against the run's
+# own median it is +27%. So each benchmark is judged against
+# `baseline x factor`, where the factor is the MEDIAN current/baseline ratio of
+# this run. A uniform machine shift cancels; a single benchmark that doubled
+# still stands out by ~2x the factor.
+#
+# What the median cannot see is a regression that hits MOST benchmarks at
+# once (a slower allocator, say). The factor is printed on every run, and a
+# factor above MAX_MACHINE_FACTOR fails the gate outright: the whole suite
+# more than 2x slower is either a very different class of machine or a global
+# regression, and both need a human. Locally (same machine as the baseline)
+# the factor sits near 1.0, so a global regression shows up there directly.
+MAX_MACHINE_FACTOR="${BENCH_MAX_MACHINE_FACTOR:-2.0}"
+MACHINE=$(for name in "${!CURRENT[@]}"; do
+        b="${BASELINE[$name]:-}"
+        if [ -n "$b" ] && [ "$b" -gt 0 ]; then
+            awk -v c="${CURRENT[$name]}" -v b="$b" 'BEGIN { printf "%.6f\n", c / b }'
+        fi
+    done | sort -g | awk 'NF { a[++n] = $1 }
+        END { if (n == 0) { print 1; exit }
+              if (n % 2) { print a[(n + 1) / 2] } else { print (a[n / 2] + a[n / 2 + 1]) / 2 } }')
+
 fail=0; new=0; checked=0
 TABLE=$(mktemp)
 trap 'rm -f "$TABLE"' EXIT
@@ -124,12 +150,15 @@ for name in "${!CURRENT[@]}"; do
     cur="${CURRENT[$name]}"
     base="${BASELINE[$name]:-}"
     if [ -z "$base" ]; then
-        printf "%-32s %10s %10s %8s %8s\n" "$name" "(new)" "$cur" "-" "-" >> "$TABLE"
+        printf "%-32s %10s %10s %9s %9s %8s\n" "$name" "(new)" "$cur" "-" "-" "-" >> "$TABLE"
         new=$((new + 1))
         continue
     fi
-    delta=$(awk -v c="$cur" -v b="$base" 'BEGIN { printf "%.1f", (c - b) * 100.0 / b }')
-    abs_delta=$((cur - base))
+    # raw: against the baseline as recorded; delta: against baseline x factor,
+    # which is what the thresholds and floors judge.
+    raw=$(awk -v c="$cur" -v b="$base" 'BEGIN { printf "%.1f", (c - b) * 100.0 / b }')
+    delta=$(awk -v c="$cur" -v b="$base" -v m="$MACHINE" 'BEGIN { e = b * m; printf "%.1f", (c - e) * 100.0 / e }')
+    abs_delta=$(awk -v c="$cur" -v b="$base" -v m="$MACHINE" 'BEGIN { printf "%.0f", c - b * m }')
     if [ "$base" -ge 1000 ]; then
         thresh="$US_THRESHOLD"
         is_regression=$(awk -v d="$delta" -v t="$thresh" -v ad="$abs_delta" -v floor="$US_BUCKET_FLOOR_NS" \
@@ -141,10 +170,10 @@ for name in "${!CURRENT[@]}"; do
             'BEGIN { print (d > t && ad > floor) ? 1 : 0 }')
     fi
     if [ "$is_regression" = "1" ]; then
-        printf "%-32s %10s %10s %8s%% %7s%% **FAIL**\n" "$name" "$base" "$cur" "$delta" "$thresh" >> "$TABLE"
+        printf "%-32s %10s %10s %8s%% %8s%% %7s%% **FAIL**\n" "$name" "$base" "$cur" "$raw" "$delta" "$thresh" >> "$TABLE"
         fail=$((fail + 1))
     else
-        printf "%-32s %10s %10s %8s%% %7s%%\n" "$name" "$base" "$cur" "$delta" "$thresh" >> "$TABLE"
+        printf "%-32s %10s %10s %8s%% %8s%% %7s%%\n" "$name" "$base" "$cur" "$raw" "$delta" "$thresh" >> "$TABLE"
     fi
     checked=$((checked + 1))
 done
@@ -154,12 +183,13 @@ done
 missing=0
 for name in "${!BASELINE[@]}"; do
     if [ -z "${CURRENT[$name]:-}" ]; then
-        printf "%-32s %10s %10s %8s %8s **MISSING**\n" "$name" "${BASELINE[$name]}" "-" "-" "-" >> "$TABLE"
+        printf "%-32s %10s %10s %9s %9s %8s **MISSING**\n" "$name" "${BASELINE[$name]}" "-" "-" "-" "-" >> "$TABLE"
         missing=$((missing + 1))
     fi
 done
 
-printf "%-32s %10s %10s %8s %8s\n" "benchmark" "baseline" "current" "delta%" "threshold"
+echo "machine factor: ${MACHINE}x (median current/baseline; each delta below is against baseline x factor)"
+printf "%-32s %10s %10s %9s %9s %8s\n" "benchmark" "baseline" "current" "raw%" "delta%" "threshold"
 printf '%.0s-' {1..72}; echo
 sort "$TABLE"
 
@@ -178,7 +208,14 @@ if [ "$fail" -gt 0 ]; then
     echo "Either optimize, or ack with [bench-regression-ack] in the commit message."
     echo "(Baseline updates ride into docs/benchmarks/history.csv on each release tag.)"
 fi
-if [ "$missing" -gt 0 ] || [ "$fail" -gt 0 ]; then
+machine_over=$(awk -v m="$MACHINE" -v x="$MAX_MACHINE_FACTOR" 'BEGIN { print (m > x) ? 1 : 0 }')
+if [ "$machine_over" = "1" ]; then
+    echo
+    echo "BREAKING: the whole suite runs ${MACHINE}x the baseline (limit ${MAX_MACHINE_FACTOR}x)."
+    echo "Normalizing that away could hide a global regression: either this is a very"
+    echo "different class of machine, or most benchmarks got slower at once. Investigate."
+fi
+if [ "$missing" -gt 0 ] || [ "$fail" -gt 0 ] || [ "$machine_over" = "1" ]; then
     exit 1
 fi
 

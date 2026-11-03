@@ -39,6 +39,15 @@ the set the gate SHOULD cover independently of the set it managed to read (the
 baseline's benchmark list; a recursive `find`), and fail on the difference. When you
 add a gate, ask what it does with input it cannot parse.
 
+**A gate that passes here can fail where it actually runs (1.8.2).** The 1.8.2 benchmark baseline
+was recorded on the release machine and the bench gate checked here — 48 of 48, 0 regressions — and
+CI failed on the first push: GitHub's runner was 1.23×–1.82× slower on every benchmark, and one
+crossed the 80% threshold. The offset had been documented since 1.6.8; the thresholds only absorbed
+it while it happened to fit. A gate that compares against a recorded value is only verified where it
+runs, against what it will see there. When CI cannot be run locally, replay its recorded output
+through the gate (the 1.8.2 fix was proven on the failing run's exact numbers), and design the gate
+so the machine cancels out instead of hoping it fits.
+
 **A test that asserts the output can enshrine the bug it should catch (1.8.2).** The 2026-11-03
 audit found five: tests asserted `define $LAN = …`, `icmp accept`, `tcp log prefix …` and
 `oif "br0" jump …` — all four rejected by nft — and the signing test filled a "secret key" with

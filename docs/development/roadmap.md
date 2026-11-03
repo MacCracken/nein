@@ -84,13 +84,12 @@ together in one minor.
   into `<id>_in`, `<prefix>_filter`, `iso_<name>`, exceed `firewall_validate`'s
   64-byte limit; the firewall then fails validation (closed). Validate the
   composed names in the builders.
-- **Stop comparing benchmarks across machines.** Baselines are recorded on the
-  release machine and compared on a shared CI runner — measured on the 1.6.8
-  baseline, every ns-bracket benchmark read 21–58% slower on CI (median ~34%).
-  The ns threshold was raised to 90% as a stopgap, which lets a genuine 60%
-  regression through. Normalise each delta against the run's median delta (a
-  uniform machine shift cancels, a single doubled benchmark still fires), then
-  drop the threshold back toward 50% and retire `BENCH_NS_THRESHOLD`.
+- **Tighten the bench thresholds.** Since 1.8.2 the bench gate normalizes every
+  delta by the run's median shift, so the cross-machine offset no longer has
+  to fit inside the thresholds. The 90% (ns) / 80% (µs) thresholds and
+  `BENCH_NS_THRESHOLD` were sized for that offset; after a few CI runs show the
+  normalized spread (±27% on the first), drop them toward 50% and retire the
+  per-bench override.
 - **Raise the coverage ratchets.** API test coverage is gated at 65% (direction
   of travel 80%), doc coverage at 17% (the deficit is one-line accessors). Raise
   each floor to the measured figure as it moves; never lower one.

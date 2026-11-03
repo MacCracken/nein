@@ -175,10 +175,32 @@ is output or checking the repairs added — none is the same work done slower:**
 | `validate_identifier/short` | 62 | 37 | −40% | |
 
 **A 1.8.2 baseline is recorded** in `docs/benchmarks/history.csv` (48 benchmarks, commit
-`0e86152`), so the bench-regression gate compares against this release from now on: 48 of 48
-checked, 0 regressions. The first two rows above exceed the 90% threshold against 1.6.10 and are the
-deliberate cost of correct output. No baseline was recorded at 1.7.1, 1.8.0 or 1.8.1 — the comparison
-above spans all four releases.
+`0e86152`), so the bench-regression gate compares against this release from now on. The first two
+rows above exceed the 90% threshold against 1.6.10 and are the deliberate cost of correct output. No
+baseline was recorded at 1.7.1, 1.8.0 or 1.8.1 — the comparison above spans all four releases.
+
+### Fixed — the bench gate failed CI on a machine difference
+
+With that baseline recorded on the release machine, CI failed: the GitHub runner measured **every**
+benchmark 1.23×–1.82× slower than its baseline (median 1.43×), and
+`geoip_10_countries_to_firewall` at +81.4% tripped the 80% threshold. Nothing had regressed; the
+runner is slower. The roadmap had recorded this cross-machine offset since 1.6.8 (then 21–58%), and
+the 90% / 80% thresholds were a stopgap that only held while the offset happened to fit inside them.
+
+`scripts/bench-regression.sh` now computes the run's **machine factor** — the median
+current/baseline ratio across all benchmarks — and judges each benchmark against `baseline × factor`,
+with the same thresholds and floors. A uniform machine shift cancels; one benchmark that doubled
+still stands out by about 2× the factor. What a median cannot see is a regression that hits most
+benchmarks at once, so the factor is printed on every run and a factor above **2.0×** fails the gate
+outright (override: `BENCH_MAX_MACHINE_FACTOR`). The table shows both the raw and the normalized
+delta.
+
+Verified on fixed inputs, old gate against new — the failing CI run replayed exactly: old **fails**
+(geoip +81.4%), new **passes** (factor 1.43×, worst +27%); that run with one benchmark doubled on
+top: new fails on that benchmark only (+94%), where the old also failed geoip; a single sub-µs
+benchmark at +95%: caught (+108.5%); a uniform 2.3× slowdown: caught by the factor limit; a missing
+benchmark: still fails; a same-machine run: passes at factor 1.0. Locally against the real suite:
+factor 1.001×, 48 of 48, 0 regressions.
 
 ## [1.8.1] — 2026-11-02
 
