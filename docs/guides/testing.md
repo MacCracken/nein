@@ -82,8 +82,14 @@ Output shape: `<name>: <avg>(ns|us|ms) avg (min=… max=…) [N iters]`.
 
 `scripts/bench-regression.sh` compares the current run against the
 most recent committed baseline in `docs/benchmarks/history.csv`. It
-fires on > 50% (ns-bracket, abs ≥ 50ns) or > 80% (µs-bracket,
-abs ≥ 2µs) slowdown per benchmark.
+fires on > 90% (ns-bracket, abs > 50ns; `validate_iface` 120%) or
+> 80% (µs-bracket, abs ≥ 2µs) slowdown per benchmark, and on any
+benchmark in the baseline that the current run does not produce
+(`**MISSING**`). Its summary states its own coverage:
+`48 checked of 48 in the baseline, 0 new, 0 missing, 0 regressions`.
+If "checked" is ever below the baseline count, something was not
+compared. Through 1.8.0 every result printed in fractional µs / ms
+went uncompared without a word: 27 of 48 benchmarks.
 
 ```sh
 ./scripts/bench-regression.sh           # default thresholds
@@ -91,8 +97,9 @@ abs ≥ 2µs) slowdown per benchmark.
 ```
 
 To ack a deliberate slowdown (e.g. correctness fix that costs perf),
-include `[bench-regression-ack]` in the HEAD commit message and the
-gate skips with a notice.
+or a benchmark retired before a new baseline is recorded, include
+`[bench-regression-ack]` in the HEAD commit message and the gate skips
+with a notice.
 
 ### Baseline refresh
 
@@ -105,9 +112,13 @@ timestamp,version,commit,benchmark,time_ns
 …
 ```
 
-The bench-regression script reads the **most recent row per benchmark
-name** as the comparison baseline, so older rows stay for historical
-reference without affecting the gate.
+The bench-regression script reads **every row carrying the newest
+timestamp** as the comparison baseline, so older rows stay for
+historical reference without affecting the gate. (Through 1.8.0 it read
+the most recent row per benchmark *name* across all history. With the
+missing-benchmark check that would fail forever on a benchmark retired
+long ago.) `scripts/bench-track.sh` records a baseline; it normalizes
+every result to whole nanoseconds.
 
 ## Fuzzing
 

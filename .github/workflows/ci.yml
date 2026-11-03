@@ -350,17 +350,22 @@ jobs:
         # tracked in git so consumers don't have to run distlib themselves;
         # this step verifies it's regenerated when [lib] or src/lib/*.cyr
         # change. Pattern lifted from agnosys / agnostik 1.2.x.
+        #
+        # The `.deps` sidecars are checked too (1.8.1): a stale sidecar breaks a
+        # consumer's `cyrius deps` as hard as a stale bundle. release.yml has
+        # gated them since 1.6.5; this per-push check covered only the `.cyr`
+        # bodies, so a stale sidecar could sit on main until a tag was cut.
         run: |
           cyrius distlib
           cyrius distlib mcp
-          for b in dist/nein.cyr dist/nein-mcp.cyr; do
+          for b in dist/nein.cyr dist/nein-mcp.cyr dist/nein.deps dist/nein-mcp.deps; do
             if ! git diff --quiet "$b" 2>/dev/null; then
               echo "ERROR: $b is stale. Run 'cyrius distlib' (+ 'cyrius distlib mcp') and commit."
               git --no-pager diff "$b" | head -40
               exit 1
             fi
           done
-          echo "dist bundles (default + mcp) match src/"
+          echo "dist bundles + .deps sidecars (default + mcp) match src/"
 
   security:
     name: Security Scan

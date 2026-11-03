@@ -100,7 +100,7 @@ ACCEPTED_TRANSITIVES=(
                  # lands in lib/ for every consumer; nein reaches none of it
                  # (no cx target). Arrived with the 6.6.2 -> 6.6.6 bump at
                  # 1.6.12 — it does not exist in the 6.6.4 snapshot.
-    "sys"        # `lib/sigil.cyr` includes it directly, and the sigil 3.13.11
+    "sys"        # `lib/sigil.cyr` includes it directly, and the sigil 3.13.15
                  # sidecar names it: sigil's `agnosys_uname` calls `sys_uname`
                  # from lib/sys.cyr rather than a raw syscall(63).
     "boxed"      # cyrius 6.6.0: the boxed Result/Option surface
@@ -113,6 +113,12 @@ ACCEPTED_TRANSITIVES=(
                  # `cyrius fuzz --poison`. `lib/alloc.cyr` and
                  # `lib/freelist.cyr` include it unconditionally; inert unless
                  # a harness enables it. Arrived with the 6.6.6 -> 6.6.20 bump.
+    "math"       # `lib/bayan.cyr` includes it (6.7.18 snapshot). Arrived with
+                 # the 6.7.9 -> 6.7.18 bump at 1.8.1.
+    "unicode"    # the lib/unicode/ family (casefold, categories, normalize
+                 # and their _data / _decode tables, 7 files). `lib/bayan.cyr`
+                 # includes the casefold and categories tables (6.7.18
+                 # snapshot). Arrived with the 6.7.9 -> 6.7.18 bump at 1.8.1.
 )
 
 if [[ "${1:-}" == "--print" ]]; then
@@ -280,9 +286,17 @@ done
 # what is NOT covered is anyone noticing a new one show up. This is that
 # check. Arch/platform variants (foo_x86_64_linux, foo_win, ...) collapse
 # onto their base module name.
+#
+# The walk covers subdirectories. A stdlib FAMILY directory (lib/unicode/,
+# whose files are unicode/normalize.cyr, unicode/_decode.cyr, ...) counts as
+# ONE module named for the directory — the way cyrius names a family in a
+# `.deps` sidecar. Through 1.8.0 this loop globbed `lib/*.cyr`, top level
+# only, so a family directory was invisible to the check: at the cyrius
+# 6.7.18 bump seven lib/unicode/ files arrived via bayan and the gate passed
+# without naming them.
 echo ""
 echo "resolved tree"
-if [ ! -d lib ] || [ -z "$(ls -A lib/*.cyr 2>/dev/null)" ]; then
+if [ ! -d lib ] || [ -z "$(find lib -name '*.cyr' -print -quit 2>/dev/null)" ]; then
     fail "./lib/ is empty — run 'cyrius lib sync && cyrius deps' first"
 else
     declared_stdlib=$(awk '/^stdlib = \[/,/^\]/' "$MANIFEST" | grep -oE '"[a-z_0-9]+"' | tr -d '"')
@@ -290,17 +304,23 @@ else
     known=$(printf '%s\n%s\n%s\n' "$declared_stdlib" "$dep_modules" "$(printf '%s\n' "${ACCEPTED_TRANSITIVES[@]}")" | sort -u)
 
     unknown=""
-    for f in lib/*.cyr; do
-        m=$(basename "$f" .cyr)
-        # collapse arch / platform variants onto the base module
-        base=$(echo "$m" | sed -E 's/_(x86_64_linux|aarch64_linux|linux_common|x86_64_agnos|windows|macos|agnos|win|fast)$//')
+    while IFS= read -r f; do
+        rel=${f#lib/}
+        if [[ "$rel" == */* ]]; then
+            # family directory: lib/<family>/<anything>.cyr -> <family>
+            base=${rel%%/*}
+        else
+            m=$(basename "$rel" .cyr)
+            # collapse arch / platform variants onto the base module
+            base=$(echo "$m" | sed -E 's/_(x86_64_linux|aarch64_linux|linux_common|x86_64_agnos|windows|macos|agnos|win|fast)$//')
+        fi
         echo "$known" | grep -qx "$base" || unknown="$unknown $base"
-    done
+    done < <(find lib -name '*.cyr' | sort)
     # `|| true`: with nothing unknown, grep matches nothing and exits 1, which
     # under `set -e` would kill the script on the assignment.
     unknown=$(echo "$unknown" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ' || true)
 
-    lib_count=$(ls lib/*.cyr | wc -l | tr -d ' ')
+    lib_count=$(find lib -name '*.cyr' | wc -l | tr -d ' ')
     if [ -n "$unknown" ]; then
         fail "modules in lib/ that are neither declared nor accepted transitives:$unknown"
         echo "        If legitimate, add them to ACCEPTED_TRANSITIVES in this script"

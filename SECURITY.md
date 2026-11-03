@@ -78,9 +78,9 @@ threat in the threat model.
 - **Lockfile-pinned deps** (T-8). `cyrius.lock` records the sha256 of
   each resolved dep. `cyrius deps --verify` in CI fails on hash
   mismatch. Cyrius itself is pinned in `cyrius.cyml`
-  (`cyrius = "6.7.9"`). nein's git dep set (`cyrius.cyml` `[deps.*]`,
-  as of 1.8.0): libro 2.11.0, majra 2.12.0, bote 3.4.10 (`bote-core`),
-  sigil 3.13.11, patra 1.16.0 —
+  (`cyrius = "6.7.18"`). nein's git dep set (`cyrius.cyml` `[deps.*]`,
+  as of 1.8.1): libro 2.11.3, majra 2.13.0, bote 3.7.5 (`bote-core`),
+  sigil 3.13.15, patra 1.16.6 —
   sigil + patra carry explicit pins. sakshi dropped out of the git set at
   1.6.5 (libro 2.8.8 no longer pulls it transitively); it now resolves
   from the declared `[deps].stdlib` list against the pinned toolchain

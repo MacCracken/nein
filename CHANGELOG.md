@@ -4,6 +4,126 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.8.1] — 2026-11-02
+
+**cyrius 6.7.9 → 6.7.18, every dep at its latest release, and three CI gates that were reporting
+green over input they never examined.** No nein source change. **754 unit + 18 integration
+assertions** pass, 5/5 fuzz harnesses pass, host / `--aarch64` / `--agnos` builds clean with no
+warning at all on the host build, every CI gate green locally. 394 public fns, API snapshot
+unchanged.
+
+### Fixed — the bench-regression gate never compared any benchmark at or above 1 µs
+
+`scripts/bench-regression.sh` parsed results with `([0-9]+)(ns|us|ms) avg`, whole numbers only,
+while `cyrius bench` prints fractional µs and ms (`1.028us`, `1.270ms`). Every benchmark at or above
+1 µs fell out of the current-run map, and the comparison loop walked that map, so they were dropped
+without a word: **27 of 48 benchmarks, including every large-ruleset one, were never gated.**
+"0 regressions" meant "0 regressions among the 21 sub-µs benchmarks".
+
+- **Fractional values parse**, normalized to whole ns by rounding, the same normalization
+  `scripts/bench-track.sh` already applied when recording baselines. The baselines were always
+  sound; only the gate was blind.
+- **A baseline benchmark missing from the run now fails the gate** (`**MISSING**`). This is the
+  part that matters beyond today: the next output-format change cannot shrink the gate silently.
+  Retiring a benchmark on purpose means recording a new baseline or acking the commit.
+- **The baseline is the latest recorded one**, every row with the newest timestamp, not "last row
+  per name across all history". Today the two are identical (no benchmark has been retired), but
+  with the missing check the old rule would have failed forever on any bench ever removed.
+- The summary line now states its own coverage: `48 checked of 48 in the baseline, 0 new,
+  0 missing, 0 regressions`.
+
+**Injection-verified**, old gate against new on identical recorded output:
+
+| input | old gate | new gate |
+|---|---|---|
+| a real 1.8.0 run | pass, "22 checked" | pass, **48 of 48** checked |
+| `firewall_1000_rules_render` 1.21 ms → **3.0 ms** (+148%) | **pass** | fail, `**FAIL**` |
+| `firewall_1000_rules_render` line removed | **pass** | fail, `**MISSING**` |
+
+The old gate passed a 2.5× slowdown of the largest benchmark. The header comment's claim that
+`cyrius bench` "rounds avg to whole µs" was the root of it, and is corrected.
+
+### Fixed — the supply-chain gate could not see a stdlib family directory
+
+`scripts/supply-chain.sh` check 8 (no undeclared module in the resolved tree) globbed
+`lib/*.cyr`, top level only. This release's toolchain brings the `lib/unicode/` family (seven files,
+via `bayan`), and the gate named only `math`: **the family was invisible to it.** The walk now
+recurses, and a family directory counts as one module named for the directory, the way cyrius names
+a family in a `.deps` sidecar. Injection-verified: an unknown `lib/zzfam/x.cyr` fails the gate.
+
+### Fixed — CI's dist-staleness step skipped the `.deps` sidecars
+
+The per-push "Verify dist bundle is in sync" step diffed `dist/nein.cyr` and `dist/nein-mcp.cyr`
+but not `dist/nein.deps` / `dist/nein-mcp.deps`. `release.yml` has gated all four since 1.6.5, so a
+stale sidecar could sit on `main` until a tag was cut. A stale sidecar breaks a consumer's
+`cyrius deps` as hard as a stale bundle. The CI step now checks all four. Injection-verified in a
+scratch clone: with a stale `dist/nein.deps` committed, the new step fails and the old one passes.
+
+### Changed — pins: every dep at its newest release
+
+| dep | was | now | pinned to cyrius | | dep | was | now | pinned to cyrius |
+|---|---|---|---|---|---|---|---|---|
+| cyrius | 6.7.9 | **6.7.18** | | | sigil | 3.13.11 | **3.13.15** | 6.7.9 |
+| bote-core | 3.4.10 | **3.7.5** | 6.7.18 | | patra | 1.16.0 | **1.16.6** | 6.7.10 |
+| libro | 2.11.0 | **2.11.3** | 6.7.18 | | majra | 2.12.0 | **2.13.0** | 6.7.18 |
+
+For the first time every rule `dependencies.md` states agrees. Each pin is its repo's newest
+release (bote 3.7.6 is in progress, untagged). bote 3.7.5 pins exactly libro 2.11.3 + majra 2.13.0.
+libro 2.11.3 pins exactly the sigil 3.13.15 / patra 1.16.6 that the 6.7.18 snapshot folds, so the
+root pin no longer overrides libro's choice. `lib/sigil.cyr` and `lib/patra.cyr` are byte-identical
+to the pinned tags' bundles. `cyrius.lock` was regenerated from an empty `lib/` and is
+byte-identical across a second `lib sync` → `deps` → `deps --verify`.
+
+### Changed — bote 3.4.10 → 3.7.5: what nein's MCP tools see
+
+Every bote symbol nein calls has the same arity and return at 3.7.5, and the core bundle adds no
+name that collides with nein's. Checked two ways: a function-body diff of `dist/bote-core.cyr`
+between the two tags, and the bundle's 533 top-level names intersected with nein's 532 top-level
+fn / var / const names and 147 enum members (empty). Three things change what nein's tools do,
+none of them on nein's side:
+
+- **Argument keys match as what they decode to** (bote 3.4.15). `jsonx_get_str` / `jsonx_get_raw`
+  now share one key scanner that decodes escapes, so `{"port":22}` finds `port`; it used to read
+  as missing. bote's reason is a security one: an escaped key could slip past a type check its
+  plain spelling would meet. The first occurrence of a key still wins and values still come back
+  raw. Either way nein re-validates every value itself (protocol, port range,
+  `validate_identifier`, `validate_addr`).
+- **Envelopes are valid UTF-8** (3.4.15). `_json_emit_escaped`, which builds nein's MCP envelope,
+  now replaces an invalid UTF-8 sequence with U+FFFD. Output differs only when nft rule text carries
+  invalid UTF-8; a strict client used to refuse the whole message.
+- **`claims` can now be real.** A handler receives 0 when the host configures no auth, and a
+  NUL-terminated heap copy of the verified token when HTTP or WebSocket auth is configured. nein
+  passes it to the host's gate unchanged and never reads it, so behaviour is correct. But
+  `src/lib/mcp.cyr` and `docs/guides/mcp-host-integration.md` both told hosts it was "a reserved 0",
+  which would steer a host away from gating on real identity. Both are corrected. So are two other
+  stale `mcp.cyr` comments: one pointed at the `src/vendor/bote-core.cyr` retired at 1.6.1, and one
+  said bote-core omits `content.cyr`, which it ships.
+
+bote-core 3.7.5 states **"Minimum cyrius: 6.7.13"** for both its bundles, and says 6.7.2–6.7.12
+still compile `dist/bote-core.cyr`, the only one nein uses. That is bote's measurement; it was not
+repeated here. nein itself is built and tested on 6.7.18 only. Its sidecar moved from
+`hashmap bayan sigil ct` to `hashmap`; nein declares all four itself.
+
+### Changed — the resolved tree: 63 → 71 files
+
+`lib/bayan.cyr` in the 6.7.18 snapshot includes `lib/math.cyr` and the `lib/unicode/` casefold and
+categories tables, so **`math`** and the **`unicode`** family (7 files) arrive undeclared. Both are
+added to `ACCEPTED_TRANSITIVES` with their provenance. nein calls neither.
+
+### Performance
+
+**0 regressions across all 48 benchmarks, now under the real gate.** Against the 1.6.10 baseline
+every benchmark sits between −67% and +5.4%. The largest slowdown, `nat_range_render` at +3–5%, has
+read the same since 1.7.1. `nein_ok` 15 → 5 ns, `validate_identifier/short` 62 → 38–39 ns,
+`validate_family` 57 → 46–47 ns.
+
+**Binary size, 1.8.0 → 1.8.1.** On x86_64 with `CYRIUS_DCE=1`, 6.7.18 compacts dead code where
+earlier toolchains only NOP-filled it: **2,342,176 → 730,184 bytes** (1,978,497 bytes eliminated).
+Without DCE the host build grows 2,342,176 → **2,708,552** (+15.6%). That growth is not
+attributed per dependency. The largest source growth is bote-core (154 → 255 KB) and patra
+(340 → 419 KB). `--aarch64` (DCE) 2,722,800 → **3,142,440**, `--agnos` 2,318,232 →
+**2,688,744**; neither compacts.
+
 ## [1.8.0] — 2026-11-02
 
 **cyrius 6.6.20 → 6.7.9, the 6.7 language line, and every git dep moved with it.** No nein source

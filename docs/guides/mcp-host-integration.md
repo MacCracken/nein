@@ -89,9 +89,12 @@ ungated variant.
 `gate_fp` is `fn(tool_name: cstring, claims: i64) -> 1 permit / 0 deny`. The
 host owns agent identity (daimon's `agent.cyr`); nein just calls the gate
 before each tool acts and returns an "access denied" envelope on `0`,
-**never touching the firewall**. Today bote's `claims` is a reserved `0`
-(3.x ABI), so gate on the host's own agent context; the seam lights up for
-free when claims populate.
+**never touching the firewall**. `claims` is whatever bote hands the
+handler, passed through unchanged: `0` when the host configures no auth, and
+(as of bote 3.7.5) a NUL-terminated heap copy of the verified token when HTTP
+or WebSocket auth is configured. A host running bote with auth can gate on
+it; one without auth, or one using the dispatch adapter below, gates on its
+own agent context. nein never reads `claims` itself.
 
 Classify by side-effect using the tool table:
 

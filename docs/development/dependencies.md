@@ -1,6 +1,6 @@
 # Dependencies
 
-Last refresh: **2026-11-02** (v1.8.0, cyrius 6.7.9).
+Last refresh: **2026-11-02** (v1.8.1, cyrius 6.7.18).
 
 Why each entry in `cyrius.cyml`'s `[deps]` block exists, and why the
 resolution order is what it is. This file is the prose home for that
@@ -87,13 +87,13 @@ It is an explicit `[deps.sigil]` git pin instead — see below.
 
 ## `[deps.*]` — git pins
 
-| Dep | Tag (v1.8.0) | Bundle | Why |
+| Dep | Tag (v1.8.1) | Bundle | Why |
 |-----|--------------|--------|-----|
-| `libro` | 2.11.0 | `dist/libro.cyr` | bote's manifest graph references it |
-| `majra` | 2.12.0 | `dist/majra.cyr` | bote's manifest graph references it |
-| `bote-core` | 3.4.10 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
-| `sigil` | 3.13.11 | `dist/sigil.cyr` | Ed25519 + sha256 + hex for `sign.cyr` |
-| `patra` | 1.16.0 | `dist/patra.cyr` | libro's audit store links it |
+| `libro` | 2.11.3 | `dist/libro.cyr` | bote's manifest graph references it |
+| `majra` | 2.13.0 | `dist/majra.cyr` | bote's manifest graph references it |
+| `bote-core` | 3.7.5 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
+| `sigil` | 3.13.15 | `dist/sigil.cyr` | Ed25519 + sha256 + hex for `sign.cyr` |
+| `patra` | 1.16.6 | `dist/patra.cyr` | libro's audit store links it |
 
 `libro` + `majra` are declared **before** `bote-core` because bote's graph
 references them and Cyrius resolves single-pass.
@@ -120,12 +120,15 @@ references them and Cyrius resolves single-pass.
 |---|---|---|---|---|---|---|
 | 1.7.1 | 6.6.20 | 2.10.8 | 2.9.3 | 3.3.17 | 3.13.10 | 1.15.2 |
 | 1.8.0 | 6.7.9 | 2.11.0 | 2.12.0 | 3.4.10 | 3.13.11 | 1.16.0 |
+| 1.8.1 | 6.7.18 | 2.11.3 | 2.13.0 | 3.7.5 | 3.13.15 | 1.16.6 |
 
-At 1.8.0 the next tag of each of libro / majra / bote pins 6.7.18. The set is
-internally consistent: bote 3.4.10 pins libro 2.11.0 + majra 2.12.0, and libro
-2.11.0 pins patra 1.16.0. libro asks for sigil 3.13.12; nein's root pin wins
-(`cyrius deps` prints `sigil 3.13.12 (wanted by libro) not used`), which is the
-pin's second job, below. To list the candidates:
+At 1.8.1 every pin is its repo's newest release and all the rules agree: bote
+3.7.5 pins libro 2.11.3 + majra 2.13.0, and libro 2.11.3 pins exactly the sigil
+3.13.15 / patra 1.16.6 the 6.7.18 snapshot folds. (bote 3.7.6 was in progress,
+untagged, at the time.) At 1.8.0 the rules disagreed: libro 2.11.0 asked for
+sigil 3.13.12, and nein's root pin won (`cyrius deps` printed `sigil 3.13.12
+(wanted by libro) not used`), which is the pin's second job, below. To list the
+candidates:
 
 ```bash
 for t in $(git -C ../libro tag --sort=-v:refname | head -20); do
@@ -213,10 +216,10 @@ dropped 6 → 5 commit-pinned.
 `cyrius lib sync` copies the declared `[deps].stdlib` subset into
 `./lib/`, plus whatever those modules `include`. `cyrius deps` then adds
 whatever each git dep's `.deps` sidecar requires on top. Neither set
-appears in `cyrius.cyml`. At v1.8.0 there are **63 files in `lib/`
-against 31 declared stdlib modules** (74 at v1.6.8, 77 at v1.7.0).
+appears in `cyrius.cyml`. At v1.8.1 there are **71 files in `lib/`
+against 31 declared stdlib modules** (63 at v1.7.1 and v1.8.0, 74 at v1.6.8, 77 at v1.7.0).
 
-Collapsing arch/platform variants, 6 base modules arrive undeclared:
+Collapsing arch/platform variants and counting a family directory as one module, 8 arrive undeclared:
 
 | Module | Pulled by | Notes |
 |---|---|---|
@@ -226,6 +229,8 @@ Collapsing arch/platform variants, 6 base modules arrive undeclared:
 | `hashseed` | `lib/hashmap.cyr` | Per-process hash seed (hash-flooding DoS). |
 | `mmap` | `lib/freelist.cyr`, `lib/thread.cyr` | |
 | `sys` | `lib/sigil.cyr`, sigil's sidecar | sigil's `agnosys_uname` calls `sys_uname`. |
+| `math` | `lib/bayan.cyr` | Arrived at 1.8.1 (cyrius 6.7.18 snapshot). |
+| `unicode` (`lib/unicode/`, 7 files) | `lib/bayan.cyr` | casefold / categories / normalize tables. Arrived at 1.8.1. A family directory counts as one module, as in a `.deps` sidecar; check 8 walks subdirectories since 1.8.1 (it globbed the top level only and could not see this one). |
 
 `hashmap_fast` is also vendored beside `hashmap` and nothing includes it;
 the gate folds `_fast` onto its base module.

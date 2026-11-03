@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-11-02 (post v1.8.0 — cyrius 6.6.20 → 6.7.9 and the dep set with it; consumers need cyrius ≥ 6.7.2 for bote-core 3.4.x, so 6.6.x consumers stay on 1.7.1. New: the bench-regression gate is blind above 1 µs (P1 below), and sigil / patra pin the toolchain snapshot's fold. Earlier the same day, post v1.7.1 — cyrius 6.6.6 → 6.6.20, and the lock-regeneration trap below. Previously 2026-09-10, post v1.6.11 — the cyrius 6.6.2 value-form migration: 104 validator error paths were failing OPEN, see the CHANGELOG and the trap below. Before that 2026-08-21, post v1.6.10 — every open P(-1) audit finding closed except two deliberately-deferred MEDIUM. v1.6.8 deleted `rust-old/`. v1.6.7 closed
+Last refresh: 2026-11-02 (post v1.8.1 — cyrius 6.7.9 → 6.7.18 and every dep to its latest release (bote 3.7.5); the bench-regression and supply-chain gates both fixed to fail on what they used to skip — see Recently closed and the new trap. Earlier the same day, post v1.8.0 — cyrius 6.6.20 → 6.7.9 and the dep set with it; consumers need cyrius ≥ 6.7.2 for bote-core 3.4.x, so 6.6.x consumers stay on 1.7.1. New: the bench-regression gate is blind above 1 µs (P1 below), and sigil / patra pin the toolchain snapshot's fold. Earlier the same day, post v1.7.1 — cyrius 6.6.6 → 6.6.20, and the lock-regeneration trap below. Previously 2026-09-10, post v1.6.11 — the cyrius 6.6.2 value-form migration: 104 validator error paths were failing OPEN, see the CHANGELOG and the trap below. Before that 2026-08-21, post v1.6.10 — every open P(-1) audit finding closed except two deliberately-deferred MEDIUM. v1.6.8 deleted `rust-old/`. v1.6.7 closed
 every functional gap the Rust→Cyrius port-completeness audit turned up,
 including one shipped bug where `dry_run` was write-only; v1.6.8 lifted the
 Rust tree's supply-chain policy into a first-party gate and removed the tree.
@@ -30,6 +30,16 @@ changes what the next person should do.
 - **The P(-1) audit is closed** except the two items below. 1 CRITICAL,
   6 HIGH, 10 MEDIUM, 17 LOW confirmed; v1.6.9 fixed 5 of the 7 CRITICAL/HIGH
   and v1.6.10 the rest, plus 8 of 10 MEDIUM and all 6 documentation errors.
+- **Three gates were measuring less than they reported** (found 1.8.0–1.8.1,
+  fixed 1.8.1). `scripts/bench-regression.sh` matched whole numbers only and
+  `cyrius bench` prints fractional µs / ms, so 27 of 48 benchmarks (every one
+  ≥ 1 µs) were never compared. `scripts/supply-chain.sh` check 8 globbed
+  `lib/*.cyr`, so a stdlib family directory (`lib/unicode/`, arrived at 6.7.18)
+  was invisible to it. CI's dist-staleness step diffed the `.cyr` bundles but
+  not the `.deps` sidecars (release.yml always did). All three now fail on what
+  they used to skip: the bench gate on a baseline bench the run does not
+  produce, the supply-chain gate on an unknown family, the dist step on a stale
+  sidecar. Injection-verified; see the 1.8.1 CHANGELOG.
 
 ### Traps worth not re-stepping in
 
@@ -50,6 +60,15 @@ gets past it but leaves the old tags' commit rows beside the new ones. What work
 `rm -rf lib cyrius.lock && cyrius lib sync && cyrius deps`, then prove it by running CI's
 `lib sync` → `deps` → `deps --verify` once more and checking the lock is byte-identical. Expect one
 commit row per dep and as many hash rows as files in `lib/`.
+
+**A gate's count is part of its claim — make it fail when the count is short (1.8.1).**
+"0 regressions" from a gate that compared 21 of 48 benchmarks, and "all declared or
+accepted" from one that never looked in `lib/unicode/`, are both false greens, and
+neither printed anything wrong. Each skipped its input silently: a parser regex that
+did not match, a glob that did not recurse. The fix in both is the same shape: derive
+the set the gate SHOULD cover independently of the set it managed to read (the
+baseline's benchmark list; a recursive `find`), and fail on the difference. When you
+add a gate, ask what it does with input it cannot parse.
 
 **A gate must not share a defect with the thing it checks (1.6.11).** cyrius
 6.6.x warns on `return None();` even though `lib/tagged.cyr` documents the
@@ -98,32 +117,6 @@ cost a round of investigation:
 
 ---
 
-## P1 — the bench-regression gate is blind above 1 µs (found at 1.8.0)
-
-`scripts/bench-regression.sh` parses each result with
-`([0-9]+)(ns|us|ms)[[:space:]]+avg` — whole numbers only — and `cyrius bench`
-prints fractional µs and ms (`1.028us`, `1.270ms`). Every benchmark at or above
-1 µs is therefore dropped from the current-run map, and the comparison loop
-iterates that map, so the drop is **silent**: **27 of 48 benchmarks are never
-checked**, including every large-ruleset one (`firewall_1000_rules_render`,
-`engine_100_agents_*`, `bridge_large_*`). The gate printed "22 checked" at 1.7.1
-and "21 checked" at 1.8.0 only because `set_render` sits on the 1 µs line.
-`scripts/bench-track.sh` parses decimals, so the committed baselines are sound.
-
-The fix is two parts and both matter:
-
-1. Parse `[0-9.]+` and convert to whole ns, as `bench-track.sh` already does.
-2. **Fail on a baseline benchmark missing from the current run.** Part 1 alone
-   fixes this instance; part 2 is what stops the next format change from
-   silently shrinking the gate again.
-
-Expect the first fixed run to put 27 benchmarks under the µs threshold for the
-first time. At 1.8.0 all 27 were within noise of the 1.6.10 baseline, by hand
-(see the CHANGELOG), so it should pass. Verify by injection: drop a decimal
-bench from the output and confirm the gate fails.
-
----
-
 ## P1 — stop comparing benchmarks across machines
 
 `scripts/bench-track.sh` records a baseline on whatever machine cuts the
@@ -152,7 +145,7 @@ Whichever lands, drop the ns threshold back toward 50% and shrink or remove
 
 ---
 
-## Current state — v1.8.0
+## Current state — v1.8.1
 
 Library is feature-complete for the AGNOS-ecosystem consumers
 identified at port time (stiva / daimon / aegis / sutra). 21 modules
@@ -163,8 +156,8 @@ integration guard, 48 benchmarks, 5 per-target fuzz drivers, single-file
 clean; aarch64 cross-build green; `capacity --check` is a real gate again
 as of 1.6.5. libro / majra / bote / sigil / patra consumed as git deps
 (daimon recipe) via `cyrius lib sync` + `cyrius deps`; no vendored bundles.
-Pinned at cyrius 6.7.9 (1.8.0); consumers need ≥ 6.7.2, and 6.6.x consumers
-stay on 1.7.1, the last release on 6.6.20.
+Pinned at cyrius 6.7.18 (1.8.1) with every dep at its latest release; 6.6.x
+consumers stay on 1.7.1, the last release on 6.6.20.
 sigil + patra carry explicit `[deps.*]` pins (full `dist/sigil.cyr`) so
 libro 2.8.x's thin sigil sub-bundles don't collide with the full crypto
 bundle. Full `[deps]` rationale lives in

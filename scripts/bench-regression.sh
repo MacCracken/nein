@@ -30,11 +30,21 @@
 #     delta of the whole run so a uniform shift cancels out. Tracked on the
 #     roadmap; the threshold bump is the stopgap.
 #
-#   baseline >= 1000ns (us-bracketed, rounding-noisy):
+#   baseline >= 1000ns (us-bracketed):
 #     fires on delta% > US_THRESHOLD (default 80%) AND
 #             abs delta >= US_BUCKET_FLOOR_NS (default 2000; ≥2 µs)
-#     cyrius bench rounds avg to whole µs — `1us → 2us` could be just
-#     1.999µs → 2.0µs (0.05% real shift reported as 100%).
+#     Written when cyrius bench rounded avg to whole µs, so `1us → 2us`
+#     could be 1.999µs → 2.0µs. It now prints fractional µs / ms
+#     (`1.028us`, `1.270ms`); the floor stays as an absolute noise guard.
+#
+# Every benchmark in the latest baseline must appear in the current run.
+# Through 1.8.0 the parser matched whole numbers only, so every fractional
+# µs / ms result (27 of 48 benches, every large-ruleset one) was dropped
+# from the run and never compared — and nothing said so, because the
+# comparison loop walks the current run. A baseline bench the run does not
+# produce is now a failure, so the next output-format change cannot shrink
+# the gate silently. Retiring a bench means recording a new baseline
+# (scripts/bench-track.sh) or acking the commit.
 #
 # Usage:
 #   scripts/bench-regression.sh         # default thresholds
@@ -74,16 +84,15 @@ fi
 echo "running benchmarks..."
 BENCH_OUT=$(CYRIUS_NO_WARN_SHADOW_LIB=1 cyrius bench "$REPO_ROOT/tests/nein.bcyr" 2>&1)
 
-# Parse current run into name=ns map (normalize us/ms to ns).
+# Parse current run into name=ns map. Values may be fractional (`1.028us`,
+# `1.270ms`); bash arithmetic is integer-only, so awk normalizes to whole ns,
+# rounding to nearest — the same normalization scripts/bench-track.sh applies
+# when it records the baseline.
 declare -A CURRENT
 while IFS= read -r line; do
-    if [[ "$line" =~ ^[[:space:]]*([a-zA-Z_/0-9]+):[[:space:]]*([0-9]+)(ns|us|ms)[[:space:]]+avg ]]; then
-        val="${BASH_REMATCH[2]}"
-        case "${BASH_REMATCH[3]}" in
-            ns) ;;
-            us) val=$((val * 1000)) ;;
-            ms) val=$((val * 1000000)) ;;
-        esac
+    if [[ "$line" =~ ^[[:space:]]*([a-zA-Z_/0-9]+):[[:space:]]*([0-9]+(\.[0-9]+)?)(ns|us|ms)[[:space:]]+avg ]]; then
+        val=$(awk -v v="${BASH_REMATCH[2]}" -v u="${BASH_REMATCH[4]}" \
+            'BEGIN { m = (u == "ms") ? 1000000 : (u == "us") ? 1000 : 1; printf "%d", v * m + 0.5 }')
         CURRENT["${BASH_REMATCH[1]}"]="$val"
     fi
 done <<< "$BENCH_OUT"
@@ -93,11 +102,15 @@ if [ ${#CURRENT[@]} -eq 0 ]; then
     exit 2
 fi
 
-# Build baseline map from the most recent row per benchmark in history.csv.
+# Build baseline map from the most recent baseline in history.csv — every row
+# carrying its latest timestamp. (Not "last row per name across all history":
+# a bench retired long ago would then stay in the baseline and, with the
+# missing-bench check below, fail every run forever.)
 declare -A BASELINE
 while IFS='=' read -r name ns; do
     BASELINE["$name"]="$ns"
-done < <(awk -F, 'NR>1 { last[$4] = $5 } END { for (k in last) print k "=" last[k] }' "$HISTORY")
+done < <(awk -F, 'NR>1 { ts[NR] = $1; nm[NR] = $4; v[NR] = $5; if ($1 > latest) latest = $1 }
+                  END { for (i in ts) if (ts[i] == latest) print nm[i] "=" v[i] }' "$HISTORY")
 
 if [ ${#BASELINE[@]} -eq 0 ]; then
     echo "bench-regression: WARN — no baseline in $HISTORY; skipping gate"
@@ -136,18 +149,36 @@ for name in "${!CURRENT[@]}"; do
     checked=$((checked + 1))
 done
 
+# A baseline bench the run did not produce was never compared. Fail rather
+# than let the checked count shrink unnoticed (see the header).
+missing=0
+for name in "${!BASELINE[@]}"; do
+    if [ -z "${CURRENT[$name]:-}" ]; then
+        printf "%-32s %10s %10s %8s %8s **MISSING**\n" "$name" "${BASELINE[$name]}" "-" "-" "-" >> "$TABLE"
+        missing=$((missing + 1))
+    fi
+done
+
 printf "%-32s %10s %10s %8s %8s\n" "benchmark" "baseline" "current" "delta%" "threshold"
 printf '%.0s-' {1..72}; echo
 sort "$TABLE"
 
 echo
-echo "summary: $checked checked, $new new, $fail regressions"
+echo "summary: $checked checked of ${#BASELINE[@]} in the baseline, $new new, $missing missing, $fail regressions"
 
+if [ "$missing" -gt 0 ]; then
+    echo
+    echo "BREAKING: $missing baseline benchmark(s) missing from this run — never compared."
+    echo "If the bench output format changed, fix the parser above. If a bench was"
+    echo "retired on purpose, record a new baseline or ack with [bench-regression-ack]."
+fi
 if [ "$fail" -gt 0 ]; then
     echo
     echo "BREAKING: $fail benchmark(s) regressed beyond threshold."
     echo "Either optimize, or ack with [bench-regression-ack] in the commit message."
     echo "(Baseline updates ride into docs/benchmarks/history.csv on each release tag.)"
+fi
+if [ "$missing" -gt 0 ] || [ "$fail" -gt 0 ]; then
     exit 1
 fi
 
