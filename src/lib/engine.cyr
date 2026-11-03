@@ -84,12 +84,22 @@ fn ap_validate(ap: i64): i64 {
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var vr2_t, vr2_v = validate_addr(ap_agent_addr(ap));
     if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
+    # An agent is ONE host (1.8.2, audit B-3). Dispatch jumps on the agent's
+    # address and every agent chain ends in a terminal drop, so an agent whose
+    # address was a CIDR — `0.0.0.0/0`, a `/24` — captured every other agent in
+    # that range, and whichever sorted first by name decided their traffic.
+    # Verified live: an "admin" agent at 10.0.0.0/24 allowing tcp/22 let a
+    # remote host reach svc-a's port 22, which svc-a's own policy denies.
+    if (_addr_is_host(ap_agent_addr(ap)) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var hosts = ap_allowed_outbound_hosts(ap);
     var hlen = vec_len(hosts);
     var i = 0;
     while (i < hlen) {
         var vr3_t, vr3_v = validate_addr(vec_get(hosts, i));
         if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
+        # Same family as the agent (see _ap_build_outbound_rules).
+        var hfam = _addr_family(vec_get(hosts, i));
+        if (hfam != _addr_family(ap_agent_addr(ap))) { return nein_err(NEIN_ERR_INVALID_RULE); }
         i = i + 1;
     }
     return nein_ok();
@@ -198,8 +208,15 @@ fn _ap_build_inbound_rules(ap: i64): i64 {
     }
 
     if (ap_allow_loopback(ap) == 1) {
+        # Loopback FROM THE AGENT ITSELF only (1.8.2, audit B-2). Traffic
+        # between two local addresses always crosses `lo`, so a bare
+        # `iif "lo" accept` in every agent chain accepted ALL agent-to-agent
+        # traffic on the host and cancelled each agent's inbound policy —
+        # verified live: svc-b reached svc-a:22 though svc-a allows only 8080.
+        # The agent can still reach itself; other agents now meet its policy.
         var r = rule_new(verdict_accept());
         rule_add_match(r, match_iif("lo"));
+        rule_add_match(r, _match_addr(ap_agent_addr(ap), 0));
         rule_set_comment(r, _loopback_comment(agent_id));
         vec_push(rules, r);
     }
@@ -232,8 +249,10 @@ fn _ap_build_outbound_rules(ap: i64): i64 {
     }
 
     if (ap_allow_loopback(ap) == 1) {
+        # Mirror of the inbound rule (B-2): loopback TO the agent itself only.
         var r = rule_new(verdict_accept());
         rule_add_match(r, match_oif("lo"));
+        rule_add_match(r, _match_addr(ap_agent_addr(ap), 1));
         rule_set_comment(r, _loopback_out_comment(agent_id));
         vec_push(rules, r);
     }
@@ -242,9 +261,18 @@ fn _ap_build_outbound_rules(ap: i64): i64 {
     var host_set = 0;
     var hosts = ap_allowed_outbound_hosts(ap);
     var hlen = vec_len(hosts);
+    # The set is the AGENT's family (1.8.2): its packets carry its own address,
+    # so every allowed host is that family too. It was always ipv4_addr, so an
+    # IPv6 agent's host list could never load.
+    var host_field = "ip daddr";
+    var host_stype = SET_IPV4_ADDR;
+    if (_addr_family(ap_agent_addr(ap)) == 6) {
+        host_field = "ip6 daddr";
+        host_stype = SET_IPV6_ADDR;
+    }
     if (hlen > 0) {
         var set_name = _host_set_name(agent_id);
-        host_set = nft_set_new(set_name, SET_IPV4_ADDR);
+        host_set = nft_set_new(set_name, host_stype);
         nft_set_add_flag(host_set, SETFLAG_INTERVAL);
         var i = 0;
         while (i < hlen) {
@@ -262,7 +290,7 @@ fn _ap_build_outbound_rules(ap: i64): i64 {
         rule_add_match(r, match_protocol(ps_protocol(ps)));
         rule_add_match(r, match_dport(ps_port(ps)));
         if (host_set != 0) {
-            rule_add_match(r, match_set_lookup("ip daddr", nft_set_name(host_set)));
+            rule_add_match(r, match_set_lookup(host_field, nft_set_name(host_set)));
             rule_set_comment(r, _port_restricted_comment(agent_id, transport_label(ps_transport(ps)), ps_port(ps)));
         } else {
             rule_set_comment(r, _port_comment(agent_id, "outbound", transport_label(ps_transport(ps)), ps_port(ps)));
@@ -421,6 +449,22 @@ fn pe_validate(pe: i64): i64 {
         if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
         i = i + 1;
     }
+    # No two agents on one address (B-3): the second's chain would never be
+    # reached, its policy silently replaced by the first's. Compared as
+    # canonical bytes, so "fd00::1" and "fd00:0::1" are one address.
+    var a[16];
+    var b[16];
+    i = 0;
+    while (i < alen) {
+        _addr_bytes(ap_agent_addr(vec_get(agents, i)), &a);
+        var j = i + 1;
+        while (j < alen) {
+            _addr_bytes(ap_agent_addr(vec_get(agents, j)), &b);
+            if (memeq(&a, &b, 16) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
     return nein_ok();
 }
 
@@ -450,12 +494,12 @@ fn pe_to_firewall(pe: i64): i64 {
         var out_name = _chain_name(agent_id, "_out");
 
         var disp_in = rule_new(verdict_jump(in_name));
-        rule_add_match(disp_in, match_dest_addr(agent_addr));
+        rule_add_match(disp_in, _match_addr(agent_addr, 1));
         rule_set_comment(disp_in, _dispatch_comment("inbound", "to", agent_id));
         chain_add_rule(input, disp_in);
 
         var disp_out = rule_new(verdict_jump(out_name));
-        rule_add_match(disp_out, match_source_addr(agent_addr));
+        rule_add_match(disp_out, _match_addr(agent_addr, 0));
         rule_set_comment(disp_out, _dispatch_comment("outbound", "from", agent_id));
         chain_add_rule(output, disp_out);
 

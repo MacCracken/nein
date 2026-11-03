@@ -90,7 +90,7 @@ fn sign_keygen(sk_out: i64, pk_out: i64): i64 {
 # an optional operator label (validate_identifier charset), or 0 for
 # "unnamed". Returns Ok(Str envelope) | Err(NEIN_ERR_SIG_KEY).
 fn sign_ruleset_body(body: i64, sk: i64, key_id: cstring): i64 {
-    if (sk == 0) { return nein_err(NEIN_ERR_SIG_KEY); }
+    if (body == 0 || sk == 0) { return nein_err(NEIN_ERR_SIG_KEY); }   # NULL body: 1.8.2, audit M-7
     var kid = key_id;
     if (kid == 0) { kid = "unnamed"; }
     if (is_err_result(validate_identifier(kid)) == 1) { return nein_err(NEIN_ERR_SIG_KEY); }
@@ -109,9 +109,17 @@ fn sign_ruleset_body(body: i64, sk: i64, key_id: cstring): i64 {
     if (_body_has_delimiter(body_data, body_len) == 1) {
         return nein_err(NEIN_ERR_SIG_MALFORMED);
     }
+    # A NUL byte (1.8.2, audit M-4): the body was appended to the envelope as a
+    # C string, which stops at the first NUL, so the envelope carried fewer
+    # bytes than were signed and could never verify — and nft would apply only
+    # the prefix anyway. Refused at sign time, as the apply path now refuses it.
+    if (memchr(body_data, 0, body_len) >= 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
 
     var sig = alloc(64);
-    ed25519_sign(sk, body_data, body_len, sig);
+    # The return was ignored through 1.8.1 (audit M-4): sigil refuses a key
+    # whose public half does not match and zeroes the signature, so a corrupt
+    # key file produced "signed" rulesets that only failed later, at apply.
+    if (ed25519_sign(sk, body_data, body_len, sig) != 0) { return nein_err(NEIN_ERR_SIG_KEY); }
     var digest = alloc(32);
     sha256(body_data, body_len, digest);
 
@@ -271,6 +279,7 @@ fn _sign_verify_parsed(sr: i64, pubkey: i64): i64 {
 # Ok(0) iff it parses AND header pubkey == supplied AND the signature
 # verifies over the body. Fail-closed.
 fn verify_ruleset(signed: i64, pubkey: i64): i64 {
+    if (signed == 0 || pubkey == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }   # NULL (M-7)
     var pr1_t, pr1_v = parse_signed_ruleset(signed);
     if (is_err_result(pr1_t) == 1) { return Err(pr1_v); }
     return _sign_verify_parsed(pr1_v, pubkey);
@@ -278,6 +287,7 @@ fn verify_ruleset(signed: i64, pubkey: i64): i64 {
 
 # Verify against a 64-char hex pubkey instead of raw bytes.
 fn verify_ruleset_hex(signed: i64, pubkey_hex: cstring): i64 {
+    if (pubkey_hex == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }   # NULL (M-7)
     if (strlen(pubkey_hex) != 64) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
     if (hex_is_valid(pubkey_hex, 64) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
     var pk = alloc(32);
@@ -291,6 +301,16 @@ fn verify_ruleset_hex(signed: i64, pubkey_hex: cstring): i64 {
 # ================================================================
 
 fn apply_signed_ruleset(signed: i64, pubkey: i64): i64 {
+    if (signed == 0 || pubkey == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }   # NULL (M-7)
+    # Verify and apply ONE private copy (1.8.2, audit M-6). The body was
+    # verified in the caller's buffer and then applied from the same pointer,
+    # so a buffer another thread can write — or an mmap'd file — could change
+    # between the two reads: the bytes applied need not be the bytes verified.
+    var n = str_len(signed);
+    var own_bytes = alloc(n + 1);
+    memcpy(own_bytes, str_data(signed), n);
+    store8(own_bytes + n, 0);
+    signed = str_new(own_bytes, n);
     var pr1_t, pr1_v = parse_signed_ruleset(signed);
     if (is_err_result(pr1_t) == 1) { return Err(pr1_v); }
     var sr = pr1_v;
@@ -300,6 +320,7 @@ fn apply_signed_ruleset(signed: i64, pubkey: i64): i64 {
 }
 
 fn apply_signed_ruleset_hex(signed: i64, pubkey_hex: cstring): i64 {
+    if (pubkey_hex == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }   # NULL (M-7)
     if (strlen(pubkey_hex) != 64) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
     if (hex_is_valid(pubkey_hex, 64) == 0) { return nein_err(NEIN_ERR_SIG_MALFORMED); }
     var pk = alloc(32);

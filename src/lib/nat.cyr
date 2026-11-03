@@ -95,83 +95,138 @@ fn _sb_add_addr(sb: i64, addr: cstring): i64 {
     return 0;
 }
 
+# The network-layer keyword for an address: "ip6" for IPv6, "ip" otherwise.
+fn _nat_l3(addr: cstring): cstring {
+    if (_addr_has_colon(addr) == 1) { return "ip6"; }
+    return "ip";
+}
+
 # --- Render ---
+#
+# Three 1.8.2 changes (docs/audit/2026-11-03-audit.md):
+#
+#   B-1 (HIGH)  Every DNAT is scoped with `fib daddr type local`. A host port
+#               mapping rendered `tcp dport 80 dnat to 172.17.1.2:80` with no
+#               destination scope, so in prerouting it rewrote EVERY routed
+#               packet to port 80, whatever its real destination — verified
+#               live: a LAN client fetching an external site got the container,
+#               and other containers' own outbound port-80 traffic broke. Docker
+#               scopes the same rule with `-m addrtype --dst-type LOCAL`.
+#   I-4         A port range that SHIFTS (host 8000-8010 -> container 9000-9010)
+#               renders an explicit `tcp dport map`. `dnat to A:9000-9010`
+#               without the kernel's offset flag picks the first free port in
+#               the range for every connection — verified by packet test: 8000,
+#               8005 and 8010 all reached 9000. nft 1.1.7 has no port-shift
+#               syntax, so the map is the only correct form. An unshifted range
+#               renders `dnat ... to A`, which keeps each packet's own port.
+#   I-7         `dnat` / `snat` name their family (`dnat ip to`, `dnat ip6 to`),
+#               which an `inet` table requires; SNAT and masquerade match
+#               `ip6 saddr` for an IPv6 source (both hardcoded `ip saddr`); and
+#               masquerade matches `oifname` (load-time `oif` fails on an absent
+#               interface).
+
+fn _nat_comment(sb: i64, c: cstring): i64 {
+    if (c != 0) {
+        str_builder_add_cstr(sb, " comment \"");
+        str_builder_add_cstr(sb, c);
+        str_builder_add_cstr(sb, "\"");
+    }
+    return 0;
+}
 
 fn nat_render(n: i64): Str {
     var sb = str_builder_new();
     var nt = nat_type(n);
 
     if (nt == NAT_DNAT) {
+        str_builder_add_cstr(sb, "fib daddr type local ");
         str_builder_add_cstr(sb, _proto_str(nat_v1(n)));
         str_builder_add_cstr(sb, " dport ");
         str_builder_add_int(sb, nat_v2(n));
-        str_builder_add_cstr(sb, " dnat to ");
+        str_builder_add_cstr(sb, " dnat ");
+        str_builder_add_cstr(sb, _nat_l3(nat_v3(n)));
+        str_builder_add_cstr(sb, " to ");
         _sb_add_addr(sb, nat_v3(n));
         str_builder_add_cstr(sb, ":");
         str_builder_add_int(sb, nat_v4(n));
-        if (nat_v5(n) != 0) {
-            str_builder_add_cstr(sb, " comment \"");
-            str_builder_add_cstr(sb, nat_v5(n));
-            str_builder_add_cstr(sb, "\"");
-        }
+        _nat_comment(sb, nat_v5(n));
     } elif (nt == NAT_SNAT) {
-        str_builder_add_cstr(sb, "ip saddr ");
+        str_builder_add_cstr(sb, _nat_l3(nat_v1(n)));
+        str_builder_add_cstr(sb, " saddr ");
         str_builder_add_cstr(sb, nat_v1(n));
-        str_builder_add_cstr(sb, " snat to ");
+        str_builder_add_cstr(sb, " snat ");
+        str_builder_add_cstr(sb, _nat_l3(nat_v2(n)));
+        str_builder_add_cstr(sb, " to ");
         str_builder_add_cstr(sb, nat_v2(n));
-        if (nat_v3(n) != 0) {
-            str_builder_add_cstr(sb, " comment \"");
-            str_builder_add_cstr(sb, nat_v3(n));
-            str_builder_add_cstr(sb, "\"");
-        }
+        _nat_comment(sb, nat_v3(n));
     } elif (nt == NAT_MASQUERADE) {
-        str_builder_add_cstr(sb, "ip saddr ");
+        str_builder_add_cstr(sb, _nat_l3(nat_v1(n)));
+        str_builder_add_cstr(sb, " saddr ");
         str_builder_add_cstr(sb, nat_v1(n));
         if (nat_v2(n) != 0) {
-            str_builder_add_cstr(sb, " oif \"");
+            str_builder_add_cstr(sb, " oifname \"");
             str_builder_add_cstr(sb, nat_v2(n));
             str_builder_add_cstr(sb, "\"");
         }
         str_builder_add_cstr(sb, " masquerade");
-        if (nat_v3(n) != 0) {
-            str_builder_add_cstr(sb, " comment \"");
-            str_builder_add_cstr(sb, nat_v3(n));
-            str_builder_add_cstr(sb, "\"");
-        }
+        _nat_comment(sb, nat_v3(n));
     } elif (nt == NAT_REDIRECT) {
         str_builder_add_cstr(sb, _proto_str(nat_v1(n)));
         str_builder_add_cstr(sb, " dport ");
         str_builder_add_int(sb, nat_v2(n));
         str_builder_add_cstr(sb, " redirect to :");
         str_builder_add_int(sb, nat_v3(n));
-        if (nat_v4(n) != 0) {
-            str_builder_add_cstr(sb, " comment \"");
-            str_builder_add_cstr(sb, nat_v4(n));
-            str_builder_add_cstr(sb, "\"");
-        }
+        _nat_comment(sb, nat_v4(n));
     } elif (nt == NAT_DNAT_RANGE) {
-        str_builder_add_cstr(sb, _proto_str(nat_v1(n)));
+        var proto = _proto_str(nat_v1(n));
+        var dps = nat_v2(n);
+        var dpe = nat_v3(n);
+        var tps = nat_v5(n);
+        str_builder_add_cstr(sb, "fib daddr type local ");
+        str_builder_add_cstr(sb, proto);
         str_builder_add_cstr(sb, " dport ");
-        str_builder_add_int(sb, nat_v2(n));
+        str_builder_add_int(sb, dps);
         str_builder_add_cstr(sb, "-");
-        str_builder_add_int(sb, nat_v3(n));
-        str_builder_add_cstr(sb, " dnat to ");
+        str_builder_add_int(sb, dpe);
+        str_builder_add_cstr(sb, " dnat ");
+        str_builder_add_cstr(sb, _nat_l3(nat_v4(n)));
+        str_builder_add_cstr(sb, " to ");
         _sb_add_addr(sb, nat_v4(n));
-        str_builder_add_cstr(sb, ":");
-        str_builder_add_int(sb, nat_v5(n));
-        str_builder_add_cstr(sb, "-");
-        str_builder_add_int(sb, nat_v6(n));
-        if (nat_v7(n) != 0) {
-            str_builder_add_cstr(sb, " comment \"");
-            str_builder_add_cstr(sb, nat_v7(n));
-            str_builder_add_cstr(sb, "\"");
+        if (tps != dps) {
+            str_builder_add_cstr(sb, " : ");
+            str_builder_add_cstr(sb, proto);
+            str_builder_add_cstr(sb, " dport map { ");
+            var p = dps;
+            while (p <= dpe) {
+                if (p > dps) { str_builder_add_cstr(sb, ", "); }
+                str_builder_add_int(sb, p);
+                str_builder_add_cstr(sb, " : ");
+                str_builder_add_int(sb, tps + (p - dps));
+                p = p + 1;
+            }
+            str_builder_add_cstr(sb, " }");
         }
+        _nat_comment(sb, nat_v7(n));
+    } else {
+        # Unknown NAT type: rendered nothing through 1.8.1. Fail closed.
+        str_builder_add_cstr(sb, "__nein_invalid_nat__");
     }
 
     return str_builder_build(sb);
 }
 
 # --- Validate ---
+
+fn _nat_port_ok(p: i64): i64 {
+    if (p < 1 || p > 65535) { return 0; }
+    return 1;
+}
+
+# NAT ports need a transport protocol with ports: tcp or udp.
+fn _nat_proto_ok(proto: i64): i64 {
+    if (proto == PROTO_TCP || proto == PROTO_UDP) { return 1; }
+    return 0;
+}
 
 fn nat_validate(n: i64): i64 {
     var nt = nat_type(n);
@@ -180,6 +235,10 @@ fn nat_validate(n: i64): i64 {
     if (nt == NAT_DNAT) {
         var vr1_t, vr1_v = validate_addr(nat_v3(n));
         if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+        # Ports and protocol were never checked through 1.8.1 (audit B-7 / I-8):
+        # `dnat to A:0` was accepted, 70000 failed the whole batch at apply.
+        if (_nat_proto_ok(nat_v1(n)) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        if (_nat_port_ok(nat_v2(n)) == 0 || _nat_port_ok(nat_v4(n)) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
         if (nat_v5(n) != 0) {
             var vr2_t, vr2_v = validate_comment(nat_v5(n));
             if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
@@ -189,6 +248,8 @@ fn nat_validate(n: i64): i64 {
         if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
         var vr4_t, vr4_v = validate_addr(nat_v2(n));
         if (is_err_result(vr4_t) == 1) { return Err(vr4_v); }
+        # Source and translated address must be one family (nft refuses a mix).
+        if (_addr_family(nat_v1(n)) != _addr_family(nat_v2(n))) { return nein_err(NEIN_ERR_INVALID_RULE); }
         if (nat_v3(n) != 0) {
             var vr5_t, vr5_v = validate_comment(nat_v3(n));
             if (is_err_result(vr5_t) == 1) { return Err(vr5_v); }
@@ -205,6 +266,8 @@ fn nat_validate(n: i64): i64 {
             if (is_err_result(vr8_t) == 1) { return Err(vr8_v); }
         }
     } elif (nt == NAT_REDIRECT) {
+        if (_nat_proto_ok(nat_v1(n)) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        if (_nat_port_ok(nat_v2(n)) == 0 || _nat_port_ok(nat_v3(n)) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
         if (nat_v4(n) != 0) {
             var vr9_t, vr9_v = validate_comment(nat_v4(n));
             if (is_err_result(vr9_t) == 1) { return Err(vr9_v); }
@@ -216,6 +279,9 @@ fn nat_validate(n: i64): i64 {
         var dpe = nat_v3(n);
         var tps = nat_v5(n);
         var tpe = nat_v6(n);
+        if (_nat_proto_ok(nat_v1(n)) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        if (_nat_port_ok(dps) == 0 || _nat_port_ok(dpe) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        if (_nat_port_ok(tps) == 0 || _nat_port_ok(tpe) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
         if (dps > dpe) { return nein_err(NEIN_ERR_INVALID_RULE); }
         if (tps > tpe) { return nein_err(NEIN_ERR_INVALID_RULE); }
         if ((dpe - dps) != (tpe - tps)) { return nein_err(NEIN_ERR_INVALID_RULE); }
@@ -223,6 +289,8 @@ fn nat_validate(n: i64): i64 {
             var vr11_t, vr11_v = validate_comment(nat_v7(n));
             if (is_err_result(vr11_t) == 1) { return Err(vr11_v); }
         }
+    } else {
+        return nein_err(NEIN_ERR_INVALID_RULE);    # unknown NAT type (audit I-3)
     }
 
     return nein_ok();

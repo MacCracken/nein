@@ -84,6 +84,21 @@ This registers all six descriptors (with annotations + profiles) and binds
 handlers on the dispatcher. `nein_tools_register(dispatcher)` is the
 ungated variant.
 
+Since 1.8.2 each tool goes through bote's `dispatcher_register_tool`: the
+definition and its handler land under one registries write lock, and bote
+publishes `bote/tool/registered`, so its listen streams hear of the tools.
+Both functions return the number of tools bote **refused** (0 when all six
+registered; a refusal is logged with bote's reason). Check it:
+
+```
+if (nein_tools_register_gated(dispatcher, &host_firewall_gate) != 0) { /* fail startup */ }
+```
+
+Through 1.8.1 they returned 0 unconditionally, registered the definition and
+bound the handler in two separate writes (a call landing between them on a
+threaded server found the tool and no handler), and ignored a refusal while
+still binding the handler.
+
 ## The access-control gate
 
 `gate_fp` is `fn(tool_name: cstring, claims: i64) -> 1 permit / 0 deny`. The
@@ -96,10 +111,33 @@ or WebSocket auth is configured. A host running bote with auth can gate on
 it; one without auth, or one using the dispatch adapter below, gates on its
 own agent context. nein never reads `claims` itself.
 
+### ⚠ Two gate hazards (1.8.2 audit, contract changes planned for 1.9.0)
+
+- **Return exactly `1` or `0` — never a `Result`.** nein calls the gate through
+  a run-time function pointer (`fncall2`), and cyrius truncates a `Result`
+  returned that way to its tag with no diagnostic. A `Result` gate's `Err` has
+  tag `1` — which nein reads as **permit** — and its `Ok` reads as deny. A gate
+  written the way nein's own "Packed Result for fallible operations" guideline
+  suggests is therefore inverted. (daimon's gate returns `1` / `0`, so it is
+  unaffected.)
+- **There is one gate per process.** `_nein_gate` is a single variable shared
+  by both paths: a second `nein_tools_register_gated`, or
+  `nein_mcp_set_gate(0)`, replaces or removes the gate for every dispatcher
+  already registered. Install it once, at startup.
+
+1.9.0 replaces this contract (a permit value that is neither `0` nor `1`, and a
+gate per registration), together with daimon.
+
 Classify by side-effect using the tool table:
 
-- `nein_tool_read_only(i)` — `1` for `status` / `validate` / `list` / `diff`
-  (safe to expose broadly), `0` for `allow` / `deny` (live apply).
+- `nein_tool_read_only(i)` — `1` for `status` / `validate` / `list` / `diff`,
+  `0` for `allow` / `deny` (live apply). ⚠ "Read-only" means *does not change
+  the firewall*, not *harmless to expose*: `status`, `list` and `diff` run
+  `nft -a list ruleset` **as root** and return the live ruleset (`list` and
+  `diff` verbatim — set elements, allowed sources, comments), and each call
+  spawns a root nft. Only `validate` touches nothing. Do not expose the three
+  readers to unauthenticated or low-trust callers; a separate "reads the live
+  firewall" class is planned for 1.9.0.
 - `nein_tool_admin(i)` — `1` for the mutating tools (the `firewall_admin`
   profile). Expose read-only firewall tools to low-trust agents; gate the
   mutating set to privileged agents.
@@ -107,6 +145,16 @@ Classify by side-effect using the tool table:
 On the bote-Dispatcher path the same split is carried by bote
 `ToolAnnotations` (read-only vs destructive) and the `firewall` /
 `firewall_admin` profile tags, filterable via `tools/list?profile=`.
+
+## Arguments (1.8.2)
+
+Every tool now refuses arguments that are not one JSON object whose top-level
+keys are spelled plainly and appear once: a duplicate key, or a key written
+with an escape (`"\u0070ort"`), is an error. bote reads a key as what it
+decodes to and lets the first duplicate win, while most JSON parsers let the
+last win, so a host-side filter or an approval UI could be shown a different
+argument than nein acts on. `port` must be a plain integer 1–65535 (no sign,
+leading zero, fraction or exponent). Tool results are unchanged in shape.
 
 ## Signing (optional)
 

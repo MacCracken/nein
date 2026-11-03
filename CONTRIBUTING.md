@@ -15,19 +15,22 @@ Last refresh: **2026-08-21** (v1.6.10).
 
 ## Prerequisites
 
-- Cyrius toolchain ≥ **6.5.33** (pinned in `cyrius.cyml`). Install
-  via the canonical release:
+- The Cyrius toolchain at the version pinned in `cyrius.cyml`
+  (`[package].cyrius`, **6.7.18** as of 1.8.2). Install it the way CI does,
+  with the upstream installer keyed on the pin:
   ```sh
-  curl -sLO https://github.com/MacCracken/cyrius/releases/download/6.5.33/cyrius-6.5.33-x86_64-linux.tar.gz
-  tar xzf cyrius-6.5.33-x86_64-linux.tar.gz
-  # then copy bin/* and lib/* into ~/.cyrius/versions/6.5.33/
-  # and symlink ~/.cyrius/bin -> ~/.cyrius/versions/6.5.33/bin
+  CYRIUS_VERSION="$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')"
+  curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | \
+    CYRIUS_VERSION="$CYRIUS_VERSION" sh
   ```
+  (Through 1.8.1 this section described unpacking a release tarball into
+  `~/.cyrius/versions/<v>/` by hand; cyrius 6.7.7 refuses a tarball in that
+  layout.)
 - `nft` binary at the pinned default `/usr/sbin/nft` (override elsewhere
   at runtime via `nein_set_nft_path`) for any local apply-layer smoke
   testing. The library itself doesn't need it at compile time.
 
-CI installs the same version from the GitHub release URL — see
+CI runs the same installer with the same pin — see
 `.github/workflows/ci.yml`'s "Install Cyrius toolchain" step.
 
 ## Reproducing CI Locally
@@ -61,7 +64,7 @@ CYRIUS_DCE=1 cyrius build --aarch64 src/main.cyr build/nein-aarch64
 CYRIUS_TYPE_CHECK=1 cyrius build src/main.cyr build/nein-tc
 
 # Test + bench + fuzz
-cyrius tests                                      # all .tcyr, incl. integration
+cyrius test tests                                 # all .tcyr, incl. integration
 cyrius bench tests/nein.bcyr
 cyrius fuzz
 

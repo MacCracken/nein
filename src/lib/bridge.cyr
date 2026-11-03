@@ -64,6 +64,12 @@ fn pm_container_port(pm: i64): i64 { return load64(pm + 16); }
 fn pm_protocol(pm: i64): i64 { return load64(pm + 24); }
 
 fn pm_validate(pm: i64): i64 {
+    # Ports and protocol were never checked through 1.8.1 (audit B-7).
+    var proto = pm_protocol(pm);
+    if (proto != PROTO_TCP && proto != PROTO_UDP) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    var hp = pm_host_port(pm);
+    var cp = pm_container_port(pm);
+    if (hp < 1 || hp > 65535 || cp < 1 || cp > 65535) { return nein_err(NEIN_ERR_INVALID_RULE); }
     return validate_addr(pm_container_addr(pm));
 }
 
@@ -106,7 +112,13 @@ fn _pm_to_nat_rule(pm: i64): i64 {
 
 fn _pm_to_forward_rule(pm: i64): i64 {
     var r = rule_new(verdict_accept());
-    rule_add_match(r, match_dest_addr(pm_container_addr(pm)));
+    rule_add_match(r, _match_addr(pm_container_addr(pm), 1));
+    # Only traffic that came in through the published host port (1.8.2, audit
+    # B-1): without `ct status dnat` the container port was also reachable by
+    # routing straight to the container's address — verified live, a LAN
+    # client reached 172.17.1.2:80 with no DNAT involved. Docker 28 closed the
+    # same direct-routing path. A constant string, so MATCH_RAW is safe here.
+    rule_add_match(r, match_raw("ct status dnat"));
     rule_add_match(r, match_protocol(pm_protocol(pm)));
     rule_add_match(r, match_dport(pm_container_port(pm)));
     rule_set_comment(r, _pm_forward_comment(pm));
@@ -368,9 +380,82 @@ fn _bf_build_nat(bf: i64): i64 {
     return t;
 }
 
+# Isolation at layer 2 (1.8.2, audit B-5). The inet forward chain above only
+# sees ROUTED traffic. Containers on the same bridge reach each other by L2
+# switching, which never enters the inet forward hook unless br_netfilter is
+# loaded — so through 1.8.1 isolation groups did nothing on a single bridge
+# (verified live: tenantB reached an unmapped tenantA port). This table sits
+# on the bridge's own forward hook, which sees every frame switched between
+# its ports: IPv4 within a group is accepted, every other IPv4 or IPv6 frame
+# between ports of this bridge is dropped — the same intra-group-only policy
+# the inet chain states, enforced where the traffic actually flows. ARP,
+# traffic to the host and routed traffic (published ports) are untouched.
+fn _bf_bridge_match(cfg: i64): cstring {
+    var name = bridge_name(cfg);
+    var vn_t, vn_v = validate_iface(name);
+    # MATCH_RAW is not re-validated, so the name is checked here; an invalid
+    # one renders a token nft refuses rather than reaching nft text.
+    if (is_err_result(vn_t) == 1) { return "__nein_invalid_bridge__"; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "meta ibrname \"");
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, "\"");
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+fn _bf_build_iso(bf: i64): i64 {
+    var cfg = bf_config(bf);
+    var t = table_new(_bf_table_name(bridge_table_prefix(cfg), "_iso"), FAMILY_BRIDGE);
+    var forward = chain_base("forward", CHAIN_FILTER, HOOK_FORWARD, 0, POLICY_ACCEPT);
+    var br = _bf_bridge_match(cfg);
+    var groups = bf_isolation_groups(bf);
+    var glen = vec_len(groups);
+    var i = 0;
+    while (i < glen) {
+        var g = vec_get(groups, i);
+        var cidrs = iso_cidrs(g);
+        var clen = vec_len(cidrs);
+        if (clen > 0) {
+            var sname = _iso_set_name(iso_name(g));
+            var set = nft_set_new(sname, SET_IPV4_ADDR);
+            nft_set_add_flag(set, SETFLAG_INTERVAL);
+            var j = 0;
+            while (j < clen) {
+                nft_set_add_element(set, vec_get(cidrs, j));
+                j = j + 1;
+            }
+            table_add_set(t, set);
+            var r = rule_new(verdict_accept());
+            rule_add_match(r, match_raw(br));
+            rule_add_match(r, match_set_lookup("ip saddr", sname));
+            rule_add_match(r, match_set_lookup("ip daddr", sname));
+            rule_set_comment(r, _iso_comment(iso_name(g)));
+            chain_add_rule(forward, r);
+        }
+        i = i + 1;
+    }
+    var d4 = rule_new(verdict_drop());
+    rule_add_match(d4, match_raw(br));
+    rule_add_match(d4, match_raw("ether type ip"));
+    rule_set_comment(d4, "isolation: no IPv4 between groups");
+    chain_add_rule(forward, d4);
+    var d6 = rule_new(verdict_drop());
+    rule_add_match(d6, match_raw(br));
+    rule_add_match(d6, match_raw("ether type ip6"));
+    rule_set_comment(d6, "isolation: no IPv6 between containers");
+    chain_add_rule(forward, d6);
+    table_add_chain(t, forward);
+    return t;
+}
+
 fn bf_to_firewall(bf: i64): i64 {
     var fw = firewall_new();
     firewall_add_table(fw, _bf_build_filter(bf));
     firewall_add_table(fw, _bf_build_nat(bf));
+    if (vec_len(bf_isolation_groups(bf)) > 0) { firewall_add_table(fw, _bf_build_iso(bf)); }
     return fw;
 }

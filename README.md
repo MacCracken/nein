@@ -39,7 +39,7 @@ Consumers:
 | `engine`   | Multi-agent policy engine with dispatch chains and host restriction sets |
 | `config`   | String→enum dispatchers for TOML/JSON/CLI configuration sources |
 | `netns`    | Per-agent network namespace firewall builder (pairs with agnodrm netns apply) |
-| `apply`    | Execute rulesets via `nft -f -` (fork+pipe+execve); batch + incremental rule ops |
+| `apply`    | Execute rulesets via `nft -f -` (fork+execve, ruleset staged in a memfd, deadline); batch + incremental rule ops |
 | `inspect`  | Query live firewall state — `status()` returns tables + rule count + raw ruleset |
 | `diff`     | Live-rule diff + idempotent apply — converge the live ruleset onto a target plan with the minimal nft op set |
 | `sign`     | Ed25519-signed rulesets — sign the rendered nft body, verify at-rest tampering before apply (added 1.6.1) |
@@ -80,13 +80,12 @@ chain_add_rule(input, deny_source("10.99.0.0/16"));
 table_add_chain(t, input);
 firewall_add_table(fw, t);
 
-# Validate before rendering
-if (is_err_result(firewall_validate(fw)) == 1) {
-    # Input contained injection characters
-    return 1;
-}
-
-var out = firewall_render(fw);
+# Validate and render in one call. Err if any input would inject nft
+# syntax, or any enum / number is out of range. Prefer this to a bare
+# `firewall_render`, which does not validate (apply_firewall validates for
+# you; any other destination for the text does not).
+var rt, out = firewall_render_checked(fw);
+if (is_err_result(rt) == 1) { return 1; }
 ```
 
 ### Agent-to-agent policy
@@ -140,7 +139,8 @@ var yy4 = vec_new(); vec_push(yy4, "192.0.2.0/24");
 var yy6 = vec_new(); vec_push(yy6, "2001:db8::/32");
 geoip_block_country(bl, country_block_dual("YY", yy4, yy6));
 
-var out = firewall_render(geoip_to_firewall(bl));
+var gt, out = firewall_render_checked(geoip_to_firewall(bl));
+if (is_err_result(gt) == 1) { return 1; }
 ```
 
 ### Anonymous set matches
@@ -233,9 +233,9 @@ cyrius lib sync                        # sync declared stdlib subset from pinned
 cyrius deps                            # resolve git bundles into ./lib/
 cyrius build src/main.cyr build/nein   # compile (x86_64)
 cyrius build --aarch64 src/main.cyr build/nein-aarch64
-cyrius tests                           # all suites (754 unit + 18 integration assertions)
+cyrius test tests                      # all suites (870 unit + 18 integration assertions + an nft load test)
 cyrius bench tests/nein.bcyr           # run benchmarks (48 benchmarks)
-cyrius fuzz                            # 5 per-target fuzz drivers
+cyrius fuzz                            # 6 per-target fuzz drivers
 ```
 
 Dependencies do not auto-resolve — `cyrius lib sync` copies the declared

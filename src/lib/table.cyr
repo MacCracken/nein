@@ -20,7 +20,7 @@ fn _family_str(f: i64): cstring {
     if (f == FAMILY_ARP) { return "arp"; }
     if (f == FAMILY_BRIDGE) { return "bridge"; }
     if (f == FAMILY_NETDEV) { return "netdev"; }
-    return "inet";
+    return "__nein_invalid_family__";   # was a silent "inet" (audit I-3)
 }
 
 # ================================================================
@@ -48,7 +48,11 @@ fn define_validate(d: i64): i64 {
 
 fn define_render(d: i64): Str {
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "  define $");
+    # `define NAME = VALUE`, no '$' (1.8.2, audit I-6): the '$' belongs only
+    # to a REFERENCE (`ip saddr $lan`). Through 1.8.1 this rendered
+    # `define $lan = ...`, which nft rejects ("syntax error, unexpected '$'"),
+    # so any firewall with a define failed to apply as a whole.
+    str_builder_add_cstr(sb, "  define ");
     str_builder_add_cstr(sb, define_name(d));
     str_builder_add_cstr(sb, " = ");
     str_builder_add_cstr(sb, define_value(d));

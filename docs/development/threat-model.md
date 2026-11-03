@@ -1,18 +1,15 @@
 # Threat Model
 
-Last refresh: **2026-08-21** (v1.6.10 — T-4 rewritten and T-7 corrected after the P(-1) audit; T-1's ct-state row now names the validator that actually runs. Prior pass at v1.6.5 modeled the two 1.6.x
-security-relevant surfaces: added **T-9** (Ed25519 signed-ruleset
-trust / integrity, `sign.cyr` v1.6.1), **T-10** (MCP destructive-tool
-access control, `mcp.cyr` v1.6.0), and **T-11** (MCP tool-argument
-injection + output escaping). The prior pass brought the T-8 dep set +
-toolchain pin current; the v1.4.0 refresh hardened T-3 to a single
-pinned absolute path and added the integration test scaffold +
-inspect-parser hardening).
+Last refresh: **2026-11-03** (v1.8.2 — T-4 rewritten for the memfd apply path after the 2026-11-03 P(-1) audit; T-3's override is copied, not borrowed. Previously 2026-08-21, v1.6.10 — T-4 rewritten and T-7 corrected after that audit. Earlier passes added T-9 signed-ruleset trust (v1.6.1), T-10 MCP
+destructive-tool access control (v1.6.0) and T-11 MCP argument injection and
+output escaping; the v1.4.0 refresh hardened T-3 to a single pinned absolute
+path.)
 
 ## Scope
 
 nein renders nftables rulesets from typed Cyrius values and applies them
-by piping the rendered text to `nft -f -` via fork + pipe + execve. The
+by handing the rendered text to `nft -f -` via fork + execve, the
+ruleset staged in a memfd on nft's stdin (pipes until 1.8.2). The
 threat model covers:
 
 1. Inputs flowing from a caller into the rendered ruleset (injection)
@@ -95,6 +92,11 @@ rejects:
 - Non-absolute paths (anything not starting with `/`)
 - Paths longer than 256 bytes
 
+and, since 1.8.2, **copies** the accepted path into nein's own buffer
+(2026-11-03 audit S-10). Through 1.8.1 it kept the caller's pointer, so a path
+built in a stack buffer or a reused heap buffer later had execve run whatever
+bytes were there by then.
+
 The v1.1.1 security-scan CI gate continues to allowlist `src/lib/apply.cyr`
 for path literals; that exception is now narrower (one literal default
 plus the doc-comment block) but the gate still fails the build on any
@@ -120,48 +122,55 @@ nein's scope).
 descriptors, hang the parent, kill the parent, or let a failed apply be
 reported as a success.
 
-**Mitigation.** `_run_nft_stdin` and `_run_nft_capture` always close the
-unused pipe ends, drain stderr, and reap the child on every path
-including the short-write path.
+**Mitigation (rewritten at 1.8.2).** The apply layer uses no pipes. The
+whole ruleset is written to a close-on-exec memfd **before** the fork; nft's
+stdout goes to `/dev/null` and its stderr to a second memfd; the capture path
+reads nft's stdout from a memfd after it exits. Then:
 
-- **SIGPIPE is ignored** before the first write (`signal_ignore(13)`,
-  applied once and latched). Without it, writing to an `nft` that has
-  already exited raises SIGPIPE, whose default disposition **terminates
-  the whole calling process**. The write now returns `-EPIPE`, which is
-  treated as a hard error. Because this is process-wide state, it is
-  controllable: `nein_set_sigpipe_guard(0)` disables it for a host that
-  manages SIGPIPE itself.
-- **`sys_waitpid`'s return value is checked** in both helpers, with
-  `-EINTR` retried. An unchecked wait leaves `status` at 0, which
-  `WIFEXITED(0)==1` / `WEXITSTATUS(0)==0` decodes as a clean exit-zero
-  child — so a failed apply reported success.
-- **Short writes fail closed.** The write loop retries `-EINTR` and
-  compares `written` against the full length afterwards; a truncated
-  ruleset that happened to parse is no longer reported as applied.
-- **Child stdio redirection is guarded** — `_child_redirect` skips the
-  `dup2`/`close` pair when the source descriptor is already the target
-  (reachable on a daemonized host that closed fds 0/1/2), and checks the
-  `dup2` return rather than exec'ing with broken stdio.
-- On execve failure the child falls through to `sys_exit(127)`, which the
-  parent maps to `Err(NEIN_ERR_PERMISSION_DENIED)`.
+- **The child allocates nothing** between fork and execve — argv is built on
+  the parent's frame first. An `alloc()` there could inherit the allocator's
+  lock held by another thread of the host and spin forever (2026-11-03 audit
+  S-1, reproduced).
+- **Every descriptor nein opens is close-on-exec**, and the child closes
+  every other descriptor it inherited (`close_range`), so a process the host
+  forks concurrently cannot hold nft's input open, and host descriptors do
+  not leak into nft (S-2).
+- **A host that dies mid-write cannot hand nft a truncated batch** — nothing
+  is written after the fork (S-3).
+- **The child starts clean**: empty signal mask, SIGPIPE and SIGXFSZ at
+  `SIG_DFL`, `PR_SET_PDEATHSIG` so it dies with the host (S-9). Its stdin,
+  stdout and stderr are never the host's.
+- **The parent waits with a deadline**: a pidfd, polled for 60 s; a wedged
+  nft is SIGKILLed and the call fails closed (closes the old "no timeout"
+  residual). `sys_waitpid`'s return value is checked, `-EINTR` retried — an
+  unchecked wait decoded a failed apply as exit 0 (1.6.10).
+- **A ruleset containing NUL is refused**: nft stops parsing at the first
+  NUL and exits 0, so the prefix would be applied and reported as success.
+- **Descriptors land on 0 / 1 / 2 through copies above fd 10**, so a source
+  already sitting on 0-2 (a daemonized host closed them) is never clobbered
+  by another's `dup2` — the general form of the 1.6.10 `_child_redirect` guard.
+- On execve failure the child exits 127, which the parent maps to
+  `Err(NEIN_ERR_PERMISSION_DENIED)`; nft's stderr is logged on any failure.
+- The SIGPIPE guard (`signal_ignore(13)`, 1.6.10) is no longer load-bearing —
+  nein writes to no pipe — and is kept only so a host relying on its
+  process-wide effect sees no change; `nein_set_sigpipe_guard(0)` disables it.
 
-**Corrected at v1.6.10.** Through v1.6.9 this section claimed the parent
-"observes that exit status and returns `Err(ERR_PERMISSION_DENIED)`" on
-execve failure. That was **false**: the parent was killed by SIGPIPE
-before it ever reached `waitpid`. Reproduced as exit 141 by the
-2026-08-21 P(-1) audit; see
-[`../audit/2026-08-21-audit.md`](../audit/2026-08-21-audit.md) H-7. The
-four bullets above are what the mitigation actually consists of now.
+**History.** Through v1.6.9 this section claimed the parent observes the
+child's exit on execve failure; it was killed by SIGPIPE first (2026-08-21
+audit H-7). Through 1.8.1 it described the pipe design and accepted two
+residuals — no timeout, and a pipe-ordering deadlock — both closed by the
+memfd design (2026-11-03 audit S-4).
 
-**Residual risk.** Two, both accepted:
+**Residual risk.**
 
-- A pathological `nft` that never terminates blocks the parent's
-  `sys_waitpid`. No timeout is set. Low priority — nft is not adversarial.
-- The whole ruleset is written to stdin before stderr is drained, so both
-  pipes can in principle fill and deadlock. The audit verified this is
-  **not reachable with real nft**, which would have to emit more than
-  64 KiB to stderr. Fixing it needs a poll loop over both descriptors;
-  deferred until something makes it reachable.
+- A caller whose host sets SIGCHLD to `SIG_IGN`, or reaps children itself,
+  can see `waitpid` fail after nft committed; apply then returns `Err` for a
+  ruleset that is in place, and a caller that retries an *additive* apply
+  duplicates rules. Re-diff (`nein_diff`) rather than re-apply; a distinct
+  "outcome unknown" result is planned for 1.9.0 (audit S-8).
+- `close_range` needs Linux 5.9 and `pidfd_open` 5.3. On older kernels the
+  first is skipped (nein's own descriptors are still close-on-exec) and the
+  wait falls back to an unbounded `waitpid`.
 
 ### T-5 — denial of service via rule explosion
 
@@ -235,7 +244,7 @@ out by design and would not fail the build. Only collisions involving a
 git-dependency release could inject malicious code into the nein binary.
 
 **Mitigation.**
-- Cyrius version is pinned in `cyrius.cyml` (`cyrius = "6.5.33"`), and CI
+- Cyrius version is pinned in `cyrius.cyml` (`cyrius = "6.7.18"` as of 1.8.2), and CI
   passes that pin to the installer — the toolchain *payload* is
   version-pinned, never `latest`.
 

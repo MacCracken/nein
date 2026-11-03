@@ -2,9 +2,16 @@
 #
 # Builds a Firewall tailored for agent network namespaces (input/output
 # chains, established tracking, loopback, optional DNS). The actual
-# apply-to-namespace side is provided by agnosys's netns.cyr:
-# `netns_apply_nftables_ruleset(handle, ruleset)` — consumers vendor
-# agnosys's netns module directly and pass `firewall_render(fw)` into it.
+# apply-to-namespace side lives outside nein:
+# `netns_apply_nftables_ruleset(handle, ruleset)` (agnosys, now agnodrm) —
+# consumers vendor that module and hand it the ruleset text.
+#
+# ⚠ Hand it `firewall_render_checked(nsf_build(nsf))`, NOT `firewall_render`
+# (1.8.2, audit I-5 / S-7). This header used to say `firewall_render(fw)`,
+# which never validates — and nothing else on that path does either, so an
+# agent name such as `agent7" accept ; flush ruleset ; #` reached nft text and
+# let the agent flush its own namespace firewall. The checked render returns
+# the validation Err instead.
 #
 # This module stays lean (builder only) so the core nein library doesn't
 # transitively drag in agnosys's full netns implementation.
@@ -183,7 +190,7 @@ fn nsf_build(nsf: i64): i64 {
                 var r = rule_new(verdict_accept());
                 rule_add_match(r, match_protocol(ps_protocol(ps)));
                 rule_add_match(r, match_dport(ps_port(ps)));
-                rule_add_match(r, match_dest_addr(host));
+                rule_add_match(r, _match_addr(host, 1));
                 rule_set_comment(r, _nsf_outbound_host_comment(agent_name, ps_protocol(ps), ps_port(ps), host));
                 chain_add_rule(output, r);
                 j = j + 1;

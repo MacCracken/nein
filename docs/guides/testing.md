@@ -1,11 +1,11 @@
 # Testing Guide
 
-Last refresh: **2026-08-21** (v1.6.10). Replaces the Rust-era guide that
+Last refresh: **2026-11-03** (v1.8.2). Replaces the Rust-era guide that
 shipped with the v1.0.0 port.
 
 ## Unit Tests
 
-The full unit-test suite lives in `tests/nein.tcyr` — 754 assertions
+The full unit-test suite lives in `tests/nein.tcyr` — 870 assertions
 across 42 test groups (validators, rule rendering, NAT, sets/maps,
 chains, tables, firewall validation, builders, policy, geoip, mesh,
 bridge, engine, config, netns, inspect, diff, sign, mcp).
@@ -32,9 +32,18 @@ Apply-layer integration tests need:
   runtime via `nein_set_nft_path`; PATH is **not** consulted — see
   threat model T-3)
 
-The integration harness ships in `tests/integration/*.tcyr` — 18 tests
-(6 `apply_smoke` + 10 `mcp_consume_smoke`), run via
-`cyrius test tests/integration/*.tcyr`. On non-permissive hosts the
+The integration harness ships in `tests/integration/*.tcyr` — 18 assertions
+(8 `apply_smoke` + 10 `mcp_consume_smoke`) plus `nft_load` (1.8.2), run via
+`cyrius test tests/integration`.
+
+**`nft_load` has real nft parse every builder's output** (`nft -c -f`, as root
+inside a throwaway user + network namespace via `unshare -rn`, so it needs no
+privilege and touches no host ruleset). Where that cannot run — no nft, or
+unprivileged user namespaces disabled, as on GitHub's Ubuntu runners — it
+prints SKIP and passes, so **run it locally before every release.** It exists
+because every builder test checked substrings of rendered text, and the mesh
+ruleset nft has always refused shipped green (2026-11-03 audit B-4); on its
+first run it found two more renders nft refuses. On non-permissive hosts the
 apply assertions fall through the permission-denied class; the
 pure-function assertions still run. You can also run a smoke test
 manually:
@@ -122,8 +131,9 @@ every result to whole nanoseconds.
 
 ## Fuzzing
 
-The fuzz harness is 5 per-target drivers in `fuzz/*.fcyr` (`validate`,
-`config_parse`, `rule`, `nat`, `firewall`), auto-discovered and run via:
+The fuzz harness is 6 per-target drivers in `fuzz/*.fcyr` (`validate`,
+`config_parse`, `rule`, `nat`, `firewall`, and since 1.8.2 `diff_parse_live`),
+auto-discovered and run via:
 
 ```sh
 cyrius fuzz
@@ -132,9 +142,13 @@ cyrius fuzz
 `cyrius fuzz` builds each driver, runs it, and exits 0 only if every
 driver exits 0; crash attribution is by driver name.
 
-CI runs a bare `cyrius fuzz` — no iteration count and no timeout. The
-drivers are fixed deterministic corpora, not iterating fuzzers, so a run is
-the same length every time. (Through v1.6.9 this section claimed "500
+CI runs a bare `cyrius fuzz` — no iteration count and no timeout. The first
+five drivers are fixed deterministic corpora; `diff_parse_live` is a seeded
+mutation fuzzer (real nft 1.1.7 listings, 20,000 deterministic mutations,
+under a second) with strict semantic oracles — golden parses of every seed,
+header-backed attribution, valid live names, no op on a table the target
+does not contain. Run it under `cyrius fuzz --bounds` and `--poison` too; it
+is clean in both. (Through v1.6.9 this section claimed "500
 iterations under a 10-second wall clock timeout per file"; neither the
 iteration count nor the timeout ever existed.)
 
@@ -179,7 +193,7 @@ cyrius capacity --check src/main.cyr
 CYRIUS_DCE=1 cyrius build src/main.cyr build/nein
 CYRIUS_DCE=1 cyrius build --aarch64 src/main.cyr build/nein-aarch64
 # Test + bench + fuzz
-cyrius tests && cyrius bench tests/nein.bcyr && cyrius fuzz
+cyrius test tests && cyrius bench tests/nein.bcyr && cyrius fuzz
 # Surface, coverage, policy, regression
 ./scripts/api-surface.sh check
 ./scripts/doc-coverage.sh

@@ -30,14 +30,68 @@ fn _set_type_str(t: i64): cstring {
     if (t == SET_INET_SERVICE) { return "inet_service"; }
     if (t == SET_INET_PROTO) { return "inet_proto"; }
     if (t == SET_IFNAME) { return "ifname"; }
-    return "ipv4_addr";
+    # Unknown types rendered as "ipv4_addr" through 1.8.1 — a silent default
+    # (audit I-3). Validation refuses them; an unvalidated render fails closed.
+    return "__nein_invalid_set_type__";
 }
 
 fn _set_flag_str(f: i64): cstring {
     if (f == SETFLAG_CONSTANT) { return "constant"; }
     if (f == SETFLAG_INTERVAL) { return "interval"; }
     if (f == SETFLAG_TIMEOUT) { return "timeout"; }
-    return "constant";
+    return "__nein_invalid_set_flag__";
+}
+
+# One set element or map key, checked against the set's KEY TYPE (1.8.2,
+# audit I-1). Through 1.8.1 elements and keys only had to pass
+# validate_nft_element, which allows ',' ':' and spaces, so one map key
+# "22 : accept, 23" rendered `elements = { 22 : accept, 23 : drop }` — a
+# key that carried its own extra entries and verdicts, applied by nft. Each
+# check below admits exactly one value of the key type and nothing else.
+fn _set_value_ok(stype: i64, v: cstring): i64 {
+    if (v == 0) { return 0; }
+    var len = strlen(v);
+    if (len == 0 || len > 100) { return 0; }
+    if (stype == SET_IPV4_ADDR || stype == SET_IPV6_ADDR) {
+        var want = 4;
+        if (stype == SET_IPV6_ADDR) { want = 6; }
+        var dash = memchr(v, 45, len);
+        if (dash < 0) {
+            if (_addr_family(v) == want) { return 1; }
+            return 0;
+        }
+        # An address range "a-b" (interval sets): each end one address.
+        var lo = alloc(dash + 1);
+        memcpy(lo, v, dash);
+        store8(lo + dash, 0);
+        if (_addr_family(lo) != want) { return 0; }
+        if (_addr_family(v + dash + 1) != want) { return 0; }
+        if (memchr(lo, 47, dash) >= 0) { return 0; }        # no prefix inside a range
+        return 1;
+    }
+    if (stype == SET_INET_SERVICE) {
+        if (_is_port_token(v) == 1) { return 1; }
+        # or a service name nft resolves from /etc/services ("ssh")
+        var c = load8(v);
+        if (c < 97 || c > 122) { return 0; }
+        var vs_t, vs_v = validate_identifier(v);
+        if (is_err_result(vs_t) == 1) { return 0; }
+        return 1;
+    }
+    if (stype == SET_INET_PROTO) {
+        if (_parse_dec(v, 0, len, 3, 255) == len) { return 1; }
+        var c2 = load8(v);
+        if (c2 < 97 || c2 > 122) { return 0; }
+        var vp_t, vp_v = validate_identifier(v);
+        if (is_err_result(vp_t) == 1) { return 0; }
+        return 1;
+    }
+    if (stype == SET_IFNAME) {
+        var vi_t, vi_v = validate_iface(v);
+        if (is_err_result(vi_t) == 1) { return 0; }
+        return 1;
+    }
+    return 0;
 }
 
 # ================================================================
@@ -82,12 +136,20 @@ fn nft_set_add_elements(s: i64, elems: i64): i64 {
 fn nft_set_validate(s: i64): i64 {
     var vr1_t, vr1_v = validate_identifier(nft_set_name(s));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var stype = nft_set_type(s);
+    if (stype < SET_IPV4_ADDR || stype > SET_IFNAME) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    var flags = nft_set_flags(s);
+    var fi = 0;
+    while (fi < vec_len(flags)) {
+        var f = vec_get(flags, fi);
+        if (f < SETFLAG_CONSTANT || f > SETFLAG_TIMEOUT) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        fi = fi + 1;
+    }
     var elems = nft_set_elements(s);
     var elen = vec_len(elems);
     var i = 0;
     while (i < elen) {
-        var vr2_t, vr2_v = validate_nft_element(vec_get(elems, i));
-        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
+        if (_set_value_ok(stype, vec_get(elems, i)) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
         i = i + 1;
     }
     return nein_ok();
@@ -165,14 +227,17 @@ fn nft_map_add_entry(m: i64, key: cstring, vtype: i64, vval: i64): i64 {
 fn nft_map_validate(m: i64): i64 {
     var vr1_t, vr1_v = validate_identifier(nft_map_name(m));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    var ktype = nft_map_key_type(m);
+    if (ktype < SET_IPV4_ADDR || ktype > SET_IFNAME) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var entries = nft_map_entries(m);
     var elen = vec_len(entries);
     var i = 0;
     while (i < elen) {
         var e = vec_get(entries, i);
-        var vr2_t, vr2_v = validate_nft_element(load64(e));
-        if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
-        if (load64(e + 8) == MAPV_JUMP) {
+        if (_set_value_ok(ktype, load64(e)) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        var mv = load64(e + 8);
+        if (mv < MAPV_ACCEPT || mv > MAPV_JUMP) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        if (mv == MAPV_JUMP) {
             var vr3_t, vr3_v = validate_identifier(load64(e + 16));
             if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
         }

@@ -1,0 +1,222 @@
+# Integration: every builder's ruleset LOADS in real nft (1.8.2).
+#
+# Added by the 2026-11-03 P(-1) audit (docs/audit/2026-11-03-audit.md, B-4).
+# The mesh ruleset had rendered `... redirect to :15001 accept` since it was
+# written — nft refuses a verdict after a terminal statement — so
+# mesh_to_firewall could never be applied, and nothing noticed: every builder
+# test checked substrings of the rendered text, and the only load test applied
+# basic_host_firewall. The same audit found five more renders nft rejects
+# (`define $x`, `icmp accept`, `dnat to` in an inet table, `log level + group`,
+# `limit ... burst 0`). This file renders each builder through
+# firewall_render_checked and has nft PARSE it (`nft -c -f`, check mode).
+#
+# Runs nft as root inside a throwaway user + network namespace
+# (`unshare -rn`), so it needs no privilege and touches no host ruleset. Where
+# that cannot run — no nft, or unprivileged user namespaces disabled (Ubuntu's
+# AppArmor default on GitHub runners) — it reports SKIP and passes; run it
+# locally before a release.
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
+include "src/lib/policy.cyr"
+include "src/lib/geoip.cyr"
+include "src/lib/mesh.cyr"
+include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
+include "src/lib/apply.cyr"
+include "src/lib/inspect.cyr"
+
+var _nl_nft = "/usr/sbin/nft";
+var _nl_unshare = "/usr/bin/unshare";
+var _nl_dir = "/tmp/nein-nft-load";
+var _nl_passed = 0;
+var _nl_failed = 0;
+
+fn _nl_run_check(path: cstring): i64 {
+    var args = vec_new();
+    vec_push(args, _nl_unshare);
+    vec_push(args, "-rn");
+    vec_push(args, _nl_nft);
+    vec_push(args, "-c");
+    vec_push(args, "-f");
+    vec_push(args, path);
+    return exec_vec(args);
+}
+
+# 1 when nft can be driven here: both binaries exist and an empty ruleset
+# checks clean inside a user namespace.
+fn _nl_available(): i64 {
+    if (sys_access(_nl_unshare, 1) != 0) { return 0; }
+    if (sys_access(_nl_nft, 1) != 0) {
+        _nl_nft = "/usr/bin/nft";
+        if (sys_access(_nl_nft, 1) != 0) { return 0; }
+    }
+    # nft refuses /dev/null ("Not a regular file"), so probe with an empty file.
+    sys_mkdir(_nl_dir, 448);
+    var probe = "/tmp/nein-nft-load/probe.nft";
+    var fd = sys_open(probe, 577, 420);
+    if (fd < 0) { return 0; }
+    sys_close(fd);
+    if (_nl_run_check(probe) != 0) { return 0; }
+    return 1;
+}
+
+fn _nl_load(name: cstring, fw: i64): i64 {
+    var rt, rv = firewall_render_checked(fw);
+    if (is_err_result(rt) == 1) {
+        print("  FAIL: ", 8); print(name, strlen(name)); println(" — did not validate");
+        _nl_failed = _nl_failed + 1;
+        return 0;
+    }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, _nl_dir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, ".nft");
+    var path = str_cstr(str_builder_build(sb));
+    var fd = sys_open(path, 577, 420);              # O_WRONLY|O_CREAT|O_TRUNC, 0644
+    sys_write(fd, str_data(rv), str_len(rv));
+    sys_close(fd);
+    if (_nl_run_check(path) != 0) {
+        print("  FAIL: ", 8); print(name, strlen(name)); print(" — nft refused ", 15); println(path);
+        _nl_failed = _nl_failed + 1;
+        return 0;
+    }
+    _nl_passed = _nl_passed + 1;
+    return 1;
+}
+
+fn _nl_bridge(): i64 {
+    var bf = bridge_firewall_new(bridge_config_new("br0", "172.17.0.0/16", "eth0"));
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.1.5", 80));
+    var a = vec_new(); vec_push(a, "172.17.1.0/24");
+    var b = vec_new(); vec_push(b, "172.17.2.0/24");
+    bf_add_isolation_group(bf, isolation_group_new("tenantA", a));
+    bf_add_isolation_group(bf, isolation_group_new("tenantB", b));
+    return bf_to_firewall(bf);
+}
+
+fn _nl_engine(): i64 {
+    var pe = policy_engine_new();
+    var a = agent_policy_new("svc-a", "10.0.0.1");
+    ap_allow_inbound(a, ps_tcp(8080));
+    var b = agent_policy_new("svc-6", "fd00::6");
+    ap_allow_outbound(b, ps_tcp(443));
+    ap_allow_outbound_host(b, "2001:db8::/32");
+    pe_add_agent(pe, a);
+    pe_add_agent(pe, b);
+    return pe_to_firewall(pe);
+}
+
+fn _nl_geoip(): i64 {
+    var bl = geoip_new();
+    var xx = vec_new(); vec_push(xx, "198.51.100.0/24");
+    geoip_block_country(bl, country_block_v4("XX", xx));
+    var y4 = vec_new(); vec_push(y4, "192.0.2.0/24");
+    var y6 = vec_new(); vec_push(y6, "2001:db8::/32");
+    geoip_block_country(bl, country_block_dual("YY", y4, y6));
+    return geoip_to_firewall(bl);
+}
+
+fn _nl_policy(): i64 {
+    var fw = firewall_new();
+    var t = table_new("pol", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_ACCEPT);
+    var rules = policy_to_rules(agent_to_agent("a-to-b", "10.0.0.1", "10.0.0.2", PROTO_TCP, 8090));
+    var i = 0;
+    while (i < vec_len(rules)) { chain_add_rule(c, vec_get(rules, i)); i = i + 1; }
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+    return fw;
+}
+
+fn _nl_netns(): i64 {
+    var nsf = namespace_firewall_new("agent1");
+    nsf_allow_inbound(nsf, ps_tcp(8080));
+    nsf_allow_outbound(nsf, ps_tcp(443));
+    return nsf_build(nsf);
+}
+
+# NAT: published port, shifted range (port map), SNAT, masquerade, redirect —
+# in an inet table, which needs the family-qualified `dnat ip to` form.
+fn _nl_nat(): i64 {
+    var fw = firewall_new();
+    var t = table_new("natx", FAMILY_INET);
+    var pre = chain_base("prerouting", CHAIN_NAT, HOOK_PREROUTING, 0 - 100, POLICY_ACCEPT);
+    chain_add_nat_rule(pre, port_forward(8080, "172.17.0.2", 80));
+    chain_add_nat_rule(pre, port_range_forward(9000, 9010, "172.17.0.3", 10000));
+    chain_add_nat_rule(pre, nat_dnat(PROTO_TCP, 8443, "fd00::2", 443, 0));
+    chain_add_nat_rule(pre, nat_redirect(PROTO_TCP, 80, 3128, 0));
+    var post = chain_base("postrouting", CHAIN_NAT, HOOK_POSTROUTING, 100, POLICY_ACCEPT);
+    chain_add_nat_rule(post, nat_snat("10.0.0.0/8", "192.0.2.1", 0));
+    chain_add_nat_rule(post, container_masquerade("172.17.0.0/16", "eth0"));
+    table_add_chain(t, pre);
+    table_add_chain(t, post);
+    firewall_add_table(fw, t);
+    return fw;
+}
+
+# Rule shapes that rendered invalid nft through 1.8.1.
+fn _nl_shapes(): i64 {
+    var fw = firewall_new();
+    var t = table_new("shapes", FAMILY_INET);
+    table_add_define(t, define_new("lan", "10.0.0.0/8"));
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(c, allow_established());
+    var r1 = rule_new(verdict_accept());
+    rule_add_match(r1, match_protocol(PROTO_ICMP));            # was `icmp accept`
+    chain_add_rule(c, r1);
+    var r2 = rule_new(verdict_accept());
+    rule_add_match(r2, match_dport(53));                       # was `dport 53 accept`
+    chain_add_rule(c, r2);
+    var r3 = rule_new(verdict_log("NEIN_DROP: "));
+    rule_add_match(r3, match_protocol(PROTO_TCP));             # was `tcp log prefix ...`
+    chain_add_rule(c, r3);
+    var r4 = rule_new(verdict_accept());
+    rule_add_match(r4, match_iif("lo"));
+    chain_add_rule(c, r4);
+    var r5 = rule_new(verdict_drop());
+    rule_add_match(r5, match_limit(10, RATE_SECOND, 5));
+    chain_add_rule(c, r5);
+    chain_add_rule(c, deny_source("2001:db8::bad"));
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+    return fw;
+}
+
+fn main() {
+    alloc_init();
+    if (_nl_available() == 0) {
+        println("integration nft_load: SKIP — nft or unprivileged user namespaces unavailable here");
+        return 0;
+    }
+    _nl_load("basic_host", basic_host_firewall());
+    _nl_load("bridge", _nl_bridge());
+    _nl_load("engine", _nl_engine());
+    var m = mesh_envoy();
+    _nl_load("mesh", mesh_to_firewall(m));
+    _nl_load("geoip", _nl_geoip());
+    _nl_load("policy", _nl_policy());
+    _nl_load("netns", _nl_netns());
+    _nl_load("nat", _nl_nat());
+    _nl_load("shapes", _nl_shapes());
+    print("integration nft_load: ", 22);
+    fmt_int(_nl_passed);
+    print(" loaded, ", 9);
+    fmt_int(_nl_failed);
+    println(" refused");
+    if (_nl_failed != 0) { return 1; }
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

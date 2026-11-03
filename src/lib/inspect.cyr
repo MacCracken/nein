@@ -93,10 +93,11 @@ enum BlockKind {
     BLOCK_FLOWTABLE = 5;
     BLOCK_CT_TIMEOUT = 6;
     BLOCK_OTHER = 7;
+    BLOCK_ANON = 8;      # 1.8.2: an anonymous chain inside a rule (`jump {` ... `} # handle N`)
 }
 
-# Classify the opening line of a block. Returns BLOCK_NONE if the line
-# doesn't open a block.
+# Classify the opening line of a block by its first word, once
+# `_line_opens_block` has established that it opens one.
 fn _classify_block_open(trimmed: cstring): i64 {
     if (_cstr_starts_with(trimmed, "table ") == 1) { return BLOCK_TABLE; }
     if (_cstr_starts_with(trimmed, "chain ") == 1) { return BLOCK_CHAIN; }
@@ -104,19 +105,63 @@ fn _classify_block_open(trimmed: cstring): i64 {
     if (_cstr_starts_with(trimmed, "map ") == 1) { return BLOCK_MAP; }
     if (_cstr_starts_with(trimmed, "flowtable ") == 1) { return BLOCK_FLOWTABLE; }
     if (_cstr_starts_with(trimmed, "ct timeout ") == 1) { return BLOCK_CT_TIMEOUT; }
-    # Remaining table-level block openers nft can emit (1.6.9). Before this,
-    # an unrecognised opener pushed nothing while its closing `}` still
-    # popped, so the brace depth fell to 0 *inside* the table — which zeroed
-    # the current family/table and fed NULL pointers to streq(), segfaulting
-    # the caller. Reproduced with a `counter` block; nft emits all of these.
-    if (_cstr_starts_with(trimmed, "counter ") == 1) { return BLOCK_OTHER; }
-    if (_cstr_starts_with(trimmed, "quota ") == 1) { return BLOCK_OTHER; }
-    if (_cstr_starts_with(trimmed, "limit ") == 1) { return BLOCK_OTHER; }
-    if (_cstr_starts_with(trimmed, "synproxy ") == 1) { return BLOCK_OTHER; }
-    if (_cstr_starts_with(trimmed, "secmark ") == 1) { return BLOCK_OTHER; }
-    if (_cstr_starts_with(trimmed, "ct helper ") == 1) { return BLOCK_OTHER; }
-    if (_cstr_starts_with(trimmed, "ct expectation ") == 1) { return BLOCK_OTHER; }
-    return BLOCK_NONE;
+    # counter / quota / limit / synproxy / secmark / ct helper /
+    # ct expectation / tunnel, and whatever object nft adds next.
+    return BLOCK_OTHER;
+}
+
+# 1 when the line ends in "{" — ignoring a trailing ` # handle N`, which nft -a
+# prints after every block opener.
+fn _line_ends_open(trimmed: cstring): i64 {
+    var len = strlen(trimmed);
+    var end = len;
+    var mk = " # handle ";
+    var ml = strlen(mk);
+    var k = 0;
+    while (k + ml <= len) {
+        if (memeq(trimmed + k, mk, ml) == 1) { end = k; }
+        k = k + 1;
+    }
+    while (end > 0 && load8(trimmed + end - 1) == 32) { end = end - 1; }
+    if (end > 0 && load8(trimmed + end - 1) == 123) { return 1; }
+    return 0;
+}
+
+# The kind of block this line opens in the current context, or BLOCK_NONE
+# (1.8.2, audit P-2 / P-7). Through 1.8.1 a line opened a block whenever it
+# STARTED with an opener word, at any depth — so a rule beginning
+# `counter packets 0 bytes 0 accept`, `limit rate ...` or `ct helper set ...`
+# (nein renders all three itself) opened a phantom block: that rule and every
+# later rule in its chain vanished from the parse, nein_diff appended the
+# target on top on every run, and the 1.6.10 ordering fix (audit H-5) became
+# append-only again. A block now opens only where one can: `table` at the top
+# level, any object directly inside a table, and a nested brace inside a
+# non-chain object. Inside a chain a line ending in "{" is a RULE that holds
+# an anonymous chain (BLOCK_ANON), which the caller consumes whole.
+fn _line_opens_block(trimmed: cstring, current_block: i64): i64 {
+    if (_line_ends_open(trimmed) == 0) { return BLOCK_NONE; }
+    if (current_block == BLOCK_NONE) {
+        if (_cstr_starts_with(trimmed, "table ") == 1) { return BLOCK_TABLE; }
+        return BLOCK_OTHER;
+    }
+    if (current_block == BLOCK_TABLE) { return _classify_block_open(trimmed); }
+    if (current_block == BLOCK_CHAIN || current_block == BLOCK_ANON) { return BLOCK_ANON; }
+    return BLOCK_OTHER;
+}
+
+# A block close: "}" alone, or "} # handle N" (an anonymous chain's end).
+fn _line_closes_block(trimmed: cstring): i64 {
+    if (load8(trimmed) != 125) { return 0; }
+    if (load8(trimmed + 1) == 0) { return 1; }
+    if (_cstr_starts_with(trimmed, "} # handle ") == 1) { return 1; }
+    return 0;
+}
+
+# nft prints a chain's comment on its own line inside the chain:
+# `comment "managed by nein"`. It is not a rule (audit P-3).
+fn _line_is_chain_comment(trimmed: cstring): i64 {
+    if (_cstr_starts_with(trimmed, "comment \"") == 1) { return 1; }
+    return 0;
 }
 
 # Parse the raw ruleset Str, populating:
@@ -151,30 +196,35 @@ fn _parse_ruleset(raw_str: Str, tables_vec: i64): i64 {
                 if (tlen > 0) {
                     var current_block = load64(&block_stack + bs_depth * 8);
 
-                    if (_cstr_starts_with(trimmed, "table ") == 1) {
-                        vec_push(tables_vec, _strip_open_brace(trimmed));
-                        if (bs_depth < 15) {
-                            bs_depth = bs_depth + 1;
-                            store64(&block_stack + bs_depth * 8, BLOCK_TABLE);
-                        }
-                    } elif (streq(trimmed, "}") == 1) {
+                    var opens = _line_opens_block(trimmed, current_block);
+                    if (_line_closes_block(trimmed) == 1) {
                         # Block close. Pop the stack if we have anything.
                         if (bs_depth > 0) { bs_depth = bs_depth - 1; }
-                    } elif (_classify_block_open(trimmed) != BLOCK_NONE) {
-                        # Open inner block.
-                        var kind = _classify_block_open(trimmed);
+                    } elif (opens == BLOCK_ANON) {
+                        # A rule holding an anonymous chain is ONE rule; its
+                        # inner lines are swallowed until the matching close.
+                        if (current_block == BLOCK_CHAIN) { rule_count = rule_count + 1; }
                         if (bs_depth < 15) {
                             bs_depth = bs_depth + 1;
-                            store64(&block_stack + bs_depth * 8, kind);
+                            store64(&block_stack + bs_depth * 8, BLOCK_ANON);
+                        }
+                    } elif (opens != BLOCK_NONE) {
+                        if (opens == BLOCK_TABLE) { vec_push(tables_vec, _strip_open_brace(trimmed)); }
+                        if (bs_depth < 15) {
+                            bs_depth = bs_depth + 1;
+                            store64(&block_stack + bs_depth * 8, opens);
                         }
                     } elif (current_block == BLOCK_CHAIN) {
                         # Inside a chain: count only real rule lines.
-                        # Skip the `type … hook … priority …; policy …;` header
-                        # and any `# handle N` annotations.
+                        # Skip the `type … hook … priority …; policy …;` header,
+                        # the chain's own `comment "…"` line, and any
+                        # `# handle N` annotations.
                         if (_cstr_starts_with(trimmed, "type ") == 1) {
                             # not a rule
                         } elif (_cstr_starts_with(trimmed, "policy ") == 1) {
                             # not a rule
+                        } elif (_line_is_chain_comment(trimmed) == 1) {
+                            # the chain's comment, not a rule (audit P-3)
                         } elif (load8(trimmed) == 35) {   # '#'
                             # comment / handle annotation
                         } else {

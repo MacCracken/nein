@@ -38,6 +38,124 @@
 # place instead of six.
 fn _mcp_sb_cstr(sb): cstring { return str_data(str_builder_build(sb)); }
 
+# ================================================================
+# Argument shape (1.8.2, audit M-1 / M-5)
+# ================================================================
+#
+# bote reads a JSON key as what it DECODES to and lets the FIRST occurrence of
+# a duplicated key win; a standard JSON parser (JSON.parse, Python json)
+# lets the LAST win. So `{"port":22,"port":80}` — or `{"port":80,"\u0070ort":22}`
+# — showed a human approval UI or a host-side argument filter port 80 while
+# nein opened 22. Arguments are refused unless they are one JSON object whose
+# top-level keys are spelled plainly and appear once, which leaves the two
+# readings nothing to disagree about.
+
+fn _mcp_ws(buf: cstring, len: i64, i: i64): i64 {
+    while (i < len) {
+        var c = load8(buf + i);
+        if (c != 32 && c != 9 && c != 10 && c != 13) { return i; }
+        i = i + 1;
+    }
+    return i;
+}
+
+# Index just past the JSON value at buf[i] (leading whitespace skipped), or -1.
+# String-aware: braces and quotes inside a string are text, and an escaped
+# quote does not end it — the property the old brace counter in nein_diff
+# lacked (audit M-5).
+fn _mcp_skip_value(buf: cstring, len: i64, i: i64): i64 {
+    i = _mcp_ws(buf, len, i);
+    if (i >= len) { return 0 - 1; }
+    var c = load8(buf + i);
+    if (c == 34) {
+        i = i + 1;
+        while (i < len) {
+            var sc = load8(buf + i);
+            if (sc == 92) { i = i + 2; }
+            elif (sc == 34) { return i + 1; }
+            else { i = i + 1; }
+        }
+        return 0 - 1;
+    }
+    if (c == 123 || c == 91) {
+        var depth = 0;
+        while (i < len) {
+            var cc = load8(buf + i);
+            if (cc == 34) {
+                var e = _mcp_skip_value(buf, len, i);
+                if (e < 0) { return 0 - 1; }
+                i = e;
+            } else {
+                if (cc == 123 || cc == 91) { depth = depth + 1; }
+                elif (cc == 125 || cc == 93) {
+                    depth = depth - 1;
+                    if (depth == 0) { return i + 1; }
+                }
+                i = i + 1;
+            }
+        }
+        return 0 - 1;
+    }
+    while (i < len) {
+        var bc = load8(buf + i);
+        if (bc == 44 || bc == 125 || bc == 93 || bc == 58 || bc == 32 || bc == 9 || bc == 10 || bc == 13) { return i; }
+        i = i + 1;
+    }
+    return i;
+}
+
+# 0 when `obj` is one JSON object with plainly spelled, unique top-level keys;
+# otherwise an error message for the caller to return.
+fn _mcp_args_shape(obj: cstring): cstring {
+    if (obj == 0) { return "arguments missing"; }
+    var len = strlen(obj);
+    if (jsonx_valid(obj, len) != 1) { return "arguments are not valid JSON"; }
+    var i = _mcp_ws(obj, len, 0);
+    if (i >= len || load8(obj + i) != 123) { return "arguments must be a JSON object"; }
+    i = _mcp_ws(obj, len, i + 1);
+    if (i < len && load8(obj + i) == 125) { return 0; }       # {}
+    var keys = vec_new();
+    while (i < len) {
+        if (load8(obj + i) != 34) { return "malformed arguments"; }
+        var ke = _mcp_skip_value(obj, len, i);
+        if (ke < 0) { return "malformed arguments"; }
+        var ks = i + 1;
+        var kl = ke - ks - 1;
+        if (memchr(obj + ks, 92, kl) >= 0) { return "argument keys must be spelled without escapes"; }
+        var k = 0;
+        while (k < vec_len(keys)) {
+            if (vec_get(keys, k + 1) == kl) {
+                if (memeq(obj + vec_get(keys, k), obj + ks, kl) == 1) { return "duplicate argument key"; }
+            }
+            k = k + 2;
+        }
+        vec_push(keys, ks);
+        vec_push(keys, kl);
+        i = _mcp_ws(obj, len, ke);
+        if (i >= len || load8(obj + i) != 58) { return "malformed arguments"; }
+        var ve = _mcp_skip_value(obj, len, i + 1);
+        if (ve < 0) { return "malformed arguments"; }
+        i = _mcp_ws(obj, len, ve);
+        if (i < len && load8(obj + i) == 44) { i = _mcp_ws(obj, len, i + 1); }
+        elif (i < len && load8(obj + i) == 125) { return 0; }
+        else { return "malformed arguments"; }
+    }
+    return "malformed arguments";
+}
+
+# A port from its raw JSON token: 1-5 digits, no sign, leading zero, fraction
+# or exponent, value 1..65535 (audit M-1). `atoi` on the raw token wrapped
+# "18446744073709551638" to 22 — nft received `tcp dport 22 accept` and the
+# tool reported success — read "2e4" as 2 and "22.9" as 22. -1 if invalid.
+fn _mcp_port(raw: cstring): i64 {
+    if (raw == 0) { return 0 - 1; }
+    var n = strlen(raw);
+    if (_parse_dec(raw, 0, n, 5, 65535) != n) { return 0 - 1; }
+    var p = atoi(raw);
+    if (p < 1) { return 0 - 1; }
+    return p;
+}
+
 fn _mcp_result(msg: cstring, is_err: i64): cstring {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"content\":[{\"type\":\"text\",\"text\":\"");
@@ -96,15 +214,15 @@ fn _mcp_valid_proto(proto: cstring): i64 {
 # Validate the shared rule args. Returns 0 if all valid, or a cstr error
 # message if not (so handlers can return it directly).
 fn _mcp_check_rule_args(args: cstring): cstring {
+    var shape = _mcp_args_shape(args);
+    if (shape != 0) { return shape; }
     var proto = jsonx_get_str(args, "protocol");
     if (proto == 0) { return "missing 'protocol' (tcp or udp)"; }
     if (_mcp_valid_proto(proto) == 0) { return "unsupported protocol (use tcp or udp)"; }
 
     var port_raw = jsonx_get_raw(args, "port");
     if (port_raw == 0) { return "missing 'port'"; }
-    var port = atoi(port_raw);
-    if (port < 1) { return "port out of range (1-65535)"; }
-    if (port > 65535) { return "port out of range (1-65535)"; }
+    if (_mcp_port(port_raw) < 1) { return "port must be an integer 1-65535"; }
 
     var table = jsonx_get_str(args, "table");
     if (table == 0) { table = "filter"; }
@@ -133,7 +251,7 @@ fn _mcp_build_rule(args: cstring, verdict: cstring): cstring {
     }
     str_builder_add_cstr(sb, jsonx_get_str(args, "protocol"));
     str_builder_add_cstr(sb, " dport ");
-    str_builder_add_int(sb, atoi(jsonx_get_raw(args, "port")));
+    str_builder_add_int(sb, _mcp_port(jsonx_get_raw(args, "port")));
     str_builder_add_cstr(sb, " ");
     str_builder_add_cstr(sb, verdict);
     return _mcp_sb_cstr(sb);
@@ -147,6 +265,8 @@ fn _mcp_build_rule(args: cstring, verdict: cstring): cstring {
 fn _nein_status_handler(args: cstring, claims: i64): cstring {
     var g = _nein_gate_check("nein_status", claims);
     if (g != 0) { return g; }
+    var shape = _mcp_args_shape(args);
+    if (shape != 0) { return _mcp_err(shape); }
     var res_t, res_v = status();
     if (is_err_result(res_t) == 1) {
         return _mcp_err("nein_status: nft query failed (needs root + nft installed)");
@@ -214,6 +334,8 @@ fn _nein_validate_handler(args: cstring, claims: i64): cstring {
 fn _nein_list_handler(args: cstring, claims: i64): cstring {
     var g = _nein_gate_check("nein_list", claims);
     if (g != 0) { return g; }
+    var shape = _mcp_args_shape(args);
+    if (shape != 0) { return _mcp_err(shape); }
     var res_t, res_v = list_ruleset_with_handles();
     if (is_err_result(res_t) == 1) {
         return _mcp_err("nein_list: nft query failed (needs root + nft installed)");
@@ -264,6 +386,8 @@ fn _nein_list_handler(args: cstring, claims: i64): cstring {
 fn _nein_diff_handler(args: cstring, claims: i64): cstring {
     var g = _nein_gate_check("nein_diff", claims);
     if (g != 0) { return g; }
+    var shape = _mcp_args_shape(args);
+    if (shape != 0) { return _mcp_err(shape); }
     var arr = jsonx_get_raw(args, "rules");
     if (arr == 0) { return _mcp_err("missing 'rules' array"); }
 
@@ -271,56 +395,50 @@ fn _nein_diff_handler(args: cstring, claims: i64): cstring {
     var t = table_new("filter", FAMILY_INET);
     var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
 
+    # Walk the array element by element with the string-aware skipper (1.8.2,
+    # audit M-5). The old walk counted braces without regard to strings, so
+    # `{"protocol":"tcp","port":22,"x":"{"}` swallowed the next element and
+    # the preview silently dropped a rule.
     var alen = strlen(arr);
     var count = 0;
-    var i = 0;
-    while (i < alen) {
-        if (load8(arr + i) != 123) {   # '{'
-            i = i + 1;
-        } else {
-            # find the matching top-level '}' (brace-depth walk)
-            var depth = 1;
-            var j = i + 1;
-            while (depth > 0) {
-                if (j >= alen) { depth = 0; }
-                else {
-                    var cj = load8(arr + j);
-                    if (cj == 123) { depth = depth + 1; }
-                    elif (cj == 125) { depth = depth - 1; }
-                    j = j + 1;
-                }
-            }
-            # copy element arr[i, j) as a NUL-terminated object cstr
-            var elen = j - i;
-            var elem = alloc(elen + 1);
-            memcpy(elem, arr + i, elen);
-            store8(elem + elen, 0);
+    var i = _mcp_ws(arr, alen, 0);
+    if (i >= alen || load8(arr + i) != 91) { return _mcp_err("'rules' must be an array"); }
+    i = _mcp_ws(arr, alen, i + 1);
+    while (i < alen && load8(arr + i) != 93) {
+        if (load8(arr + i) != 123) { return _mcp_err("each rule must be an object"); }
+        var j = _mcp_skip_value(arr, alen, i);
+        if (j < 0) { return _mcp_err("malformed 'rules' array"); }
+        var elen = j - i;
+        var elem = alloc(elen + 1);
+        memcpy(elem, arr + i, elen);
+        store8(elem + elen, 0);
+        var eshape = _mcp_args_shape(elem);
+        if (eshape != 0) { return _mcp_err(eshape); }
 
-            var proto = jsonx_get_str(elem, "protocol");
-            if (proto == 0) { return _mcp_err("a rule is missing 'protocol'"); }
-            if (_mcp_valid_proto(proto) == 0) { return _mcp_err("a rule has an unsupported protocol"); }
-            var port_raw = jsonx_get_raw(elem, "port");
-            if (port_raw == 0) { return _mcp_err("a rule is missing 'port'"); }
-            var port = atoi(port_raw);
-            if (port < 1) { return _mcp_err("a rule 'port' is out of range (1-65535)"); }
-            if (port > 65535) { return _mcp_err("a rule 'port' is out of range (1-65535)"); }
+        var proto = jsonx_get_str(elem, "protocol");
+        if (proto == 0) { return _mcp_err("a rule is missing 'protocol'"); }
+        if (_mcp_valid_proto(proto) == 0) { return _mcp_err("a rule has an unsupported protocol"); }
+        var port_raw = jsonx_get_raw(elem, "port");
+        if (port_raw == 0) { return _mcp_err("a rule is missing 'port'"); }
+        var port = _mcp_port(port_raw);
+        if (port < 1) { return _mcp_err("a rule 'port' must be an integer 1-65535"); }
 
-            var vd = verdict_accept();
-            var verdict_s = jsonx_get_str(elem, "verdict");
-            if (verdict_s != 0) {
-                if (streq(verdict_s, "drop") == 1) { vd = verdict_drop(); }
-                elif (streq(verdict_s, "accept") == 0) { return _mcp_err("a rule 'verdict' must be accept or drop"); }
-            }
-            var proto_id = PROTO_TCP;
-            if (streq(proto, "udp") == 1) { proto_id = PROTO_UDP; }
-
-            var rule = rule_new(vd);
-            rule_add_match(rule, match_protocol(proto_id));
-            rule_add_match(rule, match_dport(port));
-            chain_add_rule(c, rule);
-            count = count + 1;
-            i = j;
+        var vd = verdict_accept();
+        var verdict_s = jsonx_get_str(elem, "verdict");
+        if (verdict_s != 0) {
+            if (streq(verdict_s, "drop") == 1) { vd = verdict_drop(); }
+            elif (streq(verdict_s, "accept") == 0) { return _mcp_err("a rule 'verdict' must be accept or drop"); }
         }
+        var proto_id = PROTO_TCP;
+        if (streq(proto, "udp") == 1) { proto_id = PROTO_UDP; }
+
+        var rule = rule_new(vd);
+        rule_add_match(rule, match_protocol(proto_id));
+        rule_add_match(rule, match_dport(port));
+        chain_add_rule(c, rule);
+        count = count + 1;
+        i = _mcp_ws(arr, alen, j);
+        if (i < alen && load8(arr + i) == 44) { i = _mcp_ws(arr, alen, i + 1); }
     }
     if (count == 0) { return _mcp_err("no rules provided"); }
 
@@ -333,7 +451,11 @@ fn _nein_diff_handler(args: cstring, claims: i64): cstring {
     if (is_err_result(live_t) == 1) {
         return _mcp_err("nein_diff: nft query failed (needs root + nft installed)");
     }
-    var ops = diff_compute(fw, live_v);
+    var dst[8];
+    var ops = _diff_compute(fw, live_v, &dst);
+    if (load64(&dst) != 0) {
+        return _mcp_err("nein_diff: live ruleset not parsed safely, or a chain not convergeable — no ops");
+    }
 
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"ops\":[");
@@ -432,7 +554,33 @@ fn _nein_handler(i: i64): i64 {
 # --- Path A: bote-dispatcher registration -------------------------------
 # For hosts that run a bote Dispatcher. Register descriptor (schema +
 # annotations + profiles) and bind the handler, from the tool table.
-fn _nein_reg(dispatcher: i64, reg: i64, i: i64): i64 {
+#
+# One bote call per tool (1.8.2). Through 1.8.1 this was registry_register
+# then dispatcher_handle: two writes, so on a host that registers while it
+# serves, a call landing between them found the tool and no handler; bote
+# published no TOPIC_TOOL_REGISTERED, so its listen streams (3.7.2+) never
+# heard of nein's tools; and registry_register's refusal was ignored while
+# dispatcher_handle still bound the handler, leaving a handler with no
+# listed tool. dispatcher_register_tool validates, then adds the definition
+# and the handler under one registries write lock, then publishes the event.
+
+# Register one definition + handler. 0 when it landed; 1 when bote refused
+# it (nothing is added — bote binds the handler only after validation), with
+# bote's reason logged.
+fn _nein_register_one(dispatcher: i64, td: i64, handler_fp: i64): i64 {
+    var err = dispatcher_register_tool(dispatcher, td, handler_fp);
+    if (err == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "nein.mcp: bote refused tool registration: ");
+    var why = bote_err_reason(err);
+    if (why == 0) { why = "(no reason given)"; }
+    str_builder_add_cstr(sb, why);
+    var msg = _mcp_sb_cstr(sb);
+    sakshi_error(msg, strlen(msg));
+    return 1;
+}
+
+fn _nein_reg(dispatcher: i64, i: i64): i64 {
     var ann = ann_read_only();
     var pf = _nein_pf_ro();
     if (nein_tool_read_only(i) == 0) {
@@ -442,25 +590,27 @@ fn _nein_reg(dispatcher: i64, reg: i64, i: i64): i64 {
     var td = tool_def_new(nein_tool_name(i), nein_tool_desc(i), schema_new("object", 0, vec_new()));
     td = tool_def_with_annotations(td, ann);
     td = tool_def_with_profiles(td, pf);
-    registry_register(reg, td);
-    dispatcher_handle(dispatcher, nein_tool_name(i), _nein_handler(i));
-    return 0;
+    return _nein_register_one(dispatcher, td, _nein_handler(i));
 }
 
+# Returns the number of tools bote refused: 0 when all six registered.
+# (Through 1.8.1 it returned 0 unconditionally, so a caller that ignores the
+# result is unaffected; one that checks `== 0` now gets a true answer.)
 fn nein_tools_register(dispatcher: i64): i64 {
-    var reg = dispatcher_registry(dispatcher);
+    var refused = 0;
     var i = 0;
     while (i < nein_tool_count()) {
-        _nein_reg(dispatcher, reg, i);
+        refused = refused + _nein_reg(dispatcher, i);
         i = i + 1;
     }
-    return 0;
+    return refused;
 }
 
 # Like nein_tools_register, but installs a host access-control gate:
 # `gate_fp` = fn(tool_name: cstring, claims: i64) -> 1 permit / 0 deny.
 # Every handler consults it before acting; a denied call returns an
-# "access denied" envelope and never touches the firewall.
+# "access denied" envelope and never touches the firewall. Returns the
+# refused count, as nein_tools_register does.
 fn nein_tools_register_gated(dispatcher: i64, gate_fp: i64): i64 {
     _nein_gate = gate_fp;
     return nein_tools_register(dispatcher);
@@ -482,6 +632,7 @@ fn nein_mcp_set_gate(gate_fp: i64): i64 {
 # Route a tool call by name -> the handler's MCP result envelope cstr, or
 # an "unknown tool" error envelope. Handlers consult the installed gate.
 fn nein_mcp_dispatch(name: cstring, args: cstring, claims: i64): cstring {
+    if (name == 0) { return _mcp_err("unknown nein tool"); }   # was streq(0): a crash (audit M-7)
     var i = 0;
     while (i < nein_tool_count()) {
         if (streq(name, nein_tool_name(i)) == 1) {

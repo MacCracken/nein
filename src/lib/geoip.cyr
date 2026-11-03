@@ -94,6 +94,11 @@ fn _validate_cidr_list(cidrs: i64): i64 {
 fn geoip_validate(bl: i64): i64 {
     var vr1_t, vr1_v = validate_identifier(geoip_table_name(bl));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    # The block matches SOURCE addresses, so the hook must see inbound packets
+    # (1.8.2, audit B-9): `geoip_set_hook(HOOK_OUTPUT)` validated and rendered
+    # an `ip saddr @geo_xx drop` that can never match a locally sent packet.
+    var h = geoip_hook(bl);
+    if (h != HOOK_PREROUTING && h != HOOK_INPUT && h != HOOK_FORWARD) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
     var countries = geoip_countries(bl);
     var clen = vec_len(countries);

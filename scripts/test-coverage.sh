@@ -40,8 +40,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 # Measured floor. 1.6.9: 251/392 = 64% (raised from 63% when the P(-1)
-# hardening tests landed — the ratchet working as intended).
-MIN_PCT=64
+# hardening tests landed — the ratchet working as intended). 1.8.2: 262/397 =
+# 65%, raised again with the 2026-11-03 audit's tests.
+MIN_PCT=65
 LIST=0
 
 while [ $# -gt 0 ]; do

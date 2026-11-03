@@ -58,6 +58,7 @@ enum VerdictType {
     VERDICT_SET_CT_MARK = 11;
     VERDICT_LOG_ADVANCED = 12;
     VERDICT_COUNTER_NAMED = 13;
+    VERDICT_NONE = 14;         # 1.8.2: no verdict word — the rule's last statement is terminal
 }
 
 # ================================================================
@@ -243,6 +244,18 @@ fn match_source_addr(addr: cstring): i64 { return match_new(MATCH_SOURCE_ADDR, a
 fn match_dest_addr(addr: cstring): i64 { return match_new(MATCH_DEST_ADDR, addr, 0, 0); }
 fn match_source_addr6(addr: cstring): i64 { return match_new(MATCH_SOURCE_ADDR6, addr, 0, 0); }
 fn match_dest_addr6(addr: cstring): i64 { return match_new(MATCH_DEST_ADDR6, addr, 0, 0); }
+
+# An address match in the address's own family: `ip`/`ip6`, `saddr`/`daddr`
+# (1.8.2). Builders that took an address and always rendered `ip saddr` made
+# any IPv6 input fail the whole ruleset at apply.
+fn _match_addr(addr: cstring, is_dest: i64): i64 {
+    if (_addr_family(addr) == 6) {
+        if (is_dest == 1) { return match_dest_addr6(addr); }
+        return match_source_addr6(addr);
+    }
+    if (is_dest == 1) { return match_dest_addr(addr); }
+    return match_source_addr(addr);
+}
 fn match_protocol(proto: cstring): i64 { return match_new(MATCH_PROTOCOL, proto, 0, 0); }
 fn match_dport(port: i64): i64 { return match_new(MATCH_DPORT, port, 0, 0); }
 fn match_sport(port: i64): i64 { return match_new(MATCH_SPORT, port, 0, 0); }
@@ -294,6 +307,13 @@ fn verdict_val4(v: i64): i64 { return load64(v + 32); }
 # Verdict constructors
 fn verdict_accept(): i64 { return verdict_new(VERDICT_ACCEPT, 0, 0, 0, 0); }
 fn verdict_drop(): i64 { return verdict_new(VERDICT_DROP, 0, 0, 0, 0); }
+# No verdict (1.8.2, audit B-4): for a rule whose last statement already ends
+# it, such as a `redirect`. nft refuses a verdict after a terminal statement
+# ("Statement after terminal statement has no effect"), which is why the mesh
+# ruleset, rendering `... redirect to :15001 accept`, could never load. A
+# rule with matches and no verdict falls through when it does not act — it
+# never accepts — and rule_validate refuses one with no matches at all.
+fn verdict_none(): i64 { return verdict_new(VERDICT_NONE, 0, 0, 0, 0); }
 fn verdict_reject(): i64 { return verdict_new(VERDICT_REJECT, 0, 0, 0, 0); }
 fn verdict_reject_with(reason: i64): i64 { return verdict_new(VERDICT_REJECT_WITH, reason, 0, 0, 0); }
 fn verdict_jump(chain: cstring): i64 { return verdict_new(VERDICT_JUMP, chain, 0, 0, 0); }
@@ -488,11 +508,16 @@ fn _render_match(sb, m) {
         str_builder_add_cstr(sb, "-");
         str_builder_add_int(sb, v2);
     } elif (mt == MATCH_IIF) {
-        str_builder_add_cstr(sb, "iif \"");
+        # iifname, not iif (1.8.2, audit I-7/B-11): `iif` resolves the name to
+        # an ifindex when the ruleset LOADS, so a rule naming a bridge that does
+        # not exist yet fails the whole batch, and one naming a bridge that is
+        # later recreated silently stops matching. `iifname` compares the name
+        # per packet and survives both.
+        str_builder_add_cstr(sb, "iifname \"");
         str_builder_add_cstr(sb, v1);
         str_builder_add_cstr(sb, "\"");
     } elif (mt == MATCH_OIF) {
-        str_builder_add_cstr(sb, "oif \"");
+        str_builder_add_cstr(sb, "oifname \"");
         str_builder_add_cstr(sb, v1);
         str_builder_add_cstr(sb, "\"");
     } elif (mt == MATCH_CT_STATE) {
@@ -577,6 +602,12 @@ fn _render_match(sb, m) {
         str_builder_add_int(sb, v1);
     } elif (mt == MATCH_RAW) {
         str_builder_add_cstr(sb, v1);
+    } else {
+        # An unknown match type (1.8.2, audit I-3) used to render NOTHING, so a
+        # rule meant to be conditional became an unconditional verdict — in a
+        # policy-drop chain, a bare `accept`. rule_validate refuses it; this
+        # token makes an unvalidated render fail closed too (nft: syntax error).
+        str_builder_add_cstr(sb, "__nein_invalid_match__");
     }
     return 0;
 }
@@ -643,7 +674,17 @@ fn _render_verdict(sb, v) {
         str_builder_add_cstr(sb, "counter name \"");
         str_builder_add_cstr(sb, v1);
         str_builder_add_cstr(sb, "\"");
+    } elif (vt == VERDICT_NONE) {
+        # deliberately nothing
+    } else {
+        # Unknown verdict type (I-3): rendered nothing through 1.8.1. Fail closed.
+        str_builder_add_cstr(sb, "__nein_invalid_verdict__");
     }
+    return 0;
+}
+
+fn _is_port_match(mt: i64): i64 {
+    if (mt == MATCH_DPORT || mt == MATCH_SPORT || mt == MATCH_DPORT_RANGE) { return 1; }
     return 0;
 }
 
@@ -655,11 +696,30 @@ fn rule_render(r: i64): Str {
     var i = 0;
     while (i < len) {
         if (i > 0) { str_builder_add_cstr(sb, " "); }
-        _render_match(sb, vec_get(matches, i));
+        var m = vec_get(matches, i);
+        var mt = match_type(m);
+        # A protocol renders as its bare name ("tcp") only when a port match
+        # follows to complete it ("tcp dport 22"); a port match renders bare
+        # ("dport 22") only after one. On its own each is an nft syntax error
+        # (1.8.2, audit I-7), so a protocol-only rule renders `meta l4proto tcp`
+        # and a port with no protocol before it renders `th dport 22`.
+        var next_is_port = 0;
+        if (i + 1 < len) { next_is_port = _is_port_match(match_type(vec_get(matches, i + 1))); }
+        var prev_is_proto = 0;
+        if (i > 0) {
+            if (match_type(vec_get(matches, i - 1)) == MATCH_PROTOCOL) { prev_is_proto = 1; }
+        }
+        if (mt == MATCH_PROTOCOL && next_is_port == 0) {
+            str_builder_add_cstr(sb, "meta l4proto ");
+            str_builder_add_cstr(sb, _proto_str(match_val1(m)));
+        } else {
+            if (_is_port_match(mt) == 1 && prev_is_proto == 0) { str_builder_add_cstr(sb, "th "); }
+            _render_match(sb, m);
+        }
         i = i + 1;
     }
 
-    if (len > 0) { str_builder_add_cstr(sb, " "); }
+    if (len > 0 && verdict_type(rule_verdict(r)) != VERDICT_NONE) { str_builder_add_cstr(sb, " "); }
     _render_verdict(sb, rule_verdict(r));
 
     var comment = rule_comment(r);
@@ -676,9 +736,76 @@ fn rule_render(r: i64): Str {
 # Validate — check all string fields for injection
 # ================================================================
 
+# lo <= v <= hi
+fn _in_range(v: i64, lo: i64, hi: i64): i64 {
+    if (v < lo || v > hi) { return 0; }
+    return 1;
+}
+
+# Every numeric and enum field of a match type not checked inline in
+# rule_validate (1.8.2, audit I-3 / I-8). An unknown match type is refused
+# here — through 1.8.1 it rendered nothing — and every enum must be in
+# range, because the string helpers fall back silently (an unknown compare
+# op became "==", an unknown quota mode "over"): an out-of-range value never
+# errored, it became a DIFFERENT valid rule. Numbers that nft would reject
+# are refused here too, so the error names the rule instead of failing the
+# whole batch at apply.
+fn _rule_match_numbers_ok(m: i64): i64 {
+    var mt = match_type(m);
+    var v1 = match_val1(m);
+    var v2 = match_val2(m);
+    var v3 = match_val3(m);
+    if (_in_range(mt, MATCH_SOURCE_ADDR, MATCH_RAW) == 0) { return 0; }
+    if (mt == MATCH_PROTOCOL) { return _in_range(v1, PROTO_TCP, PROTO_ICMPV6); }
+    if (mt == MATCH_DPORT || mt == MATCH_SPORT) { return _in_range(v1, 0, 65535); }
+    if (mt == MATCH_LIMIT) {
+        # nft: rate 0 is EINVAL, and "packet limit burst must be > 0".
+        if (_in_range(v1, 1, 0xFFFFFFFF) == 0) { return 0; }
+        if (_in_range(v2, RATE_SECOND, RATE_DAY) == 0) { return 0; }
+        return _in_range(v3, 1, 0xFFFFFFFF);
+    }
+    if (mt == MATCH_META_MARK) { return _in_range(v1, 0, 0xFFFFFFFF); }
+    if (mt == MATCH_QUOTA) {
+        if (_in_range(v1, QUOTA_OVER, QUOTA_UNTIL) == 0) { return 0; }
+        if (v2 < 0) { return 0; }
+        return _in_range(v3, QUNIT_BYTES, QUNIT_GBYTES);
+    }
+    if (mt == MATCH_ICMP_TYPE_CODE || mt == MATCH_ICMPV6_TYPE_CODE) { return _in_range(v2, 0, 255); }
+    if (mt == MATCH_IPV6_EXT_HDR) { return _in_range(v1, EXT_HOP_BY_HOP, EXT_AUTH); }
+    if (mt == MATCH_FRAG_OFF) {
+        # `_sb_add_hex` renders a negative value as a bare "0x" (audit I-8).
+        if (_in_range(v1, 0, 0xFFFF) == 0) { return 0; }
+        if (_in_range(v2, NFT_CMP_EQ, NFT_CMP_GE) == 0) { return 0; }
+        return _in_range(v3, 0, 0xFFFF);
+    }
+    if (mt == MATCH_PKT_TYPE) { return _in_range(v1, PKT_UNICAST, PKT_MULTICAST); }
+    if (mt == MATCH_CONN_LIMIT) { return _in_range(v1, 0, 0xFFFFFFFF); }
+    return 1;
+}
+
+# Verdict type and its numeric fields (1.8.2, audit I-3 / I-7 / I-8).
+fn _rule_verdict_numbers_ok(v: i64): i64 {
+    var vt = verdict_type(v);
+    if (_in_range(vt, VERDICT_ACCEPT, VERDICT_NONE) == 0) { return 0; }
+    if (vt == VERDICT_REJECT_WITH) { return _in_range(verdict_val1(v), REJECT_ICMP_HOST_UNREACH, REJECT_TCP_RESET); }
+    if (vt == VERDICT_SET_MARK || vt == VERDICT_SET_CT_MARK) { return _in_range(verdict_val1(v), 0, 0xFFFFFFFF); }
+    if (vt == VERDICT_LOG_ADVANCED) {
+        var lvl = verdict_val2(v);
+        var grp = verdict_val3(v);
+        if (_in_range(lvl, 0, NFT_LOG_DEBUG) == 0) { return 0; }
+        if (_in_range(grp, 0, 65535) == 0) { return 0; }
+        # nft: "level and group are mutually exclusive" (audit I-7).
+        if (lvl != 0 && grp != 0) { return 0; }
+        return _in_range(verdict_val4(v), 0, 0xFFFFFFFF);
+    }
+    return 1;
+}
+
 fn rule_validate(r: i64): i64 {
     var matches = rule_matches(r);
     var len = vec_len(matches);
+    # A rule with no verdict and no matches says nothing (VERDICT_NONE).
+    if (len == 0 && verdict_type(rule_verdict(r)) == VERDICT_NONE) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var i = 0;
     var vr = 0;
     while (i < len) {
@@ -691,6 +818,12 @@ fn rule_validate(r: i64): i64 {
           mt == MATCH_SOURCE_ADDR6 || mt == MATCH_DEST_ADDR6) {
             var vr1_t, vr1_v = validate_addr(v1);
             if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+            # The address must be the match's own family (1.8.2): `ip saddr
+            # 2001:db8::1` is not an address to nft but a HOSTNAME to resolve,
+            # so the whole batch failed at apply ("Could not resolve hostname").
+            var want = 4;
+            if (mt == MATCH_SOURCE_ADDR6 || mt == MATCH_DEST_ADDR6) { want = 6; }
+            if (_addr_family(v1) != want) { return nein_err(NEIN_ERR_INVALID_RULE); }
         } elif (mt == MATCH_IIF || mt == MATCH_OIF) {
             var vr2_t, vr2_v = validate_iface(v1);
             if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
@@ -699,8 +832,8 @@ fn rule_validate(r: i64): i64 {
             var vr3_t, vr3_v = validate_identifier(v1);
             if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
         } elif (mt == MATCH_SET_LOOKUP) {
-            var vr4_t, vr4_v = validate_nft_element(v1);
-            if (is_err_result(vr4_t) == 1) { return Err(vr4_v); }
+            # Closed set of selectors (1.8.2, audit I-2) — see _is_set_lookup_field.
+            if (_is_set_lookup_field(v1) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
             var vr5_t, vr5_v = validate_identifier(v2);
             if (is_err_result(vr5_t) == 1) { return Err(vr5_v); }
         } elif (mt == MATCH_ICMP_TYPE || mt == MATCH_ICMPV6_TYPE) {
@@ -719,13 +852,17 @@ fn rule_validate(r: i64): i64 {
             var vr9_t, vr9_v = validate_ct_state_list(v1);
             if (is_err_result(vr9_t) == 1) { return Err(vr9_v); }
         } elif (mt == MATCH_DSCP) {
-            if (v1 > 63) { return nein_err(NEIN_ERR_INVALID_RULE); }
+            if (_in_range(v1, 0, 63) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
         } elif (mt == MATCH_VLAN_ID) {
-            if (v1 > 4094) { return nein_err(NEIN_ERR_INVALID_RULE); }
+            if (_in_range(v1, 0, 4094) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
         } elif (mt == MATCH_DPORT_RANGE) {
-            if (v1 > v2) { return nein_err(NEIN_ERR_INVALID_RULE); }
+            if (_in_range(v1, 0, 65535) == 0 || _in_range(v2, v1, 65535) == 0) {
+                return nein_err(NEIN_ERR_INVALID_RULE);
+            }
         } elif (mt == MATCH_RAW) {
             # Deliberately not validated — caller's responsibility
+        } elif (_rule_match_numbers_ok(m) == 0) {
+            return nein_err(NEIN_ERR_INVALID_RULE);
         }
 
         i = i + 1;
@@ -734,6 +871,7 @@ fn rule_validate(r: i64): i64 {
     # Validate verdict strings
     var v = rule_verdict(r);
     var vt = verdict_type(v);
+    if (_rule_verdict_numbers_ok(v) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (vt == VERDICT_JUMP || vt == VERDICT_GOTO) {
         var vr10_t, vr10_v = validate_identifier(verdict_val1(v));
         if (is_err_result(vr10_t) == 1) { return Err(vr10_v); }
@@ -788,7 +926,7 @@ fn allow_established(): i64 {
 
 fn deny_source(cidr: cstring): i64 {
     var r = rule_new(verdict_drop());
-    rule_add_match(r, match_source_addr(cidr));
+    rule_add_match(r, _match_addr(cidr, 0));
     return r;
 }
 
@@ -800,7 +938,7 @@ fn deny_source6(cidr: cstring): i64 {
 
 fn allow_service(source_cidr: cstring, protocol: i64, port: i64): i64 {
     var r = rule_new(verdict_accept());
-    rule_add_match(r, match_source_addr(source_cidr));
+    rule_add_match(r, _match_addr(source_cidr, 0));
     rule_add_match(r, match_protocol(protocol));
     rule_add_match(r, match_dport(port));
     return r;

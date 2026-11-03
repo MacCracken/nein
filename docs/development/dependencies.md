@@ -1,6 +1,6 @@
 # Dependencies
 
-Last refresh: **2026-11-02** (v1.8.1, cyrius 6.7.18).
+Last refresh: **2026-11-03** (v1.8.2, cyrius 6.7.18).
 
 Why each entry in `cyrius.cyml`'s `[deps]` block exists, and why the
 resolution order is what it is. This file is the prose home for that
@@ -87,11 +87,11 @@ It is an explicit `[deps.sigil]` git pin instead — see below.
 
 ## `[deps.*]` — git pins
 
-| Dep | Tag (v1.8.1) | Bundle | Why |
+| Dep | Tag (v1.8.2) | Bundle | Why |
 |-----|--------------|--------|-----|
 | `libro` | 2.11.3 | `dist/libro.cyr` | bote's manifest graph references it |
 | `majra` | 2.13.0 | `dist/majra.cyr` | bote's manifest graph references it |
-| `bote-core` | 3.7.5 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
+| `bote-core` | 3.7.6 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
 | `sigil` | 3.13.15 | `dist/sigil.cyr` | Ed25519 + sha256 + hex for `sign.cyr` |
 | `patra` | 1.16.6 | `dist/patra.cyr` | libro's audit store links it |
 
@@ -121,11 +121,12 @@ references them and Cyrius resolves single-pass.
 | 1.7.1 | 6.6.20 | 2.10.8 | 2.9.3 | 3.3.17 | 3.13.10 | 1.15.2 |
 | 1.8.0 | 6.7.9 | 2.11.0 | 2.12.0 | 3.4.10 | 3.13.11 | 1.16.0 |
 | 1.8.1 | 6.7.18 | 2.11.3 | 2.13.0 | 3.7.5 | 3.13.15 | 1.16.6 |
+| 1.8.2 | 6.7.18 | 2.11.3 | 2.13.0 | 3.7.6 | 3.13.15 | 1.16.6 |
 
-At 1.8.1 every pin is its repo's newest release and all the rules agree: bote
-3.7.5 pins libro 2.11.3 + majra 2.13.0, and libro 2.11.3 pins exactly the sigil
-3.13.15 / patra 1.16.6 the 6.7.18 snapshot folds. (bote 3.7.6 was in progress,
-untagged, at the time.) At 1.8.0 the rules disagreed: libro 2.11.0 asked for
+Since 1.8.1 every pin is its repo's newest release and all the rules agree: bote
+3.7.6 (3.7.5 at 1.8.1) pins libro 2.11.3 + majra 2.13.0, and libro 2.11.3 pins
+exactly the sigil 3.13.15 / patra 1.16.6 the 6.7.18 snapshot folds. At 1.8.0 the
+rules disagreed: libro 2.11.0 asked for
 sigil 3.13.12, and nein's root pin won (`cyrius deps` printed `sigil 3.13.12
 (wanted by libro) not used`), which is the pin's second job, below. To list the
 candidates:

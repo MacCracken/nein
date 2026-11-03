@@ -7,7 +7,7 @@ small enough that a generator script isn't needed yet — agnosys's
 `scripts/gen-capability-map.sh` pattern would be the template if it
 gets one).
 
-**Last refresh:** 2026-08-21 (v1.6.10)
+**Last refresh:** 2026-11-03 (v1.8.2 — the apply path moved from pipes to memfds and a pidfd; the syscall set and filesystem paths changed)
 **nein version:** 1.6.10
 **cyrius version:** 6.5.33
 
@@ -19,8 +19,8 @@ For each module, four capability columns:
   the module invokes directly. Most modules use zero direct syscalls;
   the stdlib `sys_*` wrappers are preferred.
 - **`sys_*` wrappers**: cyrius stdlib helpers — each maps to one
-  kernel syscall (e.g. `sys_pipe` → `pipe2(2)`, `sys_execve` →
-  `execve(2)`).
+  kernel syscall (e.g. `sys_memfd_create` → `memfd_create(2)`,
+  `sys_execve` → `execve(2)`).
 - **Subprocess binaries**: hard-coded absolute paths the module
   invokes via `sys_execve`. No PATH consultation — see threat model T-3.
 - **Filesystem paths**: hard-coded `/sys`, `/proc`, `/dev`, `/etc`,
@@ -57,17 +57,25 @@ Callers that invoke `apply_*` / `list_ruleset*` (aegis at host, daimon
 when wiring agent firewalls, integration tests) additionally see:
 
 - **Direct syscalls:** none
-- **`sys_*` wrappers:** `sys_pipe`, `sys_fork`, `sys_execve`,
-  `sys_dup2`, `sys_close`, `sys_read`, `sys_write`, `sys_waitpid`,
-  `sys_exit`
+- **`sys_*` wrappers (1.8.2):** `sys_memfd_create`, `sys_write`,
+  `sys_lseek`, `sys_open` (`/dev/null`), `sys_getpid`, `sys_fork`,
+  `sys_pidfd_open`, `sys_kill`, `sys_waitpid`, `sys_read`, `sys_close`,
+  `sys_exit`; in the child `sys_sigprocmask`, `sys_prctl`, `sys_getppid`,
+  `sys_fcntl`, `sys_dup2`, `sys_execve`. Plus `poll` via the stdlib's
+  `fd_wait_ready`, `rt_sigaction` via `signal_ignore` / `signal_default`, and
+  `close_range` (raw syscall 436).
+  ⚠ **The 1.8.2 apply path changed this set** (memfds and a pidfd replaced
+  the pipes; `pipe2` is gone): **a seccomp allowlist built from an earlier
+  version of this map will kill the first apply.**
 - **`rt_sigaction`** (via the stdlib's `signal_ignore(13)`), called once
-  before the first write to set SIGPIPE to `SIG_IGN`. Added at v1.6.10 —
-  **a seccomp allowlist built from an earlier version of this map will kill
-  the first apply.** Disable with `nein_set_sigpipe_guard(0)` if the host
-  manages SIGPIPE itself and you want it out of the profile.
+  before the first apply to set SIGPIPE to `SIG_IGN`. Added at v1.6.10; since
+  1.8.2 nein writes to no pipe, so the guard is kept only so a host relying on
+  its process-wide effect sees no change. Disable with
+  `nein_set_sigpipe_guard(0)` if the host manages SIGPIPE itself.
 - **Subprocess binaries:** `/usr/sbin/nft` (single pinned absolute path;
   override at runtime via `nein_set_nft_path`)
-- **Filesystem paths:** none (apply.cyr does not read/write any
+- **Filesystem paths:** `/dev/null` only (nft's stdout on apply, its stdin on
+  capture — opened close-on-exec; apply.cyr reads / writes no other
   hard-coded fs paths; the nft binary itself reads kernel state via
   netlink — out of nein's surface)
 
@@ -119,28 +127,41 @@ the apply-layer wrappers below.
 
 | | Count |
 |---|---|
-| Direct syscalls | 1 (`rt_sigaction`, via `signal_ignore`) |
-| `sys_*` wrappers | 9 |
+| Direct syscalls | 1 raw (`close_range`); `rt_sigaction` and `poll` via stdlib helpers |
+| `sys_*` wrappers | 18 |
 | Subprocess binaries | 1 |
-| Filesystem paths | 0 |
+| Filesystem paths | 1 (`/dev/null`) |
 
-**`sys_*` wrappers:**
+**`sys_*` wrappers (1.8.2 — memfds and a pidfd replaced the pipes):**
 
-- `sys_pipe` — create stdin / stderr pipes to the child
+Parent:
+- `sys_memfd_create` — stage the ruleset (stdin), and hold nft's stderr / stdout
+- `sys_write`, `sys_lseek` — write the ruleset into its memfd, rewind it
+- `sys_open` — `/dev/null` (O_CLOEXEC) for nft's stdout (apply) or stdin (capture)
+- `sys_getpid` — the parent-death check's reference pid
 - `sys_fork` — spawn the `nft` child
-- `sys_execve` — replace child image with `nft`
-- `sys_dup2` — wire child's stdin / stderr to the pipes
-- `sys_close` — release unused pipe ends
-- `sys_read` — drain stderr / capture stdout
-- `sys_write` — pipe rendered ruleset to child's stdin
-- `sys_waitpid` — observe child exit
-- `sys_exit` — child fallback after exec-chain failure
+- `sys_pidfd_open` — wait for the child with a deadline (`poll` via `fd_wait_ready`)
+- `sys_kill` — SIGKILL a child that outlives the 60 s deadline
+- `sys_waitpid` — reap the child and check its status
+- `sys_read` — read nft's stderr (logged on failure) / captured stdout, after exit
+- `sys_close` — release descriptors
 
-**Direct syscall:**
+Child (between fork and execve; allocates nothing):
+- `sys_sigprocmask` — empty the inherited signal mask
+- `rt_sigaction` via `signal_default` — SIGPIPE and SIGXFSZ back to `SIG_DFL`
+- `sys_prctl` — `PR_SET_PDEATHSIG` (SIGKILL): die with the host
+- `sys_getppid` — exit if the host died before the prctl
+- `sys_fcntl` — `F_DUPFD_CLOEXEC` copies above fd 10
+- `sys_dup2` — place them on 0 / 1 / 2
+- `close_range` (raw 436) — close every other inherited descriptor (Linux 5.9+; best effort)
+- `sys_execve` — replace the child image with `nft`
+- `sys_exit` — fallback after a setup or exec failure
 
-- `rt_sigaction(SIGPIPE, SIG_IGN)` — via the stdlib's `signal_ignore(13)`,
-  once before the first write (v1.6.10). Without it, writing to an `nft` that
-  has already exited terminates the whole calling process.
+**Syscalls via stdlib helpers:**
+
+- `rt_sigaction(SIGPIPE, SIG_IGN)` — the parent's guard, `signal_ignore(13)`,
+  once per process (v1.6.10; no longer load-bearing since 1.8.2).
+- `poll` — `fd_wait_ready` on the pidfd (`ppoll` on aarch64).
 
 **Subprocess binaries:**
 
@@ -185,8 +206,9 @@ diff functions.
 *modify* the ruleset — but both fork and execve `nft` to read it
 (`list_ruleset` / `list_ruleset_with_handles`), so they carry apply's entire
 syscall footprint. Only `nein_validate` is genuinely syscall-free. A sandbox
-profile that grants the read-only tool set still needs fork + execve + the
-pipe syscalls.
+profile that grants the read-only tool set still needs fork + execve and the
+apply layer's memfd / pidfd syscalls above — and the three readers return the
+live ROOT ruleset (see the host guide; a separate class is planned for 1.9.0).
 
 ## Capabilities (Linux)
 

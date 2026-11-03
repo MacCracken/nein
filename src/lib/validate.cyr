@@ -4,6 +4,10 @@
 # validators to prevent injection of arbitrary nft commands.
 #
 # Returns: packed Result — Ok(0) on valid, Err(NEIN_ERR_INVALID_RULE) on reject.
+#
+# Every validator refuses a NULL pointer (1.8.2, audit B-10): through 1.8.1
+# they called strlen(0) and the host SIGSEGV'd. Callers whose field is
+# optional (a rule comment, a log prefix) check for 0 themselves first.
 
 # Dangerous characters that could inject nftables commands or break syntax.
 # ; { } | \n \r \0 ` $
@@ -64,26 +68,12 @@ fn _is_iface_char(c: i64): i64 {
     return 0;
 }
 
-# Check if a character is valid in IP/CIDR notation (hex digits, . : /)
-fn _is_addr_char(c: i64): i64 {
-    # 0-9
-    if (c >= 48 && c <= 57) { return 1; }
-    # a-f
-    if (c >= 97 && c <= 102) { return 1; }
-    # A-F
-    if (c >= 65 && c <= 70) { return 1; }
-    # . : /
-    if (c == 46) { return 1; }
-    if (c == 58) { return 1; }
-    if (c == 47) { return 1; }
-    return 0;
-}
-
 # --- Public validators ---
 
 # Validate an nftables identifier (table name, chain name).
 # Must be non-empty, alphanumeric plus _ and -, at most 64 chars.
 fn validate_identifier(s: cstring): i64 {
+    if (s == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var len = strlen(s);
     if (len == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (len > 64) { return nein_err(NEIN_ERR_INVALID_RULE); }
@@ -98,50 +88,275 @@ fn validate_identifier(s: cstring): i64 {
     return nein_ok();
 }
 
-# Validate an IP address or CIDR string.
-# Allows only characters valid in IP/CIDR notation (hex digits, . : /).
-# Rejects dangerous injection characters and non-address strings.
-fn validate_addr(s: cstring): i64 {
-    var len = strlen(s);
-    if (len == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+# --- Strict address parsing (1.8.2, audit I-9) ----------------------
+# Through 1.8.1 validate_addr checked only the character set (hex digits,
+# '.', ':', '/') and that a '.' or ':' appeared, so "dead1.cafe" — a hex-only
+# DNS name — passed, and nft resolved it at apply time: whoever controls that
+# zone chose the address. An address must now PARSE as IPv4 or IPv6, with an
+# optional prefix length in range for its family.
 
-    # Fast reject: only allow valid addr chars
-    var i = 0;
-    while (i < len) {
-        if (_is_addr_char(load8(s + i)) == 0) {
-            return nein_err(NEIN_ERR_INVALID_RULE);
+# A decimal field of 1..maxdig digits with no leading zero, value <= max.
+# Returns the index just past it, or -1.
+fn _parse_dec(s: cstring, i: i64, end: i64, maxdig: i64, max: i64): i64 {
+    var start = i;
+    var val = 0;
+    while (i < end) {
+        var c = load8(s + i);
+        if (c < 48 || c > 57) { break; }
+        val = val * 10 + (c - 48);
+        i = i + 1;
+        if (i - start > maxdig) { return 0 - 1; }
+    }
+    if (i == start) { return 0 - 1; }
+    if (i - start > 1 && load8(s + start) == 48) { return 0 - 1; }   # leading zero
+    if (val > max) { return 0 - 1; }
+    return i;
+}
+
+# s[a..b) is exactly a dotted-quad IPv4 address.
+fn _is_ipv4_span(s: cstring, a: i64, b: i64): i64 {
+    var i = a;
+    var parts = 0;
+    while (parts < 4) {
+        i = _parse_dec(s, i, b, 3, 255);
+        if (i < 0) { return 0; }
+        parts = parts + 1;
+        if (parts < 4) {
+            if (i >= b || load8(s + i) != 46) { return 0; }   # '.'
+            i = i + 1;
         }
-        i = i + 1;
     }
+    if (i != b) { return 0; }
+    return 1;
+}
 
-    # Must contain at least one digit to be a plausible address
-    var has_digit = 0;
-    i = 0;
-    while (i < len) {
-        var c = load8(s + i);
-        if (c >= 48 && c <= 57) { has_digit = 1; }
-        i = i + 1;
+fn _is_hex_char(c: i64): i64 {
+    if (c >= 48 && c <= 57) { return 1; }
+    if (c >= 97 && c <= 102) { return 1; }
+    if (c >= 65 && c <= 70) { return 1; }
+    return 0;
+}
+
+# s[a..b) is exactly an IPv6 address: up to eight 1-4 digit hex groups, at
+# most one "::", optionally ending in a dotted-quad (which counts as two
+# groups). No zone index.
+fn _is_ipv6_span(s: cstring, a: i64, b: i64): i64 {
+    if (b - a < 2) { return 0; }
+    var i = a;
+    var groups = 0;
+    var compressed = 0;
+    if (load8(s + i) == 58) {                               # leading ':'
+        if (load8(s + i + 1) != 58) { return 0; }           # only as "::"
+        compressed = 1;
+        i = i + 2;
+        if (i == b) { return 1; }                           # "::"
     }
-    if (has_digit == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
-
-    # Must contain . or : to be IPv4 or IPv6
-    var has_dot = 0;
-    var has_colon = 0;
-    i = 0;
-    while (i < len) {
-        var c = load8(s + i);
-        if (c == 46) { has_dot = 1; }
-        if (c == 58) { has_colon = 1; }
-        i = i + 1;
+    var done = 0;
+    while (done == 0) {
+        var start = i;
+        while (i < b && _is_hex_char(load8(s + i)) == 1) {
+            i = i + 1;
+            if (i - start > 4) { return 0; }
+        }
+        if (i == start) { return 0; }
+        if (i < b && load8(s + i) == 46) {                  # dotted-quad tail
+            if (_is_ipv4_span(s, start, b) == 0) { return 0; }
+            groups = groups + 2;
+            i = b;
+            done = 1;
+        } else {
+            groups = groups + 1;
+            if (i == b) {
+                done = 1;
+            } else {
+                if (load8(s + i) != 58) { return 0; }
+                i = i + 1;
+                if (i < b && load8(s + i) == 58) {
+                    if (compressed == 1) { return 0; }      # a second "::"
+                    compressed = 1;
+                    i = i + 1;
+                    if (i == b) { done = 1; }
+                } elif (i == b) {
+                    return 0;                               # trailing single ':'
+                }
+            }
+        }
+        if (groups > 8) { return 0; }
     }
-    if (has_dot == 0 && has_colon == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (compressed == 1) {
+        if (groups > 7) { return 0; }
+        return 1;
+    }
+    if (groups != 8) { return 0; }
+    return 1;
+}
 
+# 4 for an IPv4 address or CIDR, 6 for IPv6, 0 for anything else.
+fn _addr_family(s: cstring): i64 {
+    if (s == 0) { return 0; }
+    var len = strlen(s);
+    if (len == 0 || len > 49) { return 0; }                 # 45-byte IPv6 text + "/128"
+    var slash = memchr(s, 47, len);
+    var end = len;
+    if (slash >= 0) { end = slash; }
+    var fam = 0;
+    if (_is_ipv4_span(s, 0, end) == 1) { fam = 4; }
+    elif (_is_ipv6_span(s, 0, end) == 1) { fam = 6; }
+    if (fam == 0) { return 0; }
+    if (slash >= 0) {
+        var maxp = 32;
+        if (fam == 6) { maxp = 128; }
+        if (_parse_dec(s, slash + 1, len, 3, maxp) != len) { return 0; }
+    }
+    return fam;
+}
+
+# The address part of `s` (any /prefix ignored) as 16 canonical bytes in
+# `out` — IPv4 as ::ffff:a.b.c.d, the v4-mapped form — so two spellings of one
+# address ("fd00::1", "fd00:0::1", "::ffff:10.0.0.1" and "10.0.0.1") compare
+# equal byte for byte (1.8.2, used by the engine's duplicate-address check).
+# Returns the family (4 or 6), or 0 if `s` is not an address.
+fn _addr_bytes(s: cstring, out: i64): i64 {
+    var fam = _addr_family(s);
+    if (fam == 0) { return 0; }
+    var len = strlen(s);
+    var end = memchr(s, 47, len);
+    if (end < 0) { end = len; }
+    var k = 0;
+    while (k < 16) { store8(out + k, 0); k = k + 1; }
+    if (fam == 4) {
+        store8(out + 10, 255);
+        store8(out + 11, 255);
+        var i = 0;
+        var oct = 0;
+        while (oct < 4) {
+            var v = 0;
+            while (i < end && load8(s + i) != 46) { v = v * 10 + (load8(s + i) - 48); i = i + 1; }
+            store8(out + 12 + oct, v);
+            i = i + 1;
+            oct = oct + 1;
+        }
+        return 4;
+    }
+    # IPv6: collect the groups before and after "::" separately, then place
+    # the tail at the end. A dotted-quad tail fills the last four bytes.
+    var head[16];
+    var tail[16];
+    var nh = 0;
+    var nt = 0;
+    var after = 0;
+    var j = 0;
+    if (load8(s) == 58) { after = 1; j = 2; }
+    while (j < end) {
+        var start = j;
+        var g = 0;
+        var isv4 = 0;
+        while (j < end && load8(s + j) != 58) {
+            if (load8(s + j) == 46) { isv4 = 1; }
+            j = j + 1;
+        }
+        if (isv4 == 1) {
+            var four[16];
+            var vb = alloc(j - start + 1);
+            memcpy(vb, s + start, j - start);
+            store8(vb + j - start, 0);
+            _addr_bytes(vb, &four);
+            var q = 0;
+            while (q < 4) {
+                if (after == 1) { store8(&tail + nt, load8(&four + 12 + q)); nt = nt + 1; }
+                else { store8(&head + nh, load8(&four + 12 + q)); nh = nh + 1; }
+                q = q + 1;
+            }
+        } else {
+            var h = start;
+            while (h < j) {
+                var c = load8(s + h);
+                var d = 0;
+                if (c >= 48 && c <= 57) { d = c - 48; }
+                elif (c >= 97 && c <= 102) { d = c - 87; }
+                else { d = c - 55; }
+                g = g * 16 + d;
+                h = h + 1;
+            }
+            if (after == 1) {
+                store8(&tail + nt, g >> 8); store8(&tail + nt + 1, g & 255); nt = nt + 2;
+            } else {
+                store8(&head + nh, g >> 8); store8(&head + nh + 1, g & 255); nh = nh + 2;
+            }
+        }
+        if (j < end) {
+            j = j + 1;
+            if (j < end && load8(s + j) == 58) { after = 1; j = j + 1; }
+        }
+    }
+    var m = 0;
+    while (m < nh) { store8(out + m, load8(&head + m)); m = m + 1; }
+    m = 0;
+    while (m < nt) { store8(out + 16 - nt + m, load8(&tail + m)); m = m + 1; }
+    return 6;
+}
+
+# 1 when `s` names a single host: no prefix, or /32 (IPv4) / /128 (IPv6).
+fn _addr_is_host(s: cstring): i64 {
+    var fam = _addr_family(s);
+    if (fam == 0) { return 0; }
+    var len = strlen(s);
+    var slash = memchr(s, 47, len);
+    if (slash < 0) { return 1; }
+    var p = atoi(s + slash + 1);
+    if (fam == 4 && p == 32) { return 1; }
+    if (fam == 6 && p == 128) { return 1; }
+    return 0;
+}
+
+# Validate an IP address or CIDR string: IPv4 dotted quad or IPv6, with an
+# optional /prefix in range for the family. Host names are refused.
+fn validate_addr(s: cstring): i64 {
+    if (_addr_family(s) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     return nein_ok();
+}
+
+# A port number 0..65535, or a range "a-b" with a <= b (1.8.2).
+fn _is_port_token(s: cstring): i64 {
+    if (s == 0) { return 0; }
+    var len = strlen(s);
+    var dash = memchr(s, 45, len);
+    if (dash < 0) {
+        if (_parse_dec(s, 0, len, 5, 65535) != len) { return 0; }
+        return 1;
+    }
+    if (_parse_dec(s, 0, dash, 5, 65535) != dash) { return 0; }
+    if (_parse_dec(s, dash + 1, len, 5, 65535) != len) { return 0; }
+    if (atoi(s) > atoi(s + dash + 1)) { return 0; }
+    return 1;
+}
+
+# The selector of a set lookup (`<field> @set`), from a closed set (1.8.2,
+# audit I-2). Through 1.8.1 it only had to pass validate_nft_element, so
+# "ip saddr !=" rendered `ip saddr != @trusted accept` — an allowlist
+# inverted into "everyone except the trusted".
+fn _is_set_lookup_field(s: cstring): i64 {
+    if (s == 0) { return 0; }
+    if (streq(s, "ip saddr") == 1) { return 1; }
+    if (streq(s, "ip daddr") == 1) { return 1; }
+    if (streq(s, "ip6 saddr") == 1) { return 1; }
+    if (streq(s, "ip6 daddr") == 1) { return 1; }
+    if (streq(s, "tcp dport") == 1) { return 1; }
+    if (streq(s, "tcp sport") == 1) { return 1; }
+    if (streq(s, "udp dport") == 1) { return 1; }
+    if (streq(s, "udp sport") == 1) { return 1; }
+    if (streq(s, "th dport") == 1) { return 1; }
+    if (streq(s, "th sport") == 1) { return 1; }
+    if (streq(s, "meta l4proto") == 1) { return 1; }
+    if (streq(s, "iifname") == 1) { return 1; }
+    if (streq(s, "oifname") == 1) { return 1; }
+    return 0;
 }
 
 # Validate an nftables address family.
 # Must be one of: inet, ip, ip6, arp, bridge, netdev.
 fn validate_family(s: cstring): i64 {
+    if (s == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (streq(s, "inet") == 1) { return nein_ok(); }
     if (streq(s, "ip") == 1) { return nein_ok(); }
     if (streq(s, "ip6") == 1) { return nein_ok(); }
@@ -154,6 +369,7 @@ fn validate_family(s: cstring): i64 {
 # Validate a network interface name.
 # Up to 15 chars, alphanumeric plus - _ .
 fn validate_iface(s: cstring): i64 {
+    if (s == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var len = strlen(s);
     if (len == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (len > 15) { return nein_err(NEIN_ERR_INVALID_RULE); }
@@ -171,6 +387,7 @@ fn validate_iface(s: cstring): i64 {
 # Validate a connection tracking state.
 # Must be: new, established, related, invalid, untracked.
 fn validate_ct_state(s: cstring): i64 {
+    if (s == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (streq(s, "new") == 1) { return nein_ok(); }
     if (streq(s, "established") == 1) { return nein_ok(); }
     if (streq(s, "related") == 1) { return nein_ok(); }
@@ -197,6 +414,7 @@ fn validate_ct_state(s: cstring): i64 {
 # set. Anything else — including a `}` that would close the brace and start a
 # new statement — is rejected.
 fn validate_ct_state_list(s: cstring): i64 {
+    if (s == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var len = strlen(s);
     if (len == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (len > 128) { return nein_err(NEIN_ERR_INVALID_RULE); }
@@ -234,6 +452,7 @@ fn validate_ct_state_list(s: cstring): i64 {
 # Validate a comment string.
 # Rejects double quotes and dangerous chars. Max 128 chars.
 fn validate_comment(s: cstring): i64 {
+    if (s == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var len = strlen(s);
     if (len > 128) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (_has_quote(s) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
@@ -244,6 +463,7 @@ fn validate_comment(s: cstring): i64 {
 # Validate a log prefix string.
 # Same constraints as comments but max 64 chars (nftables limit).
 fn validate_log_prefix(s: cstring): i64 {
+    if (s == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var len = strlen(s);
     if (len > 64) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (_has_quote(s) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
@@ -277,6 +497,7 @@ fn _has_nft_comment_char(s: cstring): i64 {
 }
 
 fn validate_nft_element(s: cstring): i64 {
+    if (s == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var len = strlen(s);
     if (len == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (_has_quote(s) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }

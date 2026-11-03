@@ -4,6 +4,180 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.8.2] — 2026-11-03
+
+**The P(-1) audit after three toolchain moves: 4 HIGH, 18 MEDIUM and 28 LOW found; every HIGH,
+16 MEDIUM and 23 LOW fixed.** Five independent reviewers, one per area; every MEDIUM-or-higher
+finding re-verified here against real nftables 1.1.7 in an unprivileged user + network namespace —
+nein's own rendered rulesets applied, live traffic through a bridge / LAN / external topology, the
+reviewers' proofs of concept re-run against 1.8.1 and 1.8.2. Full report:
+[`docs/audit/2026-11-03-audit.md`](docs/audit/2026-11-03-audit.md). **870 unit** (was 762) + 18
+integration assertions, a new load test that has real nft parse every builder's output, 6 fuzz
+drivers (new: the live-rule parser, strict oracles, clean under `--bounds` and `--poison`).
+
+⚠ **Rendered rulesets change, and validation is stricter.** Every change below fixes a defect, but a
+consumer that diffs nein's output, or passes inputs nein used to accept, will see it. Read
+"Changed — what consumers will see" before upgrading.
+
+### Security — HIGH
+
+- **`nein_diff` deleted other tenants' rules** (P-1). Every chain on *either* side was reconciled,
+  so any live chain the target did not declare was "out of sync" and emptied. Verified: with nein's
+  `inet filter` fully in sync, docker's `ip nat POSTROUTING` masquerade was deleted (exit 0). stiva,
+  aegis, daimon, docker, libvirt and kube-proxy on one host would each have wiped the others'.
+  Latent since 1.5.0, live since the 1.6.9 `-a` fix. Only the chains the target declares are
+  reconciled now (an empty target chain still counts).
+- **Rules beginning `counter`, `limit`, `quota`, `ct helper`, … vanished from the parse** (P-2) — a
+  regression from the 1.6.9 H-4 fix. Such a rule (nein renders `counter …` itself) opened a phantom
+  block, so it and every later rule in its chain were invisible: `nein_diff` appended the target on
+  every run, defeating the 1.6.10 ordering fix, and `status()` counted 1 rule of 5. A line now opens
+  a block only where nft can print one.
+- **Container port publishing captured routed traffic to every destination** (B-1). `tcp dport 80
+  dnat to …` had no destination scope. Verified live: a LAN client fetching an external site got the
+  container; other containers' outbound port-80 traffic broke; the container was also reachable
+  directly with no DNAT. Every DNAT is now `fib daddr type local …` (Docker's `addrtype LOCAL`), and
+  the forward accept requires `ct status dnat`. Re-verified live on six paths.
+- **The policy engine's loopback accept let any agent reach any other** (B-2). `iif "lo" accept` in
+  every agent chain accepted all agent-to-agent traffic. Verified live: svc-b reached svc-a:22 though
+  svc-a allows only 8080. The accept now names the agent's own address.
+
+### Security — MEDIUM
+
+| | Defect | Fix |
+|---|---|---|
+| I-1 | A map key `22 : accept, 23` injected its own entries and verdicts (applied by nft). | Elements and keys are validated by the set's key type. |
+| I-2 | Set-lookup selector free-form: `ip saddr !=` inverted an allowlist. | A closed set of selectors. |
+| I-3 | Unknown enums rendered permissive defaults: policy → `accept`, hook → `input`, match → nothing. `cfg_parse_policy("DROP")` (wrong case) applied an open input chain. | Every enum and range validated; unknown cases render a token nft refuses. |
+| I-4 | A shifted port range sent every connection to the first port (packet-verified: 8000/8005/8010 all → 9000). | An explicit `tcp dport map`; an unshifted range keeps each port. |
+| I-5 / S-7 | `firewall_render` never validates, and the netns header and README told consumers to hand it to agnodrm / `nft -f`. | New `firewall_render_checked`; docs corrected. |
+| S-1 | The nft child called `alloc()` between fork and execve — a threaded host could deadlock it. | See "apply path" below. |
+| S-2 | Pipes not close-on-exec: concurrent forks held nft's stdin; host fds leaked into nft. | 〃 |
+| S-3 | A host killed mid-write left nft a prefix, committed atomically: a diff rebuild's deletes, no adds. | 〃 |
+| B-3 | Any CIDR as an agent address; the alphabetically first overlapping agent decided (live-verified). | One host per agent, one agent per address (compared as canonical bytes). |
+| B-4 | The mesh rendered `redirect to :15001 accept`; nft refuses it, so the mesh never loaded. | New `verdict_none()`. |
+| B-5 | Isolation groups did nothing on one bridge without br_netfilter (live-verified). | Also enforced in a `table bridge` forward chain. |
+| B-6 | Policy `target` and `default_action` were never rendered; DENY rendered like ALLOW. | An address target is matched; DENY adds a scoped drop. |
+| M-1 | MCP `port` via `atoi` on the raw token: `18446744073709551638` → 22 (applied, reported success); duplicate keys read first-wins. | Strict port; arguments must be one object with plain, unique keys. |
+| P-3 | Chain comments and anonymous chains became handle-0 phantoms; `nein_diff` returned Ok on a chain it could not converge. | Parsed; `Err(NEIN_ERR_PARSE)` and nothing applied. |
+| P-4 | Quoted text and names trusted verbatim: newline / quote smuggling, a spaced table name folded into `filter`. | Unbalanced listings refused; handle must end the line; exact headers, validated names. |
+| P-5 | Names in diff ops never validated: a hostile live chain name produced an op that deleted nein's table. | Every op name validated. |
+
+**Deferred to 1.9.0 by decision** (contract changes made with the consumers): replay binding on
+signed rulesets (with aegis), the MCP host-gate contract (M-2 — a `Result`-returning gate reads `Err`
+as permit; documented in the host guide) and a "reads the live firewall" tool class (M-3), both with
+daimon. See the roadmap.
+
+### Changed — the apply path stages everything in memfds (S-1 to S-6, S-9, S-10)
+
+The ruleset is written to a close-on-exec memfd **before** the fork; nft's stdout goes to
+`/dev/null` and its stderr to a second memfd; the child allocates nothing, resets the signal state
+it would inherit (an ignored SIGPIPE, a blocked mask), dies with the host, and closes every other
+descriptor; the parent waits on a pidfd with a **60 s deadline** and kills a wedged nft. No pipe
+remains, so the threaded-host deadlock, the inherited-write-end stall, the truncated commit and the
+1.6.x pipe-ordering deadlock (the last open 2026-08-21 MEDIUM) cannot happen. A ruleset containing a
+NUL is refused (nft applied the prefix and exited 0). nft's stderr is now logged on failure. The
+capture path (`status`, `nein_list`, `nein_diff`) reads nft's output after it exits, so EINTR can no
+longer truncate it. `nein_set_nft_path` copies its argument. Re-verified with the reviewer's
+proofs of concept: the stderr-first and threaded-allocator cases hung 25 s on 1.8.1 and complete in
+16 ms / 300 applies in 561 ms on 1.8.2. `--agnos` builds without the `sys_dup2` warning.
+
+### Changed — what consumers will see in rendered rulesets
+
+| Before | After | Why |
+|---|---|---|
+| `tcp dport 80 dnat to A:80` | `fib daddr type local tcp dport 80 dnat ip to A:80` | B-1; inet tables need the family |
+| `… dnat to A:9000-9010` (shifted range) | `… dnat ip to A : tcp dport map { 8000 : 9000, … }` | I-4 |
+| `ip daddr C tcp dport 80 accept` (port-map forward) | `ip daddr C ct status dnat tcp dport 80 accept` | B-1 |
+| `ip saddr S snat to T` / `ip saddr S oif "x" masquerade` | `ip saddr S snat ip to T` / `… oifname "x" masquerade` (`ip6` for IPv6) | I-7 |
+| `iif "x"` / `oif "x"` | `iifname "x"` / `oifname "x"` | I-7: no load-time ifindex |
+| `icmp accept`, `tcp log …` (protocol, no port) | `meta l4proto icmp accept` | I-7: was an nft syntax error |
+| `dport 53 accept` (port, no protocol) | `th dport 53 accept` | I-7 |
+| `define $lan = …` | `define lan = …` | I-6: was an nft syntax error |
+| — (isolation groups set) | an extra `table bridge <prefix>_iso` | B-5 |
+| `iif "lo" accept` (engine agent) | `iifname "lo" ip saddr <agent> accept` | B-2 |
+| `tcp dport 8090 ip saddr S accept` (policy) | `ip daddr T ip saddr S tcp dport 8090 accept` + `ip daddr T drop` for DENY | B-6 |
+| `… redirect to :15001 accept` (mesh) | `… redirect to :15001` | B-4 |
+| `ip saddr <IPv6>` | `ip6 saddr <IPv6>` (`deny_source`, `allow_service`, engine, netns, bridge) | nft read it as a hostname |
+
+### Changed — validation refuses more
+
+- **Addresses must parse** as IPv4 or IPv6 with an in-range prefix (I-9). `validate_addr` checked only
+  the character set, so a hex-only DNS name (`dead1.cafe`) passed and nft resolved it at apply.
+- **An address must match its match's family** (`ip saddr` IPv4, `ip6 saddr` IPv6).
+- **Set elements and map keys** are one value of the key type (an address, range or CIDR; a port,
+  range or service name; a protocol; an interface).
+- **Enums and numbers** are range-checked in `rule_validate`, `nat_validate`, `firewall_validate`
+  (chain header, table family): ports, marks, limit rate and burst (> 0, as nft requires), frag-off,
+  ICMP code, VLAN, DSCP, priorities, quota, `log level` with `group` (mutually exclusive in nft).
+- **Engine**: an agent address is one host; two agents may not share one; outbound hosts share the
+  agent's family. **Policy**: the target is an address, a label or `any`. **GeoIP**: the hook must see
+  inbound traffic. **Bridge**: port-mapping ports and protocol.
+- **MCP arguments**: one JSON object, plainly spelled unique keys, `port` a plain integer 1–65535.
+- Every validator and `cfg_parse_*` returns an error on a NULL pointer (they crashed).
+
+### Changed — MCP tool registration is one bote call
+
+`nein_tools_register` / `nein_tools_register_gated` register each tool with bote's
+`dispatcher_register_tool`: definition and handler under one write lock, `bote/tool/registered`
+published (bote 3.7.2+ listen streams now hear of nein's tools), and a refusal logged with bote's
+reason. They return the number of tools refused — 0 when all six registered (always 0 through
+1.8.1, which also bound a refused tool's handler).
+
+### Changed — signing
+
+`sign_ruleset_body` checks `ed25519_sign`'s result (a key whose public half does not match its seed
+used to produce an Ok envelope with a zeroed signature that could never verify — and the test suite
+was signing with exactly such a key) and refuses a body containing NUL. `apply_signed_ruleset`
+verifies and applies one private copy of the envelope (M-6). NULL arguments fail closed.
+
+### Added
+
+- `firewall_render_checked(fw)` — validate, then render: `Ok(Str)` or the validation `Err`. Use it
+  for any ruleset text that does not go through `apply_firewall`.
+- `verdict_none()` / `VERDICT_NONE` — a rule whose last statement is terminal (a `redirect`).
+- `chain_header_validate(c)` — a base chain's type, hook, policy and priority are in range.
+- `fuzz/diff_parse_live.fcyr`, `tests/integration/nft_load.tcyr` (see the top). The load test found
+  two more defects on its first run (`ip saddr <IPv6>`; the engine's IPv4-only host set).
+
+### Changed — pins
+
+bote-core **3.7.5 → 3.7.6** (progress notifications and four transport fixes; nothing nein calls
+changed). The lock moves by two lines.
+
+### Documentation
+
+- `docs/development/roadmap.md` rewritten forward-looking only: completed items removed, open work
+  organised into 1.9.0 / 1.9.x / 2.0.0 and post-2.x. Its "traps" moved to the new
+  `docs/development/traps.md`, with one more: a test that asserts the output can enshrine the bug.
+- `README.md`, `CONTRIBUTING.md`, `docs/guides/testing.md`: `cyrius tests` was removed in cyrius
+  6.7.12 — use `cyrius test tests`. CONTRIBUTING's install recipe (a 6.5.33 tarball laid out by
+  hand, refused since 6.7.7) is now CI's installer keyed on the pin.
+- `docs/guides/mcp-host-integration.md`: the registration return value, both gate hazards (M-2),
+  what "read-only" does and does not mean (M-3), and the argument rules.
+- The netns header and the README examples use `firewall_render_checked`; the threat model's pin and
+  the `[lib.mcp]` manifest comment are current.
+- The API test-coverage floor is raised 64% → **65%** (262/397), the ratchet working as intended.
+
+### Performance
+
+Single-run figures against the last committed baseline (1.6.10), ns unless marked. **Every increase
+is output or checking the repairs added — none is the same work done slower:**
+
+| bench | 1.6.10 | 1.8.2 | | cause |
+|---|---|---|---|---|
+| `nat_range_render` | 915 | **4,942** | +440% | the 10-entry port map I-4 requires (the old output was wrong) |
+| `policy_to_rules` | 977 | **2,149** | +120% | target match + scoped default-deny rule (B-6) |
+| `bridge_render` | 28.4 µs | 45.4 µs | +60% | DNAT scope, `ct status dnat`, isolation table (B-1, B-5) |
+| `bridge_large_render` | 266 µs | 363 µs | +36% | 〃 |
+| `rule_render/service` | 1,052 | 1,287 | +22% | protocol / port context (I-7) |
+| `nat_dnat_render` | 834 | 1,005 | +20% | `fib daddr type local`, family keyword |
+| `rule_validate/complex` | 761 | 890 | +17% | strict address parsing, range checks (I-3, I-9) |
+| `validate_identifier/short` | 62 | 37 | −40% | |
+
+⚠ **The bench-regression gate fails on the first two** (beyond the 90% ns threshold). They are
+deliberate correctness trade-offs: commit with `[bench-regression-ack]`, or record a 1.8.2 baseline
+(`scripts/bench-track.sh`).
+
 ## [1.8.1] — 2026-11-02
 
 **cyrius 6.7.9 → 6.7.18, every dep at its latest release, and three CI gates that were reporting

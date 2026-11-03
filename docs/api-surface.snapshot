@@ -52,6 +52,7 @@ builder::service_policy/2
 chain::chain_add_nat_rule/2
 chain::chain_add_rule/2
 chain::chain_base/5
+chain::chain_header_validate/1
 chain::chain_hook/1
 chain::chain_name/1
 chain::chain_policy/1
@@ -134,6 +135,7 @@ firewall::firewall_deduplicate/1
 firewall::firewall_dry_run/1
 firewall::firewall_new/0
 firewall::firewall_render/1
+firewall::firewall_render_checked/1
 firewall::firewall_set_dry_run/2
 firewall::firewall_tables/1
 firewall::firewall_validate/1
@@ -307,6 +309,7 @@ rule::verdict_jump/1
 rule::verdict_log/1
 rule::verdict_log_advanced/4
 rule::verdict_new/5
+rule::verdict_none/0
 rule::verdict_reject/0
 rule::verdict_reject_with/1
 rule::verdict_return/0

@@ -28,7 +28,7 @@ fn _chain_type_str(t: i64): cstring {
     if (t == CHAIN_FILTER) { return "filter"; }
     if (t == CHAIN_NAT) { return "nat"; }
     if (t == CHAIN_ROUTE) { return "route"; }
-    return "filter";
+    return "__nein_invalid_chain_type__";
 }
 
 fn _hook_str(h: i64): cstring {
@@ -38,13 +38,34 @@ fn _hook_str(h: i64): cstring {
     if (h == HOOK_OUTPUT) { return "output"; }
     if (h == HOOK_POSTROUTING) { return "postrouting"; }
     if (h == HOOK_INGRESS) { return "ingress"; }
-    return "input";
+    return "__nein_invalid_hook__";
 }
 
 fn _policy_str(p: i64): cstring {
     if (p == POLICY_ACCEPT) { return "accept"; }
     if (p == POLICY_DROP) { return "drop"; }
-    return "accept";
+    # Through 1.8.1 an unknown policy rendered "accept" and an unknown hook
+    # "input" (audit I-3): `cfg_parse_hook("Forward")` / `cfg_parse_policy("DROP")`
+    # — a capitalisation slip in operator config — return -1, and the chain
+    # applied as `hook input ... policy accept`, an open input chain. Now
+    # chain_header_validate refuses them and an unvalidated render fails closed.
+    return "__nein_invalid_policy__";
+}
+
+# A base chain's header is in range (1.8.2, audit I-3): a known type, hook
+# and policy, and a priority that fits nft's signed 32-bit field. A regular
+# chain (type 0) carries no header.
+fn chain_header_validate(c: i64): i64 {
+    var ct = chain_type_val(c);
+    if (ct == 0) { return nein_ok(); }
+    if (ct < CHAIN_FILTER || ct > CHAIN_ROUTE) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    var h = chain_hook(c);
+    if (h < HOOK_PREROUTING || h > HOOK_INGRESS) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    var p = chain_policy(c);
+    if (p < POLICY_ACCEPT || p > POLICY_DROP) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    var pr = chain_priority(c);
+    if (pr < 0 - 2147483648 || pr > 2147483647) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    return nein_ok();
 }
 
 # ================================================================

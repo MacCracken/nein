@@ -41,7 +41,8 @@ modules = [
 
 # `[lib.mcp]` — opt-in bundle for hosts that want nein's MCP + signing
 # surface (daimon, 1.6.2). `cyrius distlib mcp` → dist/nein-mcp.cyr adds
-# sign.cyr + mcp.cyr on top of the full [lib] core. The bundle carries
+# sign.cyr + mcp.cyr on top of the [lib] core minus bridge.cyr, which is
+# left out since 1.6.12 because bote defines its own bridge_config_new. It carries
 # unresolved bote (jsonx / dispatcher / annotations) and sigil (ed25519 /
 # hex / sha256) symbols by design — the consumer (daimon) supplies both,
 # exactly as bote's [lib.core] leaves its stdlib to the consumer. The
@@ -134,7 +135,7 @@ modules = ["dist/majra.cyr"]
 # See docs/development/dependencies.md.
 [deps.bote-core]
 git = "https://github.com/MacCracken/bote.git"
-tag = "3.7.5"
+tag = "3.7.6"
 modules = ["dist/bote-core.cyr"]
 
 # sigil crypto — explicit pin to the self-contained single-file dist bundle,

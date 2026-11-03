@@ -166,8 +166,10 @@ fn _mesh_outbound_chain(m: i64): i64 {
         i = i + 1;
     }
 
-    # Redirect outbound TCP to proxy
-    r = rule_new(verdict_accept());
+    # Redirect outbound TCP to proxy. No verdict after it: `redirect` is
+    # terminal, and the old trailing `accept` made nft refuse the whole mesh
+    # ruleset (1.8.2, audit B-4) — sidecar interception never installed.
+    r = rule_new(verdict_none());
     rule_add_match(r, match_raw(_raw_redirect(mesh_outbound_port(m))));
     rule_set_comment(r, "redirect outbound to proxy");
     chain_add_rule(c, r);
@@ -191,7 +193,7 @@ fn _mesh_inbound_chain(m: i64): i64 {
         i = i + 1;
     }
 
-    var r = rule_new(verdict_accept());
+    var r = rule_new(verdict_none());
     rule_add_match(r, match_raw(_raw_redirect(mesh_inbound_port(m))));
     rule_set_comment(r, "redirect inbound to proxy");
     chain_add_rule(c, r);

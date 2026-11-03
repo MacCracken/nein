@@ -1,13 +1,14 @@
 # Architecture Overview
 
-Last refresh: **2026-08-21** (v1.6.10).
+Last refresh: **2026-11-03** (v1.8.2 — the apply path's memfds and deadline; buffer list).
 
 ## Design Philosophy
 
 nein is a **type-safe nftables rule generator** for the AGNOS ecosystem.
 It provides Cyrius values that map to nftables concepts (tables, chains,
 rules, sets, NAT, policies) and renders them to nftables syntax for
-application via `nft -f -` (fork + pipe + execve from `src/lib/apply.cyr`).
+application via `nft -f -` (fork + execve from `src/lib/apply.cyr`, the ruleset
+staged in a memfd on nft's stdin).
 
 Key principles:
 
@@ -83,9 +84,11 @@ caller's Cyrius code (e.g. stiva, daimon, aegis, sutra)
   rendering:     firewall_render(fw)    ──→  Str of nftables syntax
         │
         ▼
-  apply:         apply_firewall(fw)     ──→  fork → pipe → execve /usr/sbin/nft -f -
+  apply:         apply_firewall(fw)     ──→  validate → render → memfd (whole ruleset)
+                                              → fork → execve /usr/sbin/nft -f - (stdin = memfd)
                                               │
-                                              └─→ stderr drained, exit observed,
+                                              └─→ pidfd wait, 60 s deadline, exit observed,
+                                                  nft's stderr logged on failure,
                                                   Ok(0) / Err(NEIN_ERR_NFT_FAILED|PERMISSION_DENIED)
 ```
 
@@ -134,11 +137,18 @@ Modules with zero `str_builder` usage — `validate`, `config`, `builder`
 — don't render strings: validate scans bytes, config dispatches enums,
 builder composes pre-built values. The match holds.
 
-Four legitimate `var buf[N]` patterns remain:
-- `pipe_in/err/out[16]` in `apply.cyr` — fd pairs returned by
-  `sys_pipe` (4 bytes × 2 fds; required syscall ABI shape)
-- `errbuf/buf[4096]` in `apply.cyr` — `sys_read` capture targets for
-  stderr/stdout draining (required for pipe semantics)
+The legitimate `var buf[N]` patterns (1.8.2):
+- `argv[32]` in `apply.cyr` — nft's argv, built on the parent's frame
+  BEFORE the fork so the child allocates nothing (audit S-1); `empty[8]`
+  is the child's signal set (8 bytes, rt_sigprocmask's sigsetsize)
+- `buf[4096]` in `apply.cyr` `_nein_memfd_read` — the read target for
+  nft's captured stdout / stderr, at most 4096 per read (the pipe-era
+  `pipe_in/err/out[16]` and `errbuf[4096]` are gone)
+- `head[16]`, `tail[16]`, `four[16]` in `validate.cyr` `_addr_bytes`, and
+  `a[16]` / `b[16]` in `engine.cyr` `pe_validate` — 16-byte canonical
+  address buffers, filled byte by byte within 16
+- `bad[8]` / `st[8]` / `dst[8]` in `diff.cyr` / `mcp.cyr` — one i64 status
+  slot each
 - `buf[20]` in `_sb_add_hex` (`rule.cyr`) — reverse-write scratch for
   hex digits, copied into a str_builder at the end (correct usage)
 - `block_stack[128]` in `inspect.cyr` and `diff_bstack[128]` in

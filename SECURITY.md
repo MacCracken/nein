@@ -5,8 +5,8 @@ Last refresh: **2026-08-21** (v1.6.5).
 ## Scope
 
 nein is a programmatic nftables firewall library that renders rulesets
-from typed Cyrius values and applies them via `fork + pipe + execve` to
-the `nft` binary. It is intended to run under root or `CAP_NET_ADMIN`
+from typed Cyrius values and applies them via `fork + execve` of the `nft`
+binary, with the ruleset staged in a memfd on nft's stdin. It is intended to run under root or `CAP_NET_ADMIN`
 in the caller's process.
 
 The detailed threat model lives in
@@ -64,22 +64,29 @@ threat in the threat model.
 - **No PATH-based execve** (T-3). The `nft` subprocess is invoked via a
   single pinned absolute path (`/usr/sbin/nft`); PATH is never consulted.
   A caller can override the path at runtime via `nein_set_nft_path`
-  (validated: absolute, ≤ 256 bytes, non-null). The CI security-scan gate
+  (validated: absolute, ≤ 256 bytes, non-null; copied since 1.8.2, not kept
+  as the caller's pointer). The CI security-scan gate
   allowlists the pinned path in `src/lib/apply.cyr` and fails the build on
   any new hardcoded `/etc/`, `/bin/`, or un-allowlisted `/sbin/` literal.
-- **Child-process hygiene** (T-4). `_run_nft_stdin` and
-  `_run_nft_capture` always close unused pipe ends, drain stderr, and
-  `sys_waitpid` regardless of stdin-write outcome. Execve failure
-  routes to `sys_exit(127)` in the child; the parent observes that
-  exit and returns `Err(ERR_PERMISSION_DENIED)`.
+- **Child-process hygiene** (T-4). Since 1.8.2 the whole ruleset is
+  written to a close-on-exec memfd *before* the fork, nft's stdout goes to
+  `/dev/null` and its stderr to a second memfd, so no pipe exists to
+  deadlock, stall on an inherited write end, or deliver a truncated batch
+  if the host dies mid-write. The child allocates nothing between fork and
+  execve, resets the signal mask and SIGPIPE / SIGXFSZ, sets a
+  parent-death signal and closes every inherited descriptor. The parent
+  waits on a pidfd with a 60 s deadline (a wedged nft is killed) and
+  checks `waitpid`'s result. A ruleset containing NUL is refused. Execve
+  failure routes to `sys_exit(127)` in the child; the parent observes that
+  exit and returns `Err(NEIN_ERR_PERMISSION_DENIED)`.
 - **No `sys_system`** (T-1 / T-3). CI security scan hard-fails on any
   `\bsys_system\s*\(` match in `src/`. The shell-quoting attack
-  surface is precisely what fork+pipe+execve avoids.
+  surface is precisely what fork+execve with an explicit argv avoids.
 - **Lockfile-pinned deps** (T-8). `cyrius.lock` records the sha256 of
   each resolved dep. `cyrius deps --verify` in CI fails on hash
   mismatch. Cyrius itself is pinned in `cyrius.cyml`
   (`cyrius = "6.7.18"`). nein's git dep set (`cyrius.cyml` `[deps.*]`,
-  as of 1.8.1): libro 2.11.3, majra 2.13.0, bote 3.7.5 (`bote-core`),
+  as of 1.8.2): libro 2.11.3, majra 2.13.0, bote 3.7.6 (`bote-core`),
   sigil 3.13.15, patra 1.16.6 —
   sigil + patra carry explicit pins. sakshi dropped out of the git set at
   1.6.5 (libro 2.8.8 no longer pulls it transitively); it now resolves

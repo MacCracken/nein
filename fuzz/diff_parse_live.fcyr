@@ -1,0 +1,204 @@
+# Fuzz: diff.cyr + inspect.cyr — parsers of live `nft -a list ruleset` text.
+#
+# Added at 1.8.2 (P(-1) audit, docs/audit/2026-11-03-audit.md). Hand-curated
+# inputs missed a memory-safety bug in this parser twice (the v1.5.5 block-stack
+# OOB write, the v1.6.9 SIGSEGV), and the 2026-11-03 audit found five more
+# parse defects in it (P-1 to P-5). Seeds are real nftables 1.1.7 listings,
+# mutated 1-6x per iteration.
+#
+# Always on: no crash/hang, LiveRule fields non-NULL and verbatim in the input,
+# 0 <= handle < 1e18, counts <= lines, ops are single LF-terminated lines, no
+# `handle 0` delete, seed-1 self-diff empty.
+# FZ_STRICT (on since the 1.8.2 parser fixes) adds the semantic oracles: golden
+# parses of every seed, header-backed attribution, identifier-safe live names,
+# a counter-led chain diffs clean against itself, and no ops on a table the
+# target does not contain. Every one of them failed on 1.8.1.
+
+include "src/lib/error.cyr"
+include "src/lib/validate.cyr"
+include "src/lib/rule.cyr"
+include "src/lib/set.cyr"
+include "src/lib/nat.cyr"
+include "src/lib/chain.cyr"
+include "src/lib/table.cyr"
+include "src/lib/firewall.cyr"
+include "src/lib/builder.cyr"
+include "src/lib/policy.cyr"
+include "src/lib/geoip.cyr"
+include "src/lib/mesh.cyr"
+include "src/lib/bridge.cyr"
+include "src/lib/engine.cyr"
+include "src/lib/config.cyr"
+include "src/lib/netns.cyr"
+include "src/lib/apply.cyr"
+include "src/lib/inspect.cyr"
+include "src/lib/diff.cyr"
+
+alloc_init();
+sakshi_set_level(0 - 1);   # the parser logs every skipped line; keep CI output readable
+var FZ_STRICT = 1;
+var FZ_ITERS = 20000;
+var _fz_s = 88172645463325252;
+fn _rnd(n) {
+    _fz_s = _fz_s * 6364136223846793005 + 1442695040888963407;
+    return ((_fz_s >> 33) & 2147483647) % n;
+}
+fn _fail(why, raw: Str) {
+    var t = str_cstr(raw); println("fuzz/diff_parse_live: FAIL");
+    print(why, strlen(why)); println(""); print(t, strlen(t)); syscall(SYS_EXIT, 1); return 0;
+}
+fn _cat(a, b, c, d) {
+    var sb = str_builder_new(); str_builder_add_cstr(sb, a); str_builder_add_cstr(sb, b);
+    str_builder_add_cstr(sb, c); str_builder_add_cstr(sb, d); return str_builder_build(sb);
+}
+fn _join(a: Str, b: Str, c: Str): Str {
+    var sb = str_builder_new(); str_builder_add(sb, a); str_builder_add(sb, b);
+    str_builder_add(sb, c); return str_builder_build(sb);
+}
+fn _sub(s: Str, off, len): Str { return str_new(str_data(s) + off, len); }
+fn _fw1(r1, r2) {   # inet filter input [r1, r2]
+    var fw = firewall_new(); var t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(c, r1); if (r2 != 0) { chain_add_rule(c, r2); }
+    table_add_chain(t, c); firewall_add_table(fw, t);
+    return fw;
+}
+fn _raw_accept(m) { var r = rule_new(verdict_accept()); rule_add_match(r, match_raw(m)); return r; }
+
+# Seeds + golden [rule count, handle sum] (what nft itself reports for each listing)
+var SEEDS = vec_new(); var GOLD = vec_new();
+fn _seed(s: Str, n, hsum) { vec_push(SEEDS, s); vec_push(GOLD, n * 1000000 + hsum); return 0; }
+var T1 = "table inet filter { # handle 1\n\tchain input { # handle 1\n";
+var TY = "\t\ttype filter hook input priority filter; policy drop;\n";
+_seed(_cat(T1, TY, "\t\tct state established,related accept # handle 4\n",
+    "\t\ttcp dport 22 accept comment \"ssh # handle 9\" # handle 5\n\t}\n}\n"), 2, 9);
+_seed(_cat("table inet big { # handle 2\n\tcounter c1 { # handle 3\n\t\tpackets 0 bytes 0\n\t}\n",
+    "\tset blk { # handle 8\n\t\ttype ipv4_addr\n\t\telements = { 10.0.0.0/24,\n\t\t\t 10.0.1.0/24 }\n\t}\n",
+    "\tmap pm { # handle 9\n\t\ttype inet_service : verdict\n\t\telements = { 80 : jump web }\n\t}\n",
+    "\tchain web { # handle 1\n\t\ttcp dport 80 accept # handle 12\n\t}\n}\n"), 1, 12);
+_seed(_join(_cat(T1, "\t\tcomment \"managed by nein\"\n", TY, "\t\tip saddr 1.2.3.4 jump {\n"),
+    str_from("\t\t\ttcp dport 22 accept\n\t\t} # handle 4\n"),
+    str_from("\t\tudp dport 53 accept # handle 5\n\t}\n}\n")), 2, 9);
+_seed(_cat(T1, "\t\tcounter packets 0 bytes 0 accept # handle 5\n",
+    "\t\tlimit rate 10/second burst 5 packets accept # handle 6\n",
+    "\t\tct helper set \"ftp1\" # handle 9\n\t\ttcp dport 22 accept # handle 8\n\t}\n}\n"), 4, 28);
+_seed(_cat("table ip nat { # handle 2\n\tchain POSTROUTING { # handle 1\n",
+    "\t\ttype nat hook postrouting priority srcnat; policy accept;\n",
+    "\t\tip saddr 172.17.0.0/16 oifname != \"docker0\" masquerade # handle 2\n", "\t}\n}\n"), 1, 2);
+
+var DICT = vec_new(); fn _d(t) { vec_push(DICT, t); return 0; }
+_d("table inet x {\n"); _d("chain c {\n"); _d("}\n"); _d("\t}\n"); _d("set s {\n"); _d("map m {\n");
+_d("counter "); _d("limit rate 1/second "); _d("quota over 1 mbytes "); _d("ct helper set ");
+_d("ct timeout "); _d("synproxy "); _d("tunnel t {\n"); _d(" # handle "); _d(" # handle 7");
+_d(" # handle 99999999999999999999"); _d(" # handle 0"); _d("comment \""); _d("\"");
+_d("jump {\n"); _d("\n"); _d("table "); _d("chain "); _d("x;y\tz"); _d("{ "); _d(" {");
+var ALPHA = "{}\"\n#; \t\r09a-";
+var _FZ_FW = _fw1(allow_tcp(22), 0);
+
+fn _mutate(s: Str): Str {
+    var n = str_len(s); var p = 0; if (n > 0) { p = _rnd(n + 1); }
+    var k = _rnd(5);
+    if (k == 0 && n > 0) {
+        var b = alloc(n + 1); memcpy(b, str_data(s), n); store8(b + n, 0);
+        store8(b + _rnd(n), load8(ALPHA + _rnd(strlen(ALPHA))));
+        return str_new(b, n);
+    }
+    if (k == 1) { return _join(_sub(s, 0, p), str_from(vec_get(DICT, _rnd(vec_len(DICT)))), _sub(s, p, n - p)); }
+    var l = _rnd(64); if (p + l > n) { l = n - p; }
+    if (k == 2) { return _join(_sub(s, 0, p), str_from(""), _sub(s, p + l, n - p - l)); }
+    if (k == 3) { return _join(_sub(s, 0, p), _sub(s, p, l), _sub(s, p, n - p)); }
+    return _sub(s, 0, p);
+}
+
+fn _check(raw: Str, gold): i64 {
+    var hay = str_cstr(raw); var lines = 1; var i = 0;
+    while (i < str_len(raw)) { if (load8(str_data(raw) + i) == 10) { lines = lines + 1; } i = i + 1; }
+    var rules = diff_parse_live(raw); var n = vec_len(rules); var hsum = 0;
+    if (n > lines) { _fail("more rules than lines", raw); }
+    i = 0;
+    while (i < n) {
+        var lr = vec_get(rules, i);
+        var fam = live_rule_family(lr); var tab = live_rule_table(lr); var chn = live_rule_chain(lr);
+        if (fam == 0 || tab == 0 || chn == 0 || live_rule_body(lr) == 0) { _fail("NULL LiveRule field", raw); }
+        if (_cstr_contains(hay, fam) == 0 || _cstr_contains(hay, tab) == 0
+          || _cstr_contains(hay, chn) == 0) {
+            _fail("LiveRule name not present in input", raw);
+        }
+        var h = live_rule_handle(lr); hsum = hsum + h;
+        if (h < 0 || h >= 1000000000000000000) { _fail("handle out of range", raw); }
+        if (FZ_STRICT == 1) {
+            if (is_err_result(validate_family(fam)) == 1 || is_err_result(validate_identifier(tab)) == 1
+              || is_err_result(validate_identifier(chn)) == 1) {
+                _fail("STRICT: live name would reach an op unvalidated", raw);
+            }
+            var th = _cat("table ", fam, " ", tab);
+            if (_cstr_contains(hay, str_cstr(_join(th, str_from(" {"), str_from("")))) == 0
+              || _cstr_contains(hay, str_cstr(_cat("chain ", chn, " {", ""))) == 0) {
+                _fail("STRICT: rule attributed to a table/chain with no header", raw);
+            }
+            if (gold != 0 && h == 0) { _fail("STRICT: -a seed rule parsed without a handle", raw); }
+        }
+        i = i + 1;
+    }
+    if (FZ_STRICT == 1 && gold != 0 && gold != n * 1000000 + hsum) { _fail("STRICT: seed golden mismatch", raw); }
+    var tv = vec_new(); var cnt = _parse_ruleset(raw, tv);
+    if (cnt < 0 || cnt > lines || vec_len(tv) > lines) { _fail("_parse_ruleset count out of range", raw); }
+    if (vec_len(parse_rules_with_handles(raw, "ssh")) > n) { _fail("filtered set larger than parse", raw); }
+    var ops = diff_compute(_FZ_FW, raw); i = 0;
+    while (i < vec_len(ops)) {
+        var op = vec_get(ops, i); var ol = 0; if (op != 0) { ol = strlen(op); }
+        if (ol == 0 || load8(op + ol - 1) != 10) { _fail("op is not LF-terminated", raw); }
+        var j = 0; while (j < ol - 1) { if (load8(op + j) == 10) { _fail("op spans lines", raw); } j = j + 1; }
+        if (_cstr_starts_with(op, "delete rule ") == 1 && _cstr_contains(op, " handle 0\n") == 1) {
+            _fail("delete op with handle 0", raw);
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+# Fixed cases: seeds verbatim, idempotence, deep nesting past the 16-slot stack, embedded NUL
+var si = 0;
+while (si < vec_len(SEEDS)) { _check(vec_get(SEEDS, si), vec_get(GOLD, si)); si = si + 1; }
+var r22 = allow_tcp(22); rule_set_comment(r22, "ssh # handle 9");
+if (vec_len(diff_compute(_fw1(_raw_accept("ct state established,related"), r22), vec_get(SEEDS, 0))) != 0) {
+    _fail("self-diff of seed 1 is not empty", vec_get(SEEDS, 0));
+}
+if (FZ_STRICT == 1) {
+    var cl = _cat(T1, "\t\tcounter packets 0 bytes 0 accept # handle 5\n",
+      "\t\ttcp dport 22 accept # handle 8\n", "\t}\n}\n");
+    if (vec_len(diff_compute(_fw1(_raw_accept("counter packets 0 bytes 0"), allow_tcp(22)), cl)) != 0) {
+        _fail("STRICT: self-diff with a counter-led rule is not empty", cl);
+    }
+    # Seed 4 holds only docker's `ip nat` table. The target declares just
+    # `inet filter input`, so every op must be on that chain — adding the
+    # target's own rule is right; touching `ip nat` is audit P-1.
+    var nops = diff_compute(_FZ_FW, vec_get(SEEDS, 4));
+    var ni = 0;
+    while (ni < vec_len(nops)) {
+        if (_cstr_contains(vec_get(nops, ni), " inet filter input ") == 0) {
+            _fail("STRICT: op emitted for a table the target does not contain", vec_get(SEEDS, 4));
+        }
+        ni = ni + 1;
+    }
+}
+var deep = str_builder_new(); var di = 0;
+str_builder_add_cstr(deep, "table inet d {\n");
+while (di < 40) { str_builder_add_cstr(deep, "chain c {\n"); di = di + 1; }
+str_builder_add_cstr(deep, "tcp dport 1 accept # handle 3\n");
+while (di > 0) { str_builder_add_cstr(deep, "}\n"); di = di - 1; }
+var canary = 4242;
+_check(str_builder_build(deep), 0);
+if (canary != 4242) { println("fuzz/diff_parse_live: stack canary clobbered"); syscall(SYS_EXIT, 1); }
+diff_parse_live(str_new("table inet a {\nchain c {\nx\x00y # handle 2\n}\n}\n", 44));
+var it = 0;
+while (it < FZ_ITERS) {
+    var cur = vec_get(SEEDS, _rnd(vec_len(SEEDS)));
+    var m = 1 + _rnd(6);
+    while (m > 0) { cur = _mutate(cur); m = m - 1; }
+    if (str_len(cur) > 65536) { cur = _sub(cur, 0, 65536); }
+    _check(cur, 0);
+    it = it + 1;
+}
+println("fuzz/diff_parse_live: ok");
+syscall(SYS_EXIT, 0);

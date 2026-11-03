@@ -1,8 +1,8 @@
 # nein apply module — execute nftables rules via the nft command
 #
-# Uses fork+pipe+execve to spawn `nft -f -` with the ruleset piped on stdin.
-# Synchronous — subprocess I/O is short-lived and doesn't need async.
-# stderr is captured via a second pipe for error reporting.
+# Uses fork+execve to spawn `nft -f -` with the ruleset staged in a memfd on
+# its stdin (1.8.2; through 1.8.1 a pipe). Synchronous, with a deadline.
+# nft's stderr goes to a second memfd and is logged on failure.
 
 # ================================================================
 # nft binary path — pinned, configurable, no PATH consultation
@@ -67,11 +67,19 @@ fn nein_nft_path(): cstring { return _nein_nft_path; }
 
 # Override the absolute path to nft. Must start with '/'. Returns
 # Ok(0) on accept, Err(NEIN_ERR_INVALID_RULE) on reject.
+#
+# The path is COPIED (1.8.2, audit S-10). Through 1.8.1 nein kept the caller's
+# pointer, so a path built in a stack buffer or a reused heap buffer later had
+# execve run whatever bytes were there by then.
+var _nein_nft_path_buf[264];
 fn nein_set_nft_path(path: cstring): i64 {
     if (path == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (load8(path) != 47) { return nein_err(NEIN_ERR_INVALID_RULE); }   # '/'
-    if (strlen(path) > 256) { return nein_err(NEIN_ERR_INVALID_RULE); }
-    _nein_nft_path = path;
+    var n = strlen(path);
+    if (n > 256) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    memcpy(&_nein_nft_path_buf, path, n);
+    store8(&_nein_nft_path_buf + n, 0);
+    _nein_nft_path = &_nein_nft_path_buf;
     return nein_ok();
 }
 
@@ -86,8 +94,11 @@ fn nein_set_nft_path(path: cstring): i64 {
 # an error. Reproduced as exit 141; it also falsified threat-model T-4's claim
 # that the parent observes the child's exit status on execve failure.
 #
-# With SIGPIPE ignored the write returns -EPIPE instead, which the loop below
-# now treats as a hard error.
+# With SIGPIPE ignored the write returns -EPIPE instead, which the loop
+# treated as a hard error. Since 1.8.2 nein writes to no pipe at all (the
+# ruleset is staged in a memfd), so the guard is no longer load-bearing for
+# nein; it is kept so a host relying on its process-wide effect sees no change,
+# and the nft child has SIGPIPE reset to SIG_DFL before exec.
 #
 # This is process-wide state, so it is worth being explicit about: setting it
 # changes SIGPIPE disposition for the ENTIRE host process, not just for nein's
@@ -117,186 +128,256 @@ fn _nein_apply_sigpipe_guard() {
 }
 
 # ================================================================
-# Low-level: spawn nft with stdin from buffer, capture stderr
-# Returns Ok(0) on exit 0, Err(NEIN_ERR_NFT_FAILED) on non-zero or failure.
+# Low-level: run nft with its stdio on memfds (1.8.2)
 # ================================================================
-
-# Redirect `src` onto standard descriptor `dst` in the child (1.6.10, audit
-# MEDIUM). The old code did `sys_dup2(src, dst); sys_close(src);`
-# unconditionally, which destroys the descriptor whenever src == dst — and
-# src CAN equal dst: a host that daemonizes by closing fds 0/1/2 (setsid +
-# close, which sutra / daimon / aegis all do) makes sys_pipe hand out exactly
-# those low numbers, so the pipe read end lands on fd 0 and the close that
-# follows the no-op dup2 leaves the child with no stdin at all.
 #
-# Also checks the dup2 return, which was ignored in all three places. A child
-# that cannot set up its own stdio must not go on to exec nft.
-fn _child_redirect(src: i64, dst: i64) {
-    if (src == dst) { return 0; }              # already in place; closing would destroy it
-    if (sys_dup2(src, dst) < 0) { sys_exit(127); }
-    sys_close(src);
+# Through 1.8.1 the ruleset went to nft over a pipe written AFTER the fork,
+# and stderr came back over a second pipe. The 2026-11-03 P(-1) audit found
+# four defects in that shape (docs/audit/2026-11-03-audit.md, S-1 to S-4):
+#   - the child built argv with alloc() between fork and execve, so in a
+#     threaded host it could inherit the allocator's lock held and spin
+#     forever, with the parent blocked behind it;
+#   - the pipes were not close-on-exec, so any process the host forked during
+#     an apply held nft's stdin open and nft saw no EOF until it exited;
+#   - a host killed mid-write left nft an EOF on a prefix, which nft commits
+#     atomically: for a diff's chain rebuild, the deletes without the adds;
+#   - writing everything before draining stderr could deadlock (unreachable
+#     with real nft 1.1.7, reachable through nein_set_nft_path).
+# Now the whole ruleset is in a memfd BEFORE the fork, stdout and stderr go to
+# /dev/null and a memfd, every descriptor nein opens is close-on-exec, the
+# child allocates nothing, and the parent waits on a pidfd with a deadline.
+# No pipe remains, so none of the four can happen.
+
+var _NEIN_NFT_DEADLINE_MS = 60000;   # a wedged nft is SIGKILLed after this
+var _NEIN_ETIMEDOUT = 0 - 110;
+
+#ifndef CYRIUS_TARGET_AGNOS
+# Child side, between fork and execve. Allocates nothing (S-1). Puts in_fd /
+# out_fd / err_fd on 0 / 1 / 2 by way of close-on-exec copies above 10, so a
+# source that already sits on 0-2 (a daemonized host closed them) cannot be
+# clobbered by another's dup2 — the class the 1.6.10 `_child_redirect` guarded
+# one case of. Resets the signal state nft would otherwise inherit from the
+# host (an ignored SIGPIPE, a blocked mask), asks to die with the host, and
+# closes every other descriptor the host had open (S-9).
+fn _nein_child_exec(in_fd: i64, out_fd: i64, err_fd: i64, argv: i64, ppid: i64) {
+    var empty[8];
+    store64(&empty, 0);
+    sys_sigprocmask(2, &empty, 0);              # SIG_SETMASK: unblock everything
+    signal_default(13);                         # SIGPIPE back to SIG_DFL
+    signal_default(25);                         # SIGXFSZ back to SIG_DFL
+    sys_prctl(1, 9, 0, 0, 0);                   # PR_SET_PDEATHSIG = SIGKILL
+    if (sys_getppid() != ppid) { sys_exit(127); }   # host died before the prctl
+    var a = sys_fcntl(in_fd, 1030, 10);         # F_DUPFD_CLOEXEC, lowest fd >= 10
+    var b = sys_fcntl(out_fd, 1030, 10);
+    var c = sys_fcntl(err_fd, 1030, 10);
+    if (a < 0 || b < 0 || c < 0) { sys_exit(127); }
+    if (sys_dup2(a, 0) < 0) { sys_exit(127); }  # dup2 clears close-on-exec on 0-2
+    if (sys_dup2(b, 1) < 0) { sys_exit(127); }
+    if (sys_dup2(c, 2) < 0) { sys_exit(127); }
+    syscall(436, 3, 0xFFFFFFFF, 0);             # close_range(3, ~0U); best effort, Linux 5.9+
+    # Single pinned absolute path — no PATH consultation (T-3).
+    sys_execve(_nein_nft_path, argv, 0);
+    sys_exit(127);
     return 0;
 }
 
-fn _run_nft_stdin(input_buf, input_len) {
-    #ifdef CYRIUS_TARGET_AGNOS
-    # ⛔ nft does not exist on agnos, and neither do the syscalls this path
-    # needs. nein's apply layer drives LINUX NETFILTER by exec'ing
-    # /usr/sbin/nft over a pipe: that needs `sys_dup2` (agnos has `sys_dup`
-    # and `sys_exec_redirect`, not dup2) and `sys_execve` (agnos is
-    # spawn-not-fork-exec: `sys_spawn_path` #43). Both are hard COMPILE
-    # errors on --agnos, which is what stopped any consumer building
-    # dist/nein-mcp.cyr for that target (found by daimon at 2.1.8).
-    #
-    # Mapping the syscalls would compile but LIE: it would fork, spawn a
-    # path that is not there, and report a generic failure. agnos has its
-    # own network stack (`sys_net_config` and peers) and no nftables at all,
-    # so there is nothing here to port until nein grows an agnos BACKEND —
-    # a different piece of work from a syscall shim. Failing closed at the
-    # entry point, loudly and specifically, is the honest behaviour: the
-    # caller gets a diagnosable refusal instead of a mystery nft error, and
-    # the firewall is never half-applied.
-    var sk_agnos = "nein.apply: no nftables backend on agnos - refusing, not half-applying";
-    sakshi_error(sk_agnos, strlen(sk_agnos));
-    sakshi_span_exit();
-    return nein_err(NEIN_ERR_NFT_FAILED);
-    #endif
-    #ifndef CYRIUS_TARGET_AGNOS
-    var pipe_in[16];
-    var pipe_err[16];
-
-    var sk_span_name = "nein.apply.run_nft_stdin";
-    sakshi_span_enter(sk_span_name, strlen(sk_span_name));
-
-    # Must precede the write below — see the SIGPIPE guard notes above.
-    _nein_apply_sigpipe_guard();
-
-    if (sys_pipe(&pipe_in) < 0) {
-        var sk_pipe_err = "nein.apply: sys_pipe(stdin) failed";
-        sakshi_error(sk_pipe_err, strlen(sk_pipe_err));
-        sakshi_span_exit();
-        return nein_err(NEIN_ERR_NFT_FAILED);
+# Parent side: wait for the child with a deadline (S-4). A pidfd turns "the
+# child exited" into a readable descriptor, so the wait can time out; on a
+# timeout the child is SIGKILLed and reaped and the caller fails closed. A
+# kernel without pidfd_open (< 5.3) falls back to the plain blocking wait used
+# through 1.8.1. Returns what _nein_waitpid returns, or _NEIN_ETIMEDOUT.
+fn _nein_wait_deadline(pid: i64, status_ptr: i64): i64 {
+    var pfd = sys_pidfd_open(pid, 0);
+    if (pfd >= 0) {
+        var r = fd_wait_ready(pfd, 0, _NEIN_NFT_DEADLINE_MS);
+        while (r == 0 - 4) { r = fd_wait_ready(pfd, 0, _NEIN_NFT_DEADLINE_MS); }   # -EINTR
+        sys_close(pfd);
+        if (r == 0) {
+            sys_kill(pid, 9);
+            _nein_waitpid(pid, status_ptr);
+            return _NEIN_ETIMEDOUT;
+        }
     }
-    if (sys_pipe(&pipe_err) < 0) {
-        sys_close(load32(&pipe_in));
-        sys_close(load32(&pipe_in + 4));
-        var sk_pipe_err2 = "nein.apply: sys_pipe(stderr) failed";
-        sakshi_error(sk_pipe_err2, strlen(sk_pipe_err2));
-        sakshi_span_exit();
-        return nein_err(NEIN_ERR_NFT_FAILED);
+    return _nein_waitpid(pid, status_ptr);
+}
+
+# A fresh close-on-exec memfd holding all of buf[0..len), rewound to 0.
+# Returns the fd, or < 0. -EINTR is retried; any other short write fails.
+fn _nein_memfd_with(name: cstring, buf: i64, len: i64): i64 {
+    var fd = sys_memfd_create(name, 1);         # MFD_CLOEXEC
+    if (fd < 0) { return fd; }
+    var off = 0;
+    while (off < len) {
+        var n = sys_write(fd, buf + off, len - off);
+        if (n == 0 - 4) { continue; }
+        if (n <= 0) { sys_close(fd); return 0 - 5; }
+        off = off + n;
     }
+    if (sys_lseek(fd, 0, 0) != 0) { sys_close(fd); return 0 - 5; }
+    return fd;
+}
 
-    var in_rfd = load32(&pipe_in);
-    var in_wfd = load32(&pipe_in + 4);
-    var err_rfd = load32(&pipe_err);
-    var err_wfd = load32(&pipe_err + 4);
-
-    var pid = sys_fork();
-    if (pid < 0) {
-        sys_close(in_rfd); sys_close(in_wfd);
-        sys_close(err_rfd); sys_close(err_wfd);
-        var sk_fork_err = "nein.apply: sys_fork failed";
-        sakshi_error(sk_fork_err, strlen(sk_fork_err));
-        sakshi_span_exit();
-        return nein_err(NEIN_ERR_NFT_FAILED);
+# Append the memfd's contents (from offset 0, at most `cap` bytes; cap < 0
+# for all) to `sb`. With `flatten` set, control bytes become spaces so nft's
+# stderr — which echoes rule text — cannot forge lines in a log. The child has
+# exited before this runs, so a read of 0 is the end, not a pause: the
+# EINTR-truncated capture of 1.8.1 (S-5) cannot happen. Returns bytes or < 0.
+fn _nein_memfd_read(fd: i64, sb: i64, cap: i64, flatten: i64): i64 {
+    if (sys_lseek(fd, 0, 0) != 0) { return 0 - 5; }
+    var buf[4096];
+    var total = 0;
+    while (cap < 0 || total < cap) {
+        var want = 4096;
+        if (cap >= 0 && cap - total < want) { want = cap - total; }
+        var n = sys_read(fd, &buf, want);
+        if (n == 0 - 4) { continue; }
+        if (n < 0) { return n; }
+        if (n == 0) { break; }
+        var i = 0;
+        while (i < n) {
+            var ch = load8(&buf + i);
+            if (flatten == 1 && ch < 32) { ch = 32; }
+            str_builder_add_byte(sb, ch);
+            i = i + 1;
+        }
+        total = total + n;
     }
+    return total;
+}
 
-    if (pid == 0) {
-        # Child: replace stdin with read end, stderr with err_wfd, exec nft -f -
-        _child_redirect(in_rfd, 0);
-        _child_redirect(err_wfd, 2);
-        # _child_redirect already closed in_rfd / err_wfd unless they were
-        # already on the target fd, in which case they must stay open.
-        if (in_wfd != 0 && in_wfd != 2) { sys_close(in_wfd); }
-        if (err_rfd != 0 && err_rfd != 2) { sys_close(err_rfd); }
+# Log a failure with up to 1 KiB of nft's own stderr appended (through 1.8.1
+# nft's stderr was drained and discarded, so no failure said why).
+fn _nein_log_nft_failure(msg: cstring, err_fd: i64): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, msg);
+    str_builder_add_cstr(sb, " | nft: ");
+    _nein_memfd_read(err_fd, sb, 1024, 1);
+    var line = str_data(str_builder_build(sb));
+    sakshi_warn(line, strlen(line));
+    return 0;
+}
 
-        # argv: ["nft", "-f", "-", 0]
-        var argv = alloc(32);
-        store64(argv, "nft");
-        store64(argv + 8, "-f");
-        store64(argv + 16, "-");
-        store64(argv + 24, 0);
-        # Single pinned absolute path — no PATH consultation (T-3).
-        sys_execve(_nein_nft_path, argv, 0);
-        sys_exit(127);
+# The child's fate as 0 (nft exited 0) or a NEIN_ERR code.
+fn _nein_nft_outcome(wr: i64, status: i64, err_fd: i64): i64 {
+    if (wr == _NEIN_ETIMEDOUT) {
+        _nein_log_nft_failure("nein.apply: nft outlived its deadline and was killed — failing closed", err_fd);
+        return NEIN_ERR_NFT_FAILED;
     }
-
-    # Parent: close unused ends
-    sys_close(in_rfd);
-    sys_close(err_wfd);
-
-    # Write ruleset to nft's stdin.
-    #
-    # Fail closed on a short write (1.6.10, audit MEDIUM). The old loop broke
-    # on `n <= 0` and never compared `written` to `input_len`, so a truncated
-    # ruleset that still happened to parse was applied by nft, which exited 0
-    # — and this function returned Ok for a firewall that was only partly
-    # installed. -EINTR is retried rather than treated as failure.
-    var written = 0;
-    var write_failed = 0;
-    while (written < input_len) {
-        var n = sys_write(in_wfd, input_buf + written, input_len - written);
-        if (n == 0 - 4) { continue; }          # -EINTR: retry, not a failure
-        if (n <= 0) { write_failed = 1; break; }
-        written = written + n;
-    }
-    sys_close(in_wfd);
-
-    if (write_failed == 1 || written != input_len) {
-        var sk_short = "nein.apply: ruleset not fully written to nft stdin";
-        sakshi_error(sk_short, strlen(sk_short));
-        # Reap the child before returning so it does not become a zombie.
-        var st_short = 0;
-        _nein_waitpid(pid, &st_short);
-        sys_close(err_rfd);
-        sakshi_span_exit();
-        return nein_err(NEIN_ERR_NFT_FAILED);
-    }
-
-    # Drain stderr (ignored unless we need it for diagnostics)
-    var errbuf[4096];
-    while (sys_read(err_rfd, &errbuf, 4096) > 0) { }
-    sys_close(err_rfd);
-
-    # Wait for child.
-    #
     # The return value MUST be checked (1.6.10, audit MEDIUM). On failure
     # waitpid does not write `status`, which stays 0 — and the stdlib decodes 0
     # as a clean exit-zero child (WIFEXITED(0)==1, WEXITSTATUS(0)==0). So an
     # unchecked wait reported a failed apply as SUCCESS. Reachable whenever the
     # host installs a SIGCHLD reaper or sets SIGCHLD to SIG_IGN, which process
     # supervisors — nein's own consumers — routinely do.
-    var status = 0;
-    var wr = _nein_waitpid(pid, &status);
     if (wr < 0) {
         var sk_wait = "nein.apply: waitpid failed — child fate unknown, failing closed";
         sakshi_error(sk_wait, strlen(sk_wait));
+        return NEIN_ERR_NFT_FAILED;
+    }
+    if (WIFEXITED(status) == 1) {
+        if (WEXITSTATUS(status) == 127) {
+            var sk_perm = "nein.apply: nft exit=127 (no executable found, or child setup failed)";
+            sakshi_error(sk_perm, strlen(sk_perm));
+            return NEIN_ERR_PERMISSION_DENIED;
+        }
+        if (WEXITSTATUS(status) != 0) {
+            _nein_log_nft_failure("nein.apply: nft exit nonzero", err_fd);
+            return NEIN_ERR_NFT_FAILED;
+        }
+        var sk_ok = "nein.apply: nft exit=0";
+        sakshi_info(sk_ok, strlen(sk_ok));
+        return 0;
+    }
+    _nein_log_nft_failure("nein.apply: nft did not exit cleanly", err_fd);
+    return NEIN_ERR_NFT_FAILED;
+}
+#endif
+
+# ================================================================
+# Low-level: run `nft -f -` with the ruleset on stdin.
+# Returns Ok(0) on exit 0, Err(NEIN_ERR_*) on refusal or failure.
+# ================================================================
+
+fn _run_nft_stdin(input_buf, input_len) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # ⛔ nft does not exist on agnos. nein's apply layer drives LINUX
+    # NETFILTER by exec'ing /usr/sbin/nft; agnos is spawn-not-fork-exec and has
+    # its own network stack (`sys_net_config` and peers) with no nftables at
+    # all, so there is nothing to port until nein grows an agnos BACKEND — a
+    # different piece of work from a syscall shim (found by daimon at 2.1.8).
+    # Failing closed at the entry point, loudly and specifically, is the honest
+    # behaviour: a diagnosable refusal, and the firewall is never half-applied.
+    # No span is open here, so none is closed (1.8.2: the old arm called
+    # sakshi_span_exit() without an enter and popped the caller's span).
+    var sk_agnos = "nein.apply: no nftables backend on agnos - refusing, not half-applying";
+    sakshi_error(sk_agnos, strlen(sk_agnos));
+    return nein_err(NEIN_ERR_NFT_FAILED);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var sk_span_name = "nein.apply.run_nft_stdin";
+    sakshi_span_enter(sk_span_name, strlen(sk_span_name));
+
+    # nft stops parsing at the first NUL byte and exits 0, applying only what
+    # came before it (S-6). Refuse instead of half-applying.
+    if (memchr(input_buf, 0, input_len) >= 0) {
+        var sk_nul = "nein.apply: ruleset contains a NUL byte — nft would apply only the prefix; refusing";
+        sakshi_error(sk_nul, strlen(sk_nul));
+        sakshi_span_exit();
+        return nein_err(NEIN_ERR_INVALID_RULE);
+    }
+
+    # Kept for compatibility: the guard predates the memfd path, which writes
+    # to no pipe, and is retained so a host that relied on nein's process-wide
+    # SIGPIPE disposition sees no change in 1.8.2. See its note above.
+    _nein_apply_sigpipe_guard();
+
+    var in_fd = _nein_memfd_with("nein-ruleset", input_buf, input_len);
+    if (in_fd < 0) {
+        var sk_mfd = "nein.apply: could not stage the ruleset in a memfd";
+        sakshi_error(sk_mfd, strlen(sk_mfd));
+        sakshi_span_exit();
+        return nein_err(NEIN_ERR_NFT_FAILED);
+    }
+    var err_fd = sys_memfd_create("nein-nft-stderr", 1);
+    var null_fd = sys_open("/dev/null", 1 | 524288, 0);   # O_WRONLY | O_CLOEXEC
+    if (err_fd < 0 || null_fd < 0) {
+        sys_close(in_fd);
+        if (err_fd >= 0) { sys_close(err_fd); }
+        if (null_fd >= 0) { sys_close(null_fd); }
+        var sk_fds = "nein.apply: could not open nft's stdout / stderr";
+        sakshi_error(sk_fds, strlen(sk_fds));
         sakshi_span_exit();
         return nein_err(NEIN_ERR_NFT_FAILED);
     }
 
-    if (WIFEXITED(status) == 1) {
-        if (WEXITSTATUS(status) == 127) {
-            var sk_perm = "nein.apply: nft exit=127 (no executable found)";
-            sakshi_error(sk_perm, strlen(sk_perm));
-            sakshi_span_exit();
-            return nein_err(NEIN_ERR_PERMISSION_DENIED);
-        }
-        if (WEXITSTATUS(status) != 0) {
-            var sk_nft = "nein.apply: nft exit nonzero";
-            sakshi_warn(sk_nft, strlen(sk_nft));
-            sakshi_span_exit();
-            return nein_err(NEIN_ERR_NFT_FAILED);
-        }
-        var sk_ok = "nein.apply: nft exit=0";
-        sakshi_info(sk_ok, strlen(sk_ok));
+    # argv: ["nft", "-f", "-", 0], on this frame, built before the fork so the
+    # child allocates nothing (S-1).
+    var argv[32];
+    store64(&argv, "nft");
+    store64(&argv + 8, "-f");
+    store64(&argv + 16, "-");
+    store64(&argv + 24, 0);
+    var ppid = sys_getpid();
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(in_fd); sys_close(err_fd); sys_close(null_fd);
+        var sk_fork_err = "nein.apply: sys_fork failed";
+        sakshi_error(sk_fork_err, strlen(sk_fork_err));
         sakshi_span_exit();
-        return nein_ok();
+        return nein_err(NEIN_ERR_NFT_FAILED);
     }
-    var sk_unk = "nein.apply: nft did not exit cleanly";
-    sakshi_error(sk_unk, strlen(sk_unk));
+    if (pid == 0) { _nein_child_exec(in_fd, null_fd, err_fd, &argv, ppid); }
+
+    sys_close(in_fd);
+    sys_close(null_fd);
+    var status = 0;
+    var wr = _nein_wait_deadline(pid, &status);
+    var code = _nein_nft_outcome(wr, status, err_fd);
+    sys_close(err_fd);
     sakshi_span_exit();
-    return nein_err(NEIN_ERR_NFT_FAILED);
+    if (code == 0) { return nein_ok(); }
+    return nein_err(code);
     #endif
 }
 
@@ -307,108 +388,66 @@ fn _run_nft_stdin(input_buf, input_len) {
 
 fn _run_nft_capture(argv, nft_path) {
     #ifdef CYRIUS_TARGET_AGNOS
-    # ⛔ nft does not exist on agnos, and neither do the syscalls this path
-    # needs. nein's apply layer drives LINUX NETFILTER by exec'ing
-    # /usr/sbin/nft over a pipe: that needs `sys_dup2` (agnos has `sys_dup`
-    # and `sys_exec_redirect`, not dup2) and `sys_execve` (agnos is
-    # spawn-not-fork-exec: `sys_spawn_path` #43). Both are hard COMPILE
-    # errors on --agnos, which is what stopped any consumer building
-    # dist/nein-mcp.cyr for that target (found by daimon at 2.1.8).
-    #
-    # Mapping the syscalls would compile but LIE: it would fork, spawn a
-    # path that is not there, and report a generic failure. agnos has its
-    # own network stack (`sys_net_config` and peers) and no nftables at all,
-    # so there is nothing here to port until nein grows an agnos BACKEND —
-    # a different piece of work from a syscall shim. Failing closed at the
-    # entry point, loudly and specifically, is the honest behaviour: the
-    # caller gets a diagnosable refusal instead of a mystery nft error, and
-    # the firewall is never half-applied.
+    # ⛔ nft does not exist on agnos. nein's apply layer drives LINUX
+    # NETFILTER by exec'ing /usr/sbin/nft; agnos is spawn-not-fork-exec and has
+    # its own network stack (`sys_net_config` and peers) with no nftables at
+    # all, so there is nothing to port until nein grows an agnos BACKEND — a
+    # different piece of work from a syscall shim (found by daimon at 2.1.8).
+    # Failing closed at the entry point, loudly and specifically, is the honest
+    # behaviour: a diagnosable refusal, and the firewall is never half-applied.
+    # No span is open here, so none is closed (1.8.2: the old arm called
+    # sakshi_span_exit() without an enter and popped the caller's span).
     var sk_agnos = "nein.apply: no nftables backend on agnos - refusing, not half-applying";
     sakshi_error(sk_agnos, strlen(sk_agnos));
-    sakshi_span_exit();
     return nein_err(NEIN_ERR_NFT_FAILED);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var sk_span_name = "nein.apply.run_nft_capture";
     sakshi_span_enter(sk_span_name, strlen(sk_span_name));
 
-    var pipe_out[16];
-    if (sys_pipe(&pipe_out) < 0) {
-        var sk_pe = "nein.apply: sys_pipe(capture) failed";
+    # stdout and stderr to memfds, stdin from /dev/null (through 1.8.1 the
+    # capture child read the HOST's stdin and wrote its stderr to the host's,
+    # which in a stdio MCP host is the protocol stream).
+    var out_fd = sys_memfd_create("nein-nft-stdout", 1);
+    var err_fd = sys_memfd_create("nein-nft-stderr", 1);
+    var null_fd = sys_open("/dev/null", 0 | 524288, 0);   # O_RDONLY | O_CLOEXEC
+    if (out_fd < 0 || err_fd < 0 || null_fd < 0) {
+        if (out_fd >= 0) { sys_close(out_fd); }
+        if (err_fd >= 0) { sys_close(err_fd); }
+        if (null_fd >= 0) { sys_close(null_fd); }
+        var sk_pe = "nein.apply: could not open nft capture descriptors";
         sakshi_error(sk_pe, strlen(sk_pe));
         sakshi_span_exit();
         return nein_err(NEIN_ERR_NFT_FAILED);
     }
 
-    var out_rfd = load32(&pipe_out);
-    var out_wfd = load32(&pipe_out + 4);
-
+    var ppid = sys_getpid();
     var pid = sys_fork();
     if (pid < 0) {
-        sys_close(out_rfd); sys_close(out_wfd);
+        sys_close(out_fd); sys_close(err_fd); sys_close(null_fd);
         var sk_fe = "nein.apply: sys_fork(capture) failed";
         sakshi_error(sk_fe, strlen(sk_fe));
         sakshi_span_exit();
         return nein_err(NEIN_ERR_NFT_FAILED);
     }
+    if (pid == 0) { _nein_child_exec(null_fd, out_fd, err_fd, argv, ppid); }
 
-    if (pid == 0) {
-        _child_redirect(out_wfd, 1);
-        if (out_rfd != 1) { sys_close(out_rfd); }
-        # Single pinned absolute path — no PATH consultation (T-3).
-        sys_execve(_nein_nft_path, argv, 0);
-        sys_exit(127);
-    }
-
-    sys_close(out_wfd);
-
-    # Accumulate stdout into a str_builder
-    var sb = str_builder_new();
-    var buf[4096];
-    var n = sys_read(out_rfd, &buf, 4096);
-    while (n > 0) {
-        # str_builder_add takes a Str; we have raw bytes. Use byte-at-a-time.
-        var i = 0;
-        while (i < n) {
-            str_builder_add_byte(sb, load8(&buf + i));
-            i = i + 1;
-        }
-        n = sys_read(out_rfd, &buf, 4096);
-    }
-    sys_close(out_rfd);
-
-    # Same unchecked-waitpid defect as _run_nft_stdin — see the note there.
+    sys_close(null_fd);
     var status = 0;
-    var wr = _nein_waitpid(pid, &status);
-    if (wr < 0) {
-        var sk_cw = "nein.apply: waitpid(capture) failed — failing closed";
-        sakshi_error(sk_cw, strlen(sk_cw));
+    var wr = _nein_wait_deadline(pid, &status);
+    var code = _nein_nft_outcome(wr, status, err_fd);
+    sys_close(err_fd);
+    if (code != 0) {
+        sys_close(out_fd);
         sakshi_span_exit();
-        return nein_err(NEIN_ERR_NFT_FAILED);
+        return nein_err(code);
     }
-
-    if (WIFEXITED(status) == 1) {
-        if (WEXITSTATUS(status) == 127) {
-            var sk_p = "nein.apply: nft capture exit=127";
-            sakshi_error(sk_p, strlen(sk_p));
-            sakshi_span_exit();
-            return nein_err(NEIN_ERR_PERMISSION_DENIED);
-        }
-        if (WEXITSTATUS(status) != 0) {
-            var sk_n = "nein.apply: nft capture exit nonzero";
-            sakshi_warn(sk_n, strlen(sk_n));
-            sakshi_span_exit();
-            return nein_err(NEIN_ERR_NFT_FAILED);
-        }
-        var sk_o = "nein.apply: nft capture exit=0";
-        sakshi_info(sk_o, strlen(sk_o));
-        sakshi_span_exit();
-        return Ok(str_builder_build(sb));
-    }
-    var sk_u = "nein.apply: nft capture did not exit cleanly";
-    sakshi_error(sk_u, strlen(sk_u));
+    var sb = str_builder_new();
+    var got = _nein_memfd_read(out_fd, sb, 0 - 1, 0);
+    sys_close(out_fd);
     sakshi_span_exit();
-    return nein_err(NEIN_ERR_NFT_FAILED);
+    if (got < 0) { return nein_err(NEIN_ERR_NFT_FAILED); }
+    return Ok(str_builder_build(sb));
     #endif
 }
 

@@ -95,6 +95,18 @@ fn _validate_policy_rules(rules: i64): i64 {
 fn policy_validate(np: i64): i64 {
     var vr1_t, vr1_v = validate_identifier(policy_name(np));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    # The target (1.8.2, audit B-6): an address — matched on every rule — or a
+    # selector label / "any", which names the workload whose own chain the
+    # consumer places the rules in. A label is never rendered; it is checked
+    # as an identifier for hygiene.
+    var tgt = policy_target(np);
+    if (tgt == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    if (streq(tgt, "any") == 0 && _addr_family(tgt) == 0) {
+        var vt_t, vt_v = validate_identifier(tgt);
+        if (is_err_result(vt_t) == 1) { return Err(vt_v); }
+    }
+    var da = policy_default_action(np);
+    if (da != PACT_ALLOW && da != PACT_DENY) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
     var vr2_t, vr2_v = _validate_policy_rules(policy_ingress(np));
     if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
@@ -128,6 +140,32 @@ fn _policy_comment(name: cstring, direction: cstring, preposition: cstring, peer
     return out;
 }
 
+# The policy's own endpoint, matched on every rule it renders (1.8.2,
+# audit B-6): through 1.8.1 neither `target` nor `default_action` was read
+# anywhere, so `agent_to_agent(.., "10.0.0.1", "10.0.0.2", TCP, 8090)`
+# rendered `tcp dport 8090 ip saddr 10.0.0.1 accept` — in a forward or shared
+# input chain the source reached that port on EVERY destination — and a
+# PACT_DENY policy rendered exactly what a PACT_ALLOW one did.
+#
+# Only an ADDRESS target is matched. A label target ("webserver") names the
+# workload whose dedicated chain the consumer puts these rules in, so it adds
+# no match — and no default drop, because an unscoped `drop` placed in a
+# shared chain would drop everything after it.
+fn _policy_has_target(np: i64): i64 {
+    var tgt = policy_target(np);
+    if (tgt == 0) { return 0; }
+    if (_addr_family(tgt) == 0) { return 0; }
+    return 1;
+}
+
+fn _policy_deny_rule(np: i64, is_ingress: i64): i64 {
+    var r = rule_new(verdict_drop());
+    if (_policy_has_target(np) == 1) { rule_add_match(r, _match_addr(policy_target(np), is_ingress)); }
+    if (is_ingress == 1) { rule_set_comment(r, _policy_comment(policy_name(np), "ingress", "default", "deny")); }
+    else { rule_set_comment(r, _policy_comment(policy_name(np), "egress", "default", "deny")); }
+    return r;
+}
+
 fn policy_to_rules(np: i64): i64 {
     var rules = vec_new();
     var name = policy_name(np);
@@ -145,11 +183,12 @@ fn policy_to_rules(np: i64): i64 {
         while (j < plen) {
             var pp = vec_get(ports, j);
             var r = rule_new(verdict_accept());
+            if (_policy_has_target(np) == 1) { rule_add_match(r, _match_addr(policy_target(np), 1)); }
+            if (streq(peer, "any") == 0) {
+                rule_add_match(r, _match_addr(peer, 0));
+            }
             rule_add_match(r, match_protocol(policy_port_protocol(pp)));
             rule_add_match(r, match_dport(policy_port_port(pp)));
-            if (streq(peer, "any") == 0) {
-                rule_add_match(r, match_source_addr(peer));
-            }
             rule_set_comment(r, _policy_comment(name, "ingress", "from", peer));
             vec_push(rules, r);
             j = j + 1;
@@ -170,16 +209,25 @@ fn policy_to_rules(np: i64): i64 {
         while (j < plen) {
             var pp = vec_get(ports, j);
             var r = rule_new(verdict_accept());
+            if (_policy_has_target(np) == 1) { rule_add_match(r, _match_addr(policy_target(np), 0)); }
+            if (streq(peer, "any") == 0) {
+                rule_add_match(r, _match_addr(peer, 1));
+            }
             rule_add_match(r, match_protocol(policy_port_protocol(pp)));
             rule_add_match(r, match_dport(policy_port_port(pp)));
-            if (streq(peer, "any") == 0) {
-                rule_add_match(r, match_dest_addr(peer));
-            }
             rule_set_comment(r, _policy_comment(name, "egress", "to", peer));
             vec_push(rules, r);
             j = j + 1;
         }
         i = i + 1;
+    }
+
+    # PACT_DENY closes each direction that has rules: whatever the allows above
+    # did not match, for this target, is dropped. PACT_ALLOW leaves the rest to
+    # the chain's policy.
+    if (policy_default_action(np) == PACT_DENY && _policy_has_target(np) == 1) {
+        if (ilen > 0) { vec_push(rules, _policy_deny_rule(np, 1)); }
+        if (elen > 0) { vec_push(rules, _policy_deny_rule(np, 0)); }
     }
 
     return rules;

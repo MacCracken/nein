@@ -85,6 +85,21 @@ fn firewall_render(fw: i64): Str {
 }
 
 # --- Validate all tables, chains, and contents ---
+# Validate, then render (1.8.2, audit I-5 / S-7). `firewall_render` does not
+# validate: it is the raw renderer `apply_firewall` calls AFTER its own
+# `firewall_validate`. A consumer that renders for a path nein does not
+# control — agnodrm's `netns_apply_nftables_ruleset`, a file handed to
+# `nft -f` — skipped that step in every example nein documented, so an agent
+# name like `agent7" accept ; flush ruleset ; #` reached nft text (the
+# validator rejects it). This is the safe form in one call: Ok(Str) with the
+# rendered ruleset, or the validation Err. Bind both halves:
+#     var t, v = firewall_render_checked(fw);
+fn firewall_render_checked(fw: i64): i64 {
+    var vt, vv = firewall_validate(fw);
+    if (is_err_result(vt) == 1) { return Err(vv); }
+    return Ok(firewall_render(fw));
+}
+
 fn firewall_validate(fw: i64): i64 {
     var tables = firewall_tables(fw);
     var tlen = vec_len(tables);
@@ -99,6 +114,8 @@ fn firewall_validate(fw: i64): i64 {
 
         var vr1_t, vr1_v = validate_identifier(table_name(t));
         if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+        var fam = table_family(t);
+        if (fam < FAMILY_INET || fam > FAMILY_NETDEV) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
         # Defines
         vec2 = table_defines(t);
@@ -158,6 +175,8 @@ fn firewall_validate(fw: i64): i64 {
             var chain = vec_get(vec2, j);
             var vr7_t, vr7_v = validate_identifier(chain_name(chain));
             if (is_err_result(vr7_t) == 1) { return Err(vr7_v); }
+            var vh_t, vh_v = chain_header_validate(chain);
+            if (is_err_result(vh_t) == 1) { return Err(vh_v); }
             var rules = chain_rules(chain);
             var rlen = vec_len(rules);
             var k = 0;

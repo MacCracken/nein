@@ -94,6 +94,31 @@ fn test_validate_addr() {
     assert(is_err_result(validate_addr("not_an_addr")) == 1, "alpha rejected");
     assert(is_err_result(validate_addr("10.0.0.1;drop")) == 1, "semicolon rejected");
     assert(is_err_result(validate_addr("10.0.0.1|evil")) == 1, "pipe rejected");
+    # 1.8.2 (audit I-9): an address must PARSE. Through 1.8.1 a hex-only DNS
+    # name passed the character check and nft resolved it at apply time.
+    assert(is_err_result(validate_addr("dead1.cafe")) == 1, "hex-only DNS name rejected");
+    assert(is_err_result(validate_addr("256.1.1.1")) == 1, "octet > 255 rejected");
+    assert(is_err_result(validate_addr("01.2.3.4")) == 1, "leading-zero octet rejected");
+    assert(is_err_result(validate_addr("1.2.3")) == 1, "three octets rejected");
+    assert(is_err_result(validate_addr("10.0.0.0/33")) == 1, "IPv4 prefix > 32 rejected");
+    assert(is_err_result(validate_addr("2001:db8::/129")) == 1, "IPv6 prefix > 128 rejected");
+    assert(is_err_result(validate_addr("1::2::3")) == 1, "two '::' rejected");
+    assert(is_err_result(validate_addr("fe80::1%eth0")) == 1, "zone index rejected");
+    assert(is_err_result(validate_addr("10.0.0.1 accept")) == 1, "trailing token rejected");
+    assert(is_err_result(validate_addr(0)) == 1, "NULL rejected, no crash");
+    assert(is_ok(validate_addr("::ffff:10.0.0.1")) == 1, "v4-mapped IPv6 ok");
+    assert(is_ok(validate_addr("0.0.0.0/0")) == 1, "IPv4 default route ok");
+    assert(is_ok(validate_addr("::/0")) == 1, "IPv6 default route ok");
+    assert_eq(_addr_family("10.0.0.1"), 4, "family of IPv4 is 4");
+    assert_eq(_addr_family("2001:db8::1"), 6, "family of IPv6 is 6");
+    # ports and set-lookup selectors (I-1, I-2)
+    assert_eq(_is_port_token("65535"), 1, "port 65535 ok");
+    assert_eq(_is_port_token("65536"), 0, "port 65536 rejected");
+    assert_eq(_is_port_token("80-90"), 1, "port range ok");
+    assert_eq(_is_port_token("90-80"), 0, "reversed port range rejected");
+    assert_eq(_is_port_token("22 : accept, 23"), 0, "map-key injection rejected");
+    assert_eq(_is_set_lookup_field("ip saddr"), 1, "set field ip saddr ok");
+    assert_eq(_is_set_lookup_field("ip saddr !="), 0, "set field with operator rejected");
     return 0;
 }
 
@@ -272,7 +297,8 @@ fn test_rule_render_verdicts() {
     r = rule_new(verdict_jump("container_rules"));
     rule_add_match(r, match_oif("br0"));
     s = rule_render(r);
-    assert(streq(str_data(s), "oif \"br0\" jump container_rules") == 1, "jump");
+    # oifname since 1.8.2 (audit I-7): `oif` resolves to an ifindex at load time.
+    assert(streq(str_data(s), "oifname \"br0\" jump container_rules") == 1, "jump");
 
     # goto
     s = rule_render(rule_new(verdict_goto("other_chain")));
@@ -282,7 +308,9 @@ fn test_rule_render_verdicts() {
     r = rule_new(verdict_log("NEIN_DROP: "));
     rule_add_match(r, match_protocol(PROTO_TCP));
     s = rule_render(r);
-    assert(streq(str_data(s), "tcp log prefix \"NEIN_DROP: \"") == 1, "log prefix");
+    # A protocol with no port after it renders `meta l4proto` since 1.8.2
+    # (audit I-7): the old "tcp log prefix ..." is an nft syntax error.
+    assert(streq(str_data(s), "meta l4proto tcp log prefix \"NEIN_DROP: \"") == 1, "log prefix");
 
     # log without prefix
     s = rule_render(rule_new(verdict_log(0)));
@@ -359,11 +387,11 @@ fn test_rule_render_matches() {
 
     # icmp protocol
     s = rule_render(rule_add_match(rule_new(verdict_accept()), match_protocol(PROTO_ICMP)));
-    assert(streq(str_data(s), "icmp accept") == 1, "icmp");
+    assert(streq(str_data(s), "meta l4proto icmp accept") == 1, "icmp");   # "icmp accept" is a syntax error
 
     # icmpv6 protocol
     s = rule_render(rule_add_match(rule_new(verdict_accept()), match_protocol(PROTO_ICMPV6)));
-    assert(streq(str_data(s), "icmpv6 accept") == 1, "icmpv6");
+    assert(streq(str_data(s), "meta l4proto icmpv6 accept") == 1, "icmpv6");
 
     # set lookup
     s = rule_render(rule_add_match(rule_new(verdict_drop()), match_set_lookup("ip saddr", "blocklist")));
@@ -490,6 +518,56 @@ fn test_rule_validate() {
 
     # Good rule
     assert(is_ok(rule_validate(allow_service("10.0.0.0/8", PROTO_TCP, 80))) == 1, "good rule ok");
+    # 1.8.2: an address must be its match's family — `ip saddr 2001:db8::1`
+    # is a hostname to nft. deny_source / allow_service pick the family.
+    var fm = rule_new(verdict_drop());
+    rule_add_match(fm, match_source_addr("2001:db8::bad"));
+    assert(is_err_result(rule_validate(fm)) == 1, "IPv6 address under ip saddr rejected");
+    assert(str_contains_cstr(rule_render(deny_source("2001:db8::bad")), "ip6 saddr 2001:db8::bad drop") == 1,
+      "deny_source renders ip6 for an IPv6 address");
+    assert(is_ok(chain_header_validate(chain_regular("x"))) == 1, "regular chain has no header to check");
+
+    # --- 1.8.2 (audit I-3 / I-7 / I-8): enums and numbers are checked ---
+    var ue = rule_new(verdict_accept());
+    rule_add_match(ue, match_new(99, 0, 0, 0));
+    assert(is_err_result(rule_validate(ue)) == 1, "unknown match type rejected");
+    assert(str_contains_cstr(rule_render(ue), "__nein_invalid_match__") == 1,
+      "unknown match renders a fail-closed token, not a bare verdict");
+    var uv = rule_new(verdict_new(99, 0, 0, 0, 0));
+    assert(is_err_result(rule_validate(uv)) == 1, "unknown verdict type rejected");
+    assert(str_contains_cstr(rule_render(uv), "__nein_invalid_verdict__") == 1, "unknown verdict fails closed");
+    var bp = rule_new(verdict_accept());
+    rule_add_match(bp, match_protocol(PROTO_TCP));
+    rule_add_match(bp, match_dport(70000));
+    assert(is_err_result(rule_validate(bp)) == 1, "dport 70000 rejected");
+    var np = rule_new(verdict_accept());
+    rule_add_match(np, match_protocol(PROTO_TCP));
+    rule_add_match(np, match_dport(0 - 1));
+    assert(is_err_result(rule_validate(np)) == 1, "negative dport rejected");
+    var rr = rule_new(verdict_accept());
+    rule_add_match(rr, match_dport_range(90, 80));
+    assert(is_err_result(rule_validate(rr)) == 1, "reversed dport range rejected");
+    var lb = rule_new(verdict_accept());
+    rule_add_match(lb, match_limit(10, RATE_SECOND, 0));
+    assert(is_err_result(rule_validate(lb)) == 1, "limit burst 0 rejected (nft: burst must be > 0)");
+    var lr = rule_new(verdict_accept());
+    rule_add_match(lr, match_limit(0, RATE_SECOND, 5));
+    assert(is_err_result(rule_validate(lr)) == 1, "limit rate 0 rejected");
+    var fo = rule_new(verdict_drop());
+    rule_add_match(fo, match_frag_off(0x1fff, 99, 0));
+    assert(is_err_result(rule_validate(fo)) == 1, "unknown compare op rejected (was rendered as ==)");
+    var lg = rule_new(verdict_log_advanced("x", NFT_LOG_WARN, 2, 0));
+    assert(is_err_result(rule_validate(lg)) == 1, "log level + group rejected (nft: mutually exclusive)");
+    var sl = rule_new(verdict_accept());
+    rule_add_match(sl, match_set_lookup("ip saddr !=", "trusted"));
+    assert(is_err_result(rule_validate(sl)) == 1, "set lookup with an operator rejected (audit I-2)");
+    # protocol / port context renders valid nft on its own
+    var po = rule_new(verdict_accept());
+    rule_add_match(po, match_protocol(PROTO_UDP));
+    assert(streq(str_data(rule_render(po)), "meta l4proto udp accept") == 1, "protocol-only -> meta l4proto");
+    var dp = rule_new(verdict_accept());
+    rule_add_match(dp, match_dport(53));
+    assert(streq(str_data(rule_render(dp)), "th dport 53 accept") == 1, "port without protocol -> th dport");
 
     # Bad addr
     assert(is_err_result(rule_validate(deny_source("10.0.0.1; flush ruleset"))) == 1, "bad addr rejected");
@@ -691,6 +769,42 @@ fn test_map_render() {
 fn test_map_validate() {
     test_group("map_validate");
 
+    # 1.8.2 (audit I-1): a key is ONE value of the map's key type. A key
+    # carrying ':' / ',' injected its own entries and verdicts through 1.8.1.
+    var mi = nft_map_new("pm", SET_INET_SERVICE);
+    nft_map_add_entry(mi, "22 : accept, 23", MAPV_DROP, 0);
+    assert(is_err_result(nft_map_validate(mi)) == 1, "map key carrying extra entries rejected");
+    var mo = nft_map_new("pm", SET_INET_SERVICE);
+    nft_map_add_entry(mo, "22", MAPV_DROP, 0);
+    nft_map_add_entry(mo, "8000-8010", MAPV_ACCEPT, 0);
+    nft_map_add_entry(mo, "ssh", MAPV_ACCEPT, 0);
+    assert(is_ok(nft_map_validate(mo)) == 1, "port, port range and service name keys ok");
+    var mf = nft_map_new("pm", SET_IPV4_ADDR);
+    nft_map_add_entry(mf, "2001:db8::1", MAPV_DROP, 0);
+    assert(is_err_result(nft_map_validate(mf)) == 1, "IPv6 key in an IPv4 map rejected");
+    var mv = nft_map_new("pm", SET_IPV4_ADDR);
+    nft_map_add_entry(mv, "10.0.0.1", 9, 0);
+    assert(is_err_result(nft_map_validate(mv)) == 1, "unknown map verdict rejected");
+    var se = nft_set_new("s", SET_IPV4_ADDR);
+    nft_set_add_element(se, "10.0.0.1, 10.0.0.2");
+    assert(is_err_result(nft_set_validate(se)) == 1, "one element carrying two rejected");
+    var sr = nft_set_new("s", SET_IPV4_ADDR);
+    nft_set_add_element(sr, "10.0.0.1-10.0.0.9");
+    nft_set_add_element(sr, "192.168.0.0/16");
+    assert(is_ok(nft_set_validate(sr)) == 1, "address range and CIDR elements ok");
+    var st = nft_set_new("s", 42);
+    assert(is_err_result(nft_set_validate(st)) == 1, "unknown set type rejected (rendered ipv4_addr through 1.8.1)");
+    # chain header and table family (audit I-3)
+    var ft = table_new("vf", FAMILY_INET);
+    table_add_chain(ft, chain_base("fwdx", CHAIN_FILTER, cfg_parse_hook("Forward"), 0, cfg_parse_policy("DROP")));
+    var ff = firewall_new();
+    firewall_add_table(ff, ft);
+    assert(is_err_result(firewall_validate(ff)) == 1, "unknown hook/policy rejected (rendered input/accept through 1.8.1)");
+    assert(str_contains_cstr(firewall_render(ff), "policy accept") == 0, "unknown policy never renders accept");
+    var fb = firewall_new();
+    firewall_add_table(fb, table_new("vf", 77));
+    assert(is_err_result(firewall_validate(fb)) == 1, "unknown table family rejected");
+
     var m = nft_map_new("test", SET_IPV4_ADDR);
     nft_map_add_entry(m, "10.0.0.1", MAPV_ACCEPT, 0);
     nft_map_add_entry(m, "10.0.0.2", MAPV_JUMP, "mychain");
@@ -760,7 +874,10 @@ fn test_table_render() {
     t = table_new("filter", FAMILY_INET);
     table_add_define(t, define_new("LAN", "192.168.0.0/16"));
     rendered = table_render(t);
-    assert(str_contains_cstr(rendered, "define $LAN = 192.168.0.0/16;") == 1, "define in table");
+    # No '$' in the declaration since 1.8.2 (audit I-6): nft rejects
+    # `define $LAN = ...`; the '$' belongs to a reference, `ip saddr $LAN`.
+    assert(str_contains_cstr(rendered, "define LAN = 192.168.0.0/16;") == 1, "define in table");
+    assert(str_contains_cstr(rendered, "define $") == 0, "no '$' in a define declaration");
 
     # Table with set
     t = table_new("filter", FAMILY_INET);
@@ -930,33 +1047,34 @@ fn test_nat_render() {
     # DNAT IPv4
     var n = port_forward(8080, "172.17.0.2", 80);
     var rd = str_data(nat_render(n));
-    assert(streq(rd, "tcp dport 8080 dnat to 172.17.0.2:80 comment \"container port fwd\"") == 1, "port_forward");
+    # 1.8.2: DNAT is scoped to this host (audit B-1) and names its family (I-7).
+    assert(streq(rd, "fib daddr type local tcp dport 8080 dnat ip to 172.17.0.2:80 comment \"container port fwd\"") == 1, "port_forward");
 
     # DNAT IPv6 brackets
     n = nat_dnat(PROTO_TCP, 443, "2001:db8::1", 8443, 0);
     rd = str_data(nat_render(n));
-    assert(streq(rd, "tcp dport 443 dnat to [2001:db8::1]:8443") == 1, "dnat ipv6 brackets");
+    assert(streq(rd, "fib daddr type local tcp dport 443 dnat ip6 to [2001:db8::1]:8443") == 1, "dnat ipv6 brackets");
 
     # DNAT IPv4 no brackets
     n = nat_dnat(PROTO_TCP, 80, "10.0.0.1", 8080, 0);
     rd = str_data(nat_render(n));
-    assert(streq(rd, "tcp dport 80 dnat to 10.0.0.1:8080") == 1, "dnat ipv4 no brackets");
+    assert(streq(rd, "fib daddr type local tcp dport 80 dnat ip to 10.0.0.1:8080") == 1, "dnat ipv4 no brackets");
 
     # DNAT with comment
     n = nat_dnat(PROTO_TCP, 443, "10.0.0.1", 8443, "TLS forward");
     var rendered = nat_render(n);
-    assert(str_contains_cstr(rendered, "dnat to 10.0.0.1:8443") == 1, "dnat target");
+    assert(str_contains_cstr(rendered, "dnat ip to 10.0.0.1:8443") == 1, "dnat target");
     assert(str_contains_cstr(rendered, "comment \"TLS forward\"") == 1, "dnat comment");
 
     # SNAT plain
     n = nat_snat("10.0.0.0/8", "1.2.3.4", 0);
     rd = str_data(nat_render(n));
-    assert(streq(rd, "ip saddr 10.0.0.0/8 snat to 1.2.3.4") == 1, "snat");
+    assert(streq(rd, "ip saddr 10.0.0.0/8 snat ip to 1.2.3.4") == 1, "snat");
 
     # SNAT with comment
     n = nat_snat("10.0.0.0/8", "1.2.3.4", "outbound SNAT");
     rendered = nat_render(n);
-    assert(str_contains_cstr(rendered, "snat to 1.2.3.4") == 1, "snat target");
+    assert(str_contains_cstr(rendered, "snat ip to 1.2.3.4") == 1, "snat target");
     assert(str_contains_cstr(rendered, "comment \"outbound SNAT\"") == 1, "snat comment");
 
     # MASQUERADE no oif
@@ -967,7 +1085,7 @@ fn test_nat_render() {
     # MASQUERADE with oif + comment
     n = container_masquerade("172.17.0.0/16", "eth0");
     rd = str_data(nat_render(n));
-    var expected_cm = "ip saddr 172.17.0.0/16 oif \"eth0\" masquerade comment \"container outbound NAT\"";
+    var expected_cm = "ip saddr 172.17.0.0/16 oifname \"eth0\" masquerade comment \"container outbound NAT\"";
     assert(streq(rd, expected_cm) == 1, "container_masquerade");
 
     # REDIRECT plain
@@ -1026,12 +1144,18 @@ fn test_nat_dnat_range() {
     # Render IPv4
     var n = port_range_forward(80, 89, "172.17.0.2", 8080);
     var rendered = nat_render(n);
-    assert(str_contains_cstr(rendered, "tcp dport 80-89 dnat to 172.17.0.2:8080-8089") == 1, "range forward");
+    # 1.8.2 (audit I-4): a shifted range is an explicit port map. The old
+    # `dnat to A:8080-8089` sent every connection to the first free port.
+    assert(str_contains_cstr(rendered, "fib daddr type local tcp dport 80-89 dnat ip to 172.17.0.2 : tcp dport map { 80 : 8080, 81 : 8081,") == 1, "range forward");
+    assert(str_contains_cstr(rendered, "89 : 8089 }") == 1, "range forward maps the last port 1:1");
+    var un = nat_render(port_range_forward(8000, 8010, "172.17.0.2", 8000));
+    assert(str_contains_cstr(un, "dnat ip to 172.17.0.2 comment") == 1, "unshifted range keeps each port, no map");
+    assert(str_contains_cstr(un, "map") == 0, "unshifted range renders no map");
 
     # Render IPv6
     n = nat_dnat_range(PROTO_TCP, 80, 89, "2001:db8::1", 8080, 8089, 0);
     var rd = str_data(nat_render(n));
-    assert(streq(rd, "tcp dport 80-89 dnat to [2001:db8::1]:8080-8089") == 1, "range ipv6 brackets");
+    assert(str_contains_cstr(str_from(rd), "dnat ip6 to [2001:db8::1] : tcp dport map { 80 : 8080,") == 1, "range ipv6 brackets");
 
     # With comment
     n = nat_dnat_range(PROTO_TCP, 80, 89, "10.0.0.1", 8080, 8089, "web range");
@@ -1099,6 +1223,13 @@ fn test_firewall() {
 
 fn test_firewall_validate() {
     test_group("firewall_validate");
+    # 1.8.2 (audit I-5 / S-7): validate-then-render in one call.
+    var ck_t, ck_v = firewall_render_checked(basic_host_firewall());
+    assert(is_ok(ck_t) == 1, "checked render of a valid firewall is Ok");
+    assert(str_contains_cstr(ck_v, "policy drop") == 1, "checked render returns the ruleset");
+    var nsfbad = namespace_firewall_new("agent7\" accept ; flush ruleset ; #");
+    var nb_t, nb_v = firewall_render_checked(nsf_build(nsfbad));
+    assert(is_err_result(nb_t) == 1, "netns agent-name injection refused by the checked render");
 
     # Empty is valid
     assert(is_ok(firewall_validate(firewall_new())) == 1, "empty valid");
@@ -1186,8 +1317,20 @@ fn test_policy() {
     # agent_to_agent policy
     var np = agent_to_agent("hoosh-to-daimon", "10.0.0.1", "10.0.0.2", PROTO_TCP, 8090);
     var rules = policy_to_rules(np);
-    assert(vec_len(rules) == 1, "one rule");
+    # 1.8.2 (audit B-6): the target is matched, and PACT_DENY adds a scoped
+    # default drop — through 1.8.1 neither was rendered, so the source reached
+    # port 8090 on every destination, and DENY rendered exactly like ALLOW.
+    assert(vec_len(rules) == 2, "allow rule + default deny");
     var rendered = rule_render(vec_get(rules, 0));
+    assert(str_contains_cstr(rendered, "ip daddr 10.0.0.2 ip saddr 10.0.0.1 tcp dport 8090 accept") == 1,
+      "allow is scoped to the target");
+    assert(str_contains_cstr(rule_render(vec_get(rules, 1)), "ip daddr 10.0.0.2 drop") == 1,
+      "default deny is scoped to the target");
+    var anp = nein_network_policy_new("allow-pol", "10.0.0.2", PACT_ALLOW);
+    var apr = policy_rule_new("10.0.0.1");
+    policy_rule_add_port(apr, PROTO_TCP, 8090);
+    policy_add_ingress(anp, apr);
+    assert(vec_len(policy_to_rules(anp)) == 1, "PACT_ALLOW adds no default drop");
     assert(str_contains_cstr(rendered, "ip saddr 10.0.0.1") == 1, "source addr");
     assert(str_contains_cstr(rendered, "dport 8090") == 1, "dport");
     assert(str_contains_cstr(rendered, "accept") == 1, "accept");
@@ -1209,8 +1352,11 @@ fn test_policy() {
     policy_rule_add_port(pr, PROTO_TCP, 443);
     policy_add_egress(np, pr);
     rules = policy_to_rules(np);
-    assert(vec_len(rules) == 1, "egress one rule");
+    assert(vec_len(rules) == 2, "egress allow + default deny");
+    assert(str_contains_cstr(rule_render(vec_get(rules, 1)), "ip saddr 10.0.0.1 drop") == 1,
+      "egress default deny scoped to the target as source");
     rendered = rule_render(vec_get(rules, 0));
+    assert(str_contains_cstr(rendered, "ip saddr 10.0.0.1 ip daddr 10.0.0.2") == 1, "egress scoped to the target");
     assert(str_contains_cstr(rendered, "ip daddr 10.0.0.2") == 1, "egress dest");
     assert(str_contains_cstr(rendered, "dport 443") == 1, "egress dport");
     assert(str_contains_cstr(rendered, "egress to 10.0.0.2") == 1, "egress comment");
@@ -1245,6 +1391,9 @@ fn test_policy() {
 
 fn test_geoip() {
     test_group("geoip");
+    var gh = geoip_new();
+    geoip_set_hook(gh, HOOK_OUTPUT);
+    assert(is_err_result(geoip_validate(gh)) == 1, "geoip on the output hook rejected (audit B-9)");
 
     # Empty blocklist
     var bl = geoip_new();
@@ -1344,6 +1493,10 @@ fn test_geoip() {
 
 fn test_mesh() {
     test_group("mesh");
+    # 1.8.2 (audit B-4): no verdict after a terminal `redirect` — nft refused
+    # `... redirect to :15001 accept`, so the mesh ruleset could never load.
+    var vn = rule_new(verdict_none());
+    assert(is_err_result(rule_validate(vn)) == 1, "verdict_none with no matches rejected");
 
     # Envoy defaults
     var m = mesh_envoy();
@@ -1365,6 +1518,7 @@ fn test_mesh() {
     assert(str_contains_cstr(rendered, "ip daddr 127.0.0.0/8") == 1, "localhost daddr");
     assert(str_contains_cstr(rendered, "skip outbound 127.0.0.0/8") == 1, "localhost comment");
     assert(str_contains_cstr(rendered, "redirect to :15001") == 1, "outbound redirect");
+    assert(str_contains_cstr(rendered, "redirect to :15001 accept") == 0, "no verdict after the terminal redirect");
     assert(str_contains_cstr(rendered, "redirect to :15006") == 1, "inbound redirect");
 
     # Custom ports + UID
@@ -1510,8 +1664,8 @@ fn test_bridge() {
     bf_add_port_mapping(bf, pm_tcp(8080, "172.17.0.2", 80));
     bf_add_port_mapping(bf, pm_udp(5353, "172.17.0.3", 53));
     rendered = firewall_render(bf_to_firewall(bf));
-    assert(str_contains_cstr(rendered, "dnat to 172.17.0.2:80") == 1, "dnat 80");
-    assert(str_contains_cstr(rendered, "dnat to 172.17.0.3:53") == 1, "dnat 53");
+    assert(str_contains_cstr(rendered, "dnat ip to 172.17.0.2:80") == 1, "dnat 80");
+    assert(str_contains_cstr(rendered, "dnat ip to 172.17.0.3:53") == 1, "dnat 53");
     assert(str_contains_cstr(rendered, "ip daddr 172.17.0.2") == 1, "daddr 172.17.0.2");
     assert(str_contains_cstr(rendered, "ip daddr 172.17.0.3") == 1, "daddr 172.17.0.3");
 
@@ -1568,7 +1722,7 @@ fn test_bridge() {
     bf_remove_port_mapping(bf, 8080, PROTO_TCP);
     rendered = firewall_render(bf_to_firewall(bf));
     assert(str_contains_cstr(rendered, "dnat to 172.17.0.2:80") == 0, "removed dnat gone");
-    assert(str_contains_cstr(rendered, "dnat to 172.17.0.2:443") == 1, "kept dnat present");
+    assert(str_contains_cstr(rendered, "dnat ip to 172.17.0.2:443") == 1, "kept dnat present");
 
     # Empty isolation group
     bf = bridge_firewall_new(_test_bridge_config());
@@ -1597,7 +1751,24 @@ fn test_bridge() {
     rendered = firewall_render(bf_to_firewall(bf));
     assert(str_contains_cstr(rendered, "allow portmap -> 172.17.1.5:80") == 1, "portmap forward");
     assert(str_contains_cstr(rendered, "intra-group: web") == 1, "iso web with pm");
-    assert(str_contains_cstr(rendered, "dnat to 172.17.1.5:80") == 1, "pm dnat");
+    assert(str_contains_cstr(rendered, "fib daddr type local tcp dport 8080 dnat ip to 172.17.1.5:80") == 1, "pm dnat scoped to this host");
+    # 1.8.2 (audit B-1): the forward accept admits only DNAT'd traffic, so the
+    # container port is not reachable by routing straight to its address.
+    assert(str_contains_cstr(rendered, "ip daddr 172.17.1.5 ct status dnat tcp dport 80 accept") == 1,
+      "portmap forward requires ct status dnat");
+    # 1.8.2 (audit B-5): isolation is also enforced on the bridge's own forward
+    # hook, where same-bridge (L2-switched) traffic actually flows.
+    assert(str_contains_cstr(rendered, "table bridge nein_iso {") == 1, "isolation emits a bridge-family table");
+    assert(str_contains_cstr(rendered, "meta ibrname \"br0\" ip saddr @iso_web ip daddr @iso_web accept") == 1,
+      "bridge table allows intra-group");
+    assert(str_contains_cstr(rendered, "meta ibrname \"br0\" ether type ip drop") == 1, "bridge table drops other IPv4");
+    assert(str_contains_cstr(rendered, "meta ibrname \"br0\" ether type ip6 drop") == 1, "bridge table drops IPv6");
+    assert(is_ok(firewall_validate(bf_to_firewall(bf))) == 1, "isolated bridge firewall validates");
+    var nobf = bridge_firewall_new(_test_bridge_config());
+    assert(str_contains_cstr(firewall_render(bf_to_firewall(nobf)), "table bridge") == 0, "no isolation, no bridge table");
+    var badpm = bridge_firewall_new(_test_bridge_config());
+    bf_add_port_mapping(badpm, pm_tcp(70000, "172.17.1.5", 80));
+    assert(is_err_result(bf_validate(badpm)) == 1, "port mapping with host port 70000 rejected (audit B-7)");
 
     return 0;
 }
@@ -1647,7 +1818,29 @@ fn test_engine() {
     assert(str_contains_cstr(rendered, "default deny inbound") == 1, "default deny in");
     assert(str_contains_cstr(rendered, "default deny outbound") == 1, "default deny out");
     assert(str_contains_cstr(rendered, "ct state { established, related }") == 1, "established by default");
-    assert(str_contains_cstr(rendered, "iif \"lo\"") == 1, "loopback by default");
+    assert(str_contains_cstr(rendered, "iifname \"lo\"") == 1, "loopback by default");
+    # 1.8.2 (audit B-2): the loopback accept names the agent's own address, so
+    # another agent on the host meets this agent's policy instead of bypassing it.
+    var lpe = policy_engine_new();
+    pe_add_agent(lpe, agent_policy_new("svc-a", "10.0.0.1"));
+    var lr = firewall_render(pe_to_firewall(lpe));
+    assert(str_contains_cstr(lr, "iifname \"lo\" ip saddr 10.0.0.1 accept") == 1, "inbound loopback limited to the agent itself");
+    assert(str_contains_cstr(lr, "oifname \"lo\" ip daddr 10.0.0.1 accept") == 1, "outbound loopback limited to the agent itself");
+    assert(str_contains_cstr(lr, "iifname \"lo\" accept") == 0, "no bare loopback accept");
+    # B-3: one host per agent, one agent per address
+    var wpe = policy_engine_new();
+    pe_add_agent(wpe, agent_policy_new("admin", "10.0.0.0/24"));
+    assert(is_err_result(pe_validate(wpe)) == 1, "CIDR agent address rejected");
+    var dpe = policy_engine_new();
+    pe_add_agent(dpe, agent_policy_new("svc-a", "10.0.0.1"));
+    pe_add_agent(dpe, agent_policy_new("svc-z", "::ffff:10.0.0.1"));
+    assert(is_err_result(pe_validate(dpe)) == 1, "duplicate address (v4-mapped spelling) rejected");
+    var spe = policy_engine_new();
+    pe_add_agent(spe, agent_policy_new("svc-a", "10.0.0.1/32"));
+    pe_add_agent(spe, agent_policy_new("svc-6", "fd00::6"));
+    assert(is_ok(pe_validate(spe)) == 1, "host addresses, /32 and IPv6, accepted");
+    var sr = firewall_render(pe_to_firewall(spe));
+    assert(str_contains_cstr(sr, "ip6 daddr fd00::6 jump svc-6_in") == 1, "IPv6 agent dispatches on ip6 daddr");
 
     # Agent with inbound ports
     e = policy_engine_new();
@@ -1762,6 +1955,8 @@ fn test_engine() {
 
 fn test_config() {
     test_group("config");
+    assert_eq(cfg_parse_family(0), 0 - 1, "NULL family is unknown, not a crash (audit B-10)");
+    assert_eq(cfg_parse_policy(0), 0 - 1, "NULL policy is unknown, not a crash");
 
     # Family
     assert_eq(cfg_parse_family("inet"), FAMILY_INET, "family inet");
@@ -1900,8 +2095,8 @@ fn test_netns() {
     assert(str_contains_cstr(rendered, "policy drop") == 1, "default inbound drop");
     assert(str_contains_cstr(rendered, "policy accept") == 1, "default outbound accept");
     assert(str_contains_cstr(rendered, "ct state { established, related }") == 1, "established");
-    assert(str_contains_cstr(rendered, "iif \"lo\"") == 1, "loopback in");
-    assert(str_contains_cstr(rendered, "oif \"lo\"") == 1, "loopback out");
+    assert(str_contains_cstr(rendered, "iifname \"lo\"") == 1, "loopback in");
+    assert(str_contains_cstr(rendered, "oifname \"lo\"") == 1, "loopback out");
     assert(str_contains_cstr(rendered, "dport 53") == 1, "dns");
     assert(str_contains_cstr(rendered, "test-agent dns") == 1, "dns comment");
 
@@ -1991,8 +2186,64 @@ fn test_nft_comment_char_rejected() {
     return 0;
 }
 
+fn _tfw_input(r1: i64, r2: i64): i64 {
+    var fw = firewall_new();
+    var t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    if (r1 != 0) { chain_add_rule(c, r1); }
+    if (r2 != 0) { chain_add_rule(c, r2); }
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+    return fw;
+}
+
 fn test_handle_parse_hardening() {
     test_group("handle_parse_hardening");
+
+    # --- 1.8.2 parser repairs (audit P-1 to P-5), real nft 1.1.7 shapes ---
+    var hdr = "table inet filter { # handle 1\n\tchain input { # handle 1\n\t\ttype filter hook input priority filter; policy drop;\n";
+    # P-1 (HIGH): a live chain the target never mentions is left alone.
+    var dock = str_from("table inet filter { # handle 1\n\tchain input { # handle 1\n\t\ttype filter hook input priority filter; policy drop;\n\t\ttcp dport 22 accept # handle 2\n\t}\n}\ntable ip nat { # handle 2\n\tchain POSTROUTING { # handle 1\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\tip saddr 172.17.0.0/16 oifname != \"docker0\" masquerade # handle 2\n\t}\n}\n");
+    assert_eq(vec_len(diff_compute(_tfw_input(allow_tcp(22), 0), dock)), 0,
+      "P-1: in-sync target emits no op, docker's masquerade is not deleted");
+    # P-2 (HIGH): counter/limit/ct-helper-led rules are rules, not blocks.
+    var cl_sb = str_builder_new();
+    str_builder_add_cstr(cl_sb, hdr);
+    str_builder_add_cstr(cl_sb, "\t\tcounter packets 0 bytes 0 accept # handle 5\n\t\tlimit rate 10/second burst 5 packets accept # handle 6\n\t\tct helper set \"ftp1\" # handle 9\n\t\ttcp dport 22 accept # handle 8\n\t}\n}\n");
+    var cl = str_builder_build(cl_sb);
+    var clr = diff_parse_live(cl);
+    assert_eq(vec_len(clr), 4, "P-2: all four rules parsed (through 1.8.1: one phantom)");
+    var clt = vec_new();
+    assert_eq(_parse_ruleset(cl, clt), 4, "P-2: status counts all four");
+    # P-3: chain comment skipped; an anonymous chain is ONE rule with the closing handle.
+    var an_sb = str_builder_new();
+    str_builder_add_cstr(an_sb, "table inet filter { # handle 1\n\tchain input { # handle 1\n\t\tcomment \"managed by nein\"\n\t\ttype filter hook input priority filter; policy drop;\n");
+    str_builder_add_cstr(an_sb, "\t\tip saddr 1.2.3.4 jump {\n\t\t\ttcp dport 22 accept\n\t\t} # handle 4\n\t\tudp dport 53 accept # handle 5\n\t}\n}\n");
+    var anr = diff_parse_live(str_builder_build(an_sb));
+    assert_eq(vec_len(anr), 2, "P-3: chain comment skipped, anonymous chain is one rule");
+    assert_eq(live_rule_handle(vec_get(anr, 0)), 4, "P-3: anonymous chain carries its closing handle");
+    # P-4: an unbalanced quote makes the listing untrusted; nein_diff applies nothing.
+    var uq_sb = str_builder_new();
+    str_builder_add_cstr(uq_sb, hdr);
+    str_builder_add_cstr(uq_sb, "\t\ttcp dport 443 accept comment \"x\" # handle 3\" # handle 4\n\t}\n}\n");
+    var ust[8];
+    var uops = _diff_compute(_tfw_input(allow_tcp(22), 0), str_builder_build(uq_sb), &ust);
+    assert_eq(load64(&ust), NEIN_ERR_PARSE, "P-4: unbalanced quotes -> NEIN_ERR_PARSE");
+    assert_eq(vec_len(uops), 0, "P-4: no ops from an untrusted listing");
+    # P-4: a table name nft printed with a space is not folded into `filter`.
+    var sp = str_from("table inet filter x { # handle 1\n\tchain input { # handle 1\n\t\taccept # handle 2\n\t}\n}\n");
+    assert_eq(vec_len(diff_parse_live(sp)), 0, "P-4: spaced table name is foreign, its rules skipped");
+    # P-5: an unusable TARGET chain name never reaches an op.
+    var badfw = firewall_new();
+    var bt = table_new("filter", FAMILY_INET);
+    var bc = chain_regular("input tcp dport 1 accept;flush ruleset;#");
+    chain_add_rule(bc, allow_tcp(1));
+    table_add_chain(bt, bc);
+    firewall_add_table(badfw, bt);
+    var bst[8];
+    var bops = _diff_compute(badfw, str_from(""), &bst);
+    assert_eq(vec_len(bops), 0, "P-5: no op built from an unusable chain name");
+    assert_eq(load64(&bst), NEIN_ERR_PARSE, "P-5: reported, not silent");
 
     # Quote awareness: ' # handle ' inside a rule COMMENT must not be mistaken
     # for the real suffix (audit H-6).
@@ -2046,9 +2297,17 @@ fn test_sign_delimiter_rejected() {
     table_add_chain(t, c);
     firewall_add_table(fw, t);
 
-    var sk = alloc(64);
+    # A real key pair (1.8.2). This test used to fill sk with bytes 0..63,
+    # whose public half does not match the seed: sigil refused to sign
+    # (ed25519_sign -> -1, zeroed signature), nein ignored the return, and the
+    # "clean body still signs" assertion passed on an envelope that could
+    # never verify — the audit M-4 defect, inside the test.
+    var seed = alloc(32);
     var i = 0;
-    while (i < 64) { store8(sk + i, i); i = i + 1; }
+    while (i < 32) { store8(seed + i, i); i = i + 1; }
+    var sk = alloc(64);
+    var pk = alloc(32);
+    ed25519_keypair(seed, sk, pk);
     var res_t, res_v = sign_ruleset_body(firewall_render(fw), sk, "test-key");
     assert(is_err_result(res_t) == 1, "signing refuses a body containing the delimiter");
     assert_eq(res_v, NEIN_ERR_SIG_MALFORMED, "reported as malformed");
@@ -2062,6 +2321,21 @@ fn test_sign_delimiter_rejected() {
     firewall_add_table(fw2, t2);
     assert(is_ok(sign_ruleset_body(firewall_render(fw2), sk, "test-key")) == 1,
       "a clean body still signs");
+    # ...and now the envelope actually verifies against the key's public half.
+    var cs_t, cs_v = sign_ruleset_body(firewall_render(fw2), sk, "test-key");
+    assert(is_ok(verify_ruleset(cs_v, pk)) == 1, "the clean envelope verifies");
+    # M-4: a key whose public half does not match its seed is refused at sign time.
+    var badsk = alloc(64);
+    var bi = 0;
+    while (bi < 64) { store8(badsk + bi, bi); bi = bi + 1; }
+    var bs_t, bs_v = sign_ruleset_body(firewall_render(fw2), badsk, "test-key");
+    assert(is_err_result(bs_t) == 1, "mismatched key refused at sign time (was Ok with a zero signature)");
+    assert_eq(bs_v, NEIN_ERR_SIG_KEY, "reported as a key error");
+    # M-4: a body containing NUL is refused; M-7: NULL arguments fail closed.
+    var nb_t, nb_v = sign_ruleset_body(str_new("flush\0ruleset\n", 14), sk, "test-key");
+    assert(is_err_result(nb_t) == 1, "body with a NUL refused at sign time");
+    assert(is_err_result(verify_ruleset(cs_v, 0)) == 1, "NULL pubkey fails closed, no crash");
+    assert(is_err_result(apply_signed_ruleset_hex(cs_v, 0)) == 1, "NULL hex pubkey fails closed, no crash");
 
     return 0;
 }
@@ -2528,6 +2802,15 @@ fn _test_mcp_gate(name: cstring, claims: i64): i64 {
     return 0;
 }
 
+# Event sink for the registration test (1.8.2): counts bote's
+# TOPIC_TOOL_REGISTERED events, which one-call registration publishes and
+# the old registry_register + dispatcher_handle pair never did.
+var _test_reg_events = 0;
+fn _test_reg_event(ctx: i64, topic: cstring, payload: cstring): i64 {
+    if (streq(topic, "bote/tool/registered") == 1) { _test_reg_events = _test_reg_events + 1; }
+    return 0;
+}
+
 fn test_mcp() {
     test_group("mcp");
 
@@ -2574,10 +2857,42 @@ fn test_mcp() {
     assert(str_contains_cstr(str_from(d_ok), "missing") == 0, "diff valid array parses (no missing-field error)");
     assert(str_contains_cstr(str_from(d_ok), "unsupported") == 0, "diff valid array parses (no proto error)");
 
+    # --- 1.8.2 (audit M-1): ports and argument shape are strict ---
+    var pw = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":18446744073709551638}", 0);
+    assert(str_contains_cstr(str_from(pw), "\"isError\":true") == 1, "port that wrapped to 22 rejected");
+    var pe4 = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":2e4}", 0);
+    assert(str_contains_cstr(str_from(pe4), "\"isError\":true") == 1, "exponent port rejected (atoi read 2)");
+    var pf = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22.9}", 0);
+    assert(str_contains_cstr(str_from(pf), "\"isError\":true") == 1, "fractional port rejected");
+    var pd = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22,\"port\":80}", 0);
+    assert(str_contains_cstr(str_from(pd), "duplicate argument key") == 1, "duplicate key rejected");
+    var pk = _nein_validate_handler("{\"protocol\":\"tcp\",\"\\u0070ort\":22}", 0);
+    assert(str_contains_cstr(str_from(pk), "escapes") == 1, "escaped key rejected");
+    var pv = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22}", 0);
+    assert(str_contains_cstr(str_from(pv), "\"isError\":false") == 1, "plain arguments still valid");
+    assert_eq(_mcp_port("65535"), 65535, "port 65535 parses");
+    assert_eq(_mcp_port("0"), 0 - 1, "port 0 rejected");
+    assert_eq(_mcp_port("022"), 0 - 1, "leading-zero port rejected");
+    # M-5: a '{' inside a string no longer swallows the next rule — the second
+    # rule's bad verdict is reached and reported.
+    var dsw = _nein_diff_handler("{\"rules\":[{\"protocol\":\"tcp\",\"port\":22,\"x\":\"{\"},{\"protocol\":\"udp\",\"port\":53,\"verdict\":\"bogus\"}]}", 0);
+    assert(str_contains_cstr(str_from(dsw), "must be accept or drop") == 1, "diff array walk is string-aware");
+    assert(str_contains_cstr(str_from(nein_mcp_dispatch(0, "{}", 0)), "unknown nein tool") == 1, "NULL tool name is an error, not a crash (M-7)");
+
     # --- registration mounts every tool on a dispatcher ---
     var reg = tool_registry_new();
     var d = dispatcher_new(reg);
-    nein_tools_register(d);
+    _test_reg_events = 0;
+    dispatcher_set_events(d, event_sink_new(&_test_reg_event, 0));
+    assert_eq(nein_tools_register(d), 0, "register: none of the six refused");
+    assert_eq(_test_reg_events, 6, "register: bote published TOPIC_TOOL_REGISTERED for all six");
+    var hi = 0;
+    var hok = 1;
+    while (hi < nein_tool_count()) {
+        if (map_get(dispatcher_handlers(d), nein_tool_name(hi)) != _nein_handler(hi)) { hok = 0; }
+        hi = hi + 1;
+    }
+    assert_eq(hok, 1, "register: every tool bound to its own handler");
     assert(registry_contains(reg, "nein_status") == 1, "registered nein_status");
     assert(registry_contains(reg, "nein_allow") == 1, "registered nein_allow");
     assert(registry_contains(reg, "nein_deny") == 1, "registered nein_deny");
@@ -2585,6 +2900,19 @@ fn test_mcp() {
     assert(registry_contains(reg, "nein_list") == 1, "registered nein_list");
     assert(registry_contains(reg, "nein_diff") == 1, "registered nein_diff");
     assert_eq(registry_len(reg), 6, "all 6 nein tools registered");
+
+    # --- a refused definition leaves nothing behind (1.8.2) ---
+    # The old two-step code bound the handler even when the registry refused
+    # the definition. One-call registration adds nothing and reports it.
+    var rreg = tool_registry_new();
+    var rd = dispatcher_new(rreg);
+    _test_reg_events = 0;
+    dispatcher_set_events(rd, event_sink_new(&_test_reg_event, 0));
+    var bad_td = tool_def_new("bad name", "space in a name is refused", schema_new("object", 0, vec_new()));
+    assert_eq(_nein_register_one(rd, bad_td, _nein_handler(0)), 1, "register: bad definition refused");
+    assert_eq(registry_len(rreg), 0, "register: refused tool not listed");
+    assert(map_get(dispatcher_handlers(rd), "bad name") == 0, "register: refused tool has no handler");
+    assert_eq(_test_reg_events, 0, "register: no event for a refused tool");
 
     # --- annotations + profiles (daimon 1.6.2 gates on these) ---
     assert(ann_read_only_hint(tool_def_annotations(registry_get(reg, "nein_status"))) == 1,
@@ -2605,7 +2933,7 @@ fn test_mcp() {
     # --- gated register: gate permits only nein_validate ---
     var greg = tool_registry_new();
     var gd = dispatcher_new(greg);
-    nein_tools_register_gated(gd, &_test_mcp_gate);
+    assert_eq(nein_tools_register_gated(gd, &_test_mcp_gate), 0, "gated register: none refused");
     var gv = _nein_validate_handler("{\"protocol\":\"tcp\",\"port\":22}", 0);
     assert(str_contains_cstr(str_from(gv), "\"isError\":false") == 1, "gate permits validate");
     var gs = _nein_status_handler("{}", 0);
