@@ -39,7 +39,7 @@ fn define_name(d: i64): i64 { return load64(d); }
 fn define_value(d: i64): i64 { return load64(d + 8); }
 
 fn define_validate(d: i64): i64 {
-    var vr1_t, vr1_v = validate_identifier(define_name(d));
+    var vr1_t, vr1_v = validate_nft_name(define_name(d));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var vr2_t, vr2_v = validate_nft_element(define_value(d));
     if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
@@ -80,7 +80,7 @@ fn flowtable_priority(ft: i64): i64 { return load64(ft + 16); }
 fn flowtable_devices(ft: i64): i64 { return load64(ft + 24); }
 
 fn flowtable_validate(ft: i64): i64 {
-    var vr1_t, vr1_v = validate_identifier(flowtable_name(ft));
+    var vr1_t, vr1_v = validate_nft_name(flowtable_name(ft));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     if (flowtable_hook(ft) != HOOK_INGRESS) {
         return nein_err(NEIN_ERR_INVALID_RULE);
@@ -115,7 +115,12 @@ fn flowtable_render(ft: i64): Str {
         var i = 0;
         while (i < dlen) {
             if (i > 0) { str_builder_add_cstr(sb, ", "); }
+            # Quoted (1.9.1): bare, nft reads `vxlan`, `bridge`, `ip` or
+            # `3eth` as a keyword or a number and refuses the batch. Linux
+            # allows each as an interface name; validate_iface keeps quotes out.
+            str_builder_add_cstr(sb, "\"");
             str_builder_add_cstr(sb, vec_get(devs, i));
+            str_builder_add_cstr(sb, "\"");
             i = i + 1;
         }
         str_builder_add_cstr(sb, " };\n");
@@ -159,8 +164,11 @@ fn ct_timeout_add_timeout(ct: i64, state: cstring, seconds: i64): i64 {
 }
 
 fn ct_timeout_validate(ct: i64): i64 {
-    var vr1_t, vr1_v = validate_identifier(ct_timeout_name(ct));
+    var vr1_t, vr1_v = validate_nft_name(ct_timeout_name(ct));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    # nft reads this name in its ct scope, which has keywords of its own
+    # (`ct timeout state { ... }` is refused; 1.9.1, audit I-10).
+    if (_nft_ct_keyword(ct_timeout_name(ct)) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
     var proto = ct_timeout_protocol(ct);
     if (proto != PROTO_TCP && proto != PROTO_UDP) {
         return nein_err(NEIN_ERR_INVALID_RULE);

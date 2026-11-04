@@ -1,6 +1,6 @@
 # Threat Model
 
-Last refresh: **2026-11-03** (v1.9.0 — T-9 gains the replay-bound v2 envelope and its residual risk; T-10 rewritten for the 1.9.0 gate contract: tool classes, offline-only default, one permit value, install-once. Previously v1.8.2 — T-4 rewritten for the memfd apply path after the 2026-11-03 P(-1) audit; T-3's override is copied, not borrowed. Previously 2026-08-21, v1.6.10 — T-4 rewritten and T-7 corrected after that audit. Earlier passes added T-9 signed-ruleset trust (v1.6.1), T-10 MCP
+Last refresh: **2026-11-04** (v1.9.1 — T-1: names rendered bare must be names nft reads (`validate_nft_name`), IPv6 addresses ones nft parses, and the residual of a probed keyword list; T-5: `pe_validate` parses each address once. Previously v1.9.0 — T-9 gains the replay-bound v2 envelope and its residual risk; T-10 rewritten for the 1.9.0 gate contract: tool classes, offline-only default, one permit value, install-once. Previously v1.8.2 — T-4 rewritten for the memfd apply path after the 2026-11-03 P(-1) audit; T-3's override is copied, not borrowed. Previously 2026-08-21, v1.6.10 — T-4 rewritten and T-7 corrected after that audit. Earlier passes added T-9 signed-ruleset trust (v1.6.1), T-10 MCP
 destructive-tool access control (v1.6.0) and T-11 MCP argument injection and
 output escaping; the v1.4.0 refresh hardened T-3 to a single pinned absolute
 path.)
@@ -39,9 +39,10 @@ render call. Validators reject the dangerous-char set `; { } | \n \r \0
 
 | Validator | Allowlist |
 |-----------|-----------|
-| `validate_identifier` | alnum + `_` + `-`, 1–64 chars (table/chain names) |
-| `validate_addr` | hex + `.` + `:` + `/`, must contain a digit and at least one of `.`/`:` (IPv4/IPv6/CIDR) |
-| `validate_iface` | alnum + `_` + `-` + `.`, 1–15 chars (Linux `IFNAMSIZ`) |
+| `validate_identifier` | alnum + `_` + `-`, 1–64 chars (quoted object names, labels, key ids) |
+| `validate_nft_name` | `validate_identifier`, plus a leading letter or `_` and no nft keyword (names rendered bare: table, chain, set, map, flowtable, ct timeout, define; jump / goto targets; `@` references) — 1.9.1 |
+| `validate_addr` | parses as IPv4 or IPv6 with an in-range prefix (1.8.2); an IPv6 dotted-quad tail needs `::` (1.9.1) |
+| `validate_iface` | alnum + `_` + `-` + `.`, 1–15 chars (Linux `IFNAMSIZ`); since 1.9.1 rendered quoted as flowtable devices and ifname set / map values, where bare nft reads `vxlan` or `3eth` as a keyword or a number |
 | `validate_family` | closed set: `inet`/`ip`/`ip6`/`arp`/`bridge`/`netdev` |
 | `validate_ct_state_list` | comma-separated list, each token from the closed set `new`/`established`/`related`/`invalid`/`untracked` |
 | `validate_comment` | rejects `"` and dangerous chars; ≤ 128 chars |
@@ -53,11 +54,34 @@ render call. Validators reject the dangerous-char set `; { } | \n \r \0
 of v1.1.2, all validators carry `(s: cstring): i64` annotations so the
 type-check gate catches a wrong-type input at compile time.
 
+**Validated must mean parseable (1.9.1).** Injection-safe is not enough:
+a value nft cannot parse fails the whole batch at apply, which for a
+caller is a firewall that did not change. Probing nft 1.1.7 found shapes
+nein accepted and nft refuses:
+- a name starting with a digit or `-` (`3f2a_in`, from a container-id
+  agent);
+- an nft keyword as a name (`fwd`, `log`, … 160 of them, and 16 more as
+  a table name to `nft list`);
+- an IPv6 address written as six groups and a dotted quad with no `::`;
+- an interface name nft reads as a keyword or a number where it renders
+  as a value (`devices = { vxlan }`).
+
+Each is now refused at validation, or quoted (interface names). The
+builders check the names, comments, ports and protocols they compose
+(`<id>_in`, `<prefix>_filter`, `policy:<name> ingress from <peer>`), so a
+builder config that validates builds a firewall that validates.
+
 **Residual risk.** The `Raw` Match variant (per ADR-0004) bypasses
 validation — documented for trusted-input use only. The convenience
 builders `matching_addrs` / `matching_addrs6` use Raw internally but
 pre-validate each address. Callers who construct `Raw` matches
-themselves own the validation contract.
+themselves own the validation contract. The keyword lists are nft
+1.1.7's, found by probing it: a keyword a later nft adds passes
+validation and fails closed at apply, as every keyword did through
+1.9.0. `tests/integration/nft_grammar.tcyr` tries every word the
+installed nft names in its own syntax errors as a chain name, so such a
+keyword shows there as a failure naming the word; an older nft with
+fewer keywords costs a name, not a batch.
 
 ### T-2 — incremental-apply injection
 
@@ -189,6 +213,11 @@ or the kernel netfilter table runs out of memory.
   CIDRs compresses to one set with `flags interval`.
 - `firewall_render` is observable before any apply — callers can size
   the output and refuse to apply if implausible.
+- `pe_validate` parses each agent's address once for its duplicate check
+  (1.9.1): through 1.9.0 it re-parsed every later address for every
+  agent, n²/2 parses — 1.1 ms at 100 agents and 112 ms at 1,000 (measured;
+  now 0.26 ms and 15 ms). The pair comparison is still O(n²), on 16-byte
+  keys.
 
 ### T-6 — TOML config inputs
 

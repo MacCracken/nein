@@ -134,7 +134,7 @@ fn nft_set_add_elements(s: i64, elems: i64): i64 {
 }
 
 fn nft_set_validate(s: i64): i64 {
-    var vr1_t, vr1_v = validate_identifier(nft_set_name(s));
+    var vr1_t, vr1_v = validate_nft_name(nft_set_name(s));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var stype = nft_set_type(s);
     if (stype < SET_IPV4_ADDR || stype > SET_IFNAME) { return nein_err(NEIN_ERR_INVALID_RULE); }
@@ -153,6 +153,21 @@ fn nft_set_validate(s: i64): i64 {
         i = i + 1;
     }
     return nein_ok();
+}
+
+# An element or map key of type `stype`. An interface name is quoted (1.9.1):
+# bare, nft reads `vxlan`, `bridge`, `gre` or `3eth` as a keyword or a number
+# and refuses the batch; quoted it is the name. _set_value_ok has already held
+# it to validate_iface, which keeps quotes out.
+fn _set_add_value(sb: i64, stype: i64, v: cstring): i64 {
+    if (stype == SET_IFNAME) {
+        str_builder_add_cstr(sb, "\"");
+        str_builder_add_cstr(sb, v);
+        str_builder_add_cstr(sb, "\"");
+        return 0;
+    }
+    str_builder_add_cstr(sb, v);
+    return 0;
 }
 
 fn nft_set_render(s: i64): Str {
@@ -184,7 +199,7 @@ fn nft_set_render(s: i64): Str {
         var i = 0;
         while (i < elen) {
             if (i > 0) { str_builder_add_cstr(sb, ", "); }
-            str_builder_add_cstr(sb, vec_get(elems, i));
+            _set_add_value(sb, nft_set_type(s), vec_get(elems, i));
             i = i + 1;
         }
         str_builder_add_cstr(sb, " };\n");
@@ -225,7 +240,7 @@ fn nft_map_add_entry(m: i64, key: cstring, vtype: i64, vval: i64): i64 {
 }
 
 fn nft_map_validate(m: i64): i64 {
-    var vr1_t, vr1_v = validate_identifier(nft_map_name(m));
+    var vr1_t, vr1_v = validate_nft_name(nft_map_name(m));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var ktype = nft_map_key_type(m);
     if (ktype < SET_IPV4_ADDR || ktype > SET_IFNAME) { return nein_err(NEIN_ERR_INVALID_RULE); }
@@ -238,7 +253,7 @@ fn nft_map_validate(m: i64): i64 {
         var mv = load64(e + 8);
         if (mv < MAPV_ACCEPT || mv > MAPV_JUMP) { return nein_err(NEIN_ERR_INVALID_RULE); }
         if (mv == MAPV_JUMP) {
-            var vr3_t, vr3_v = validate_identifier(load64(e + 16));
+            var vr3_t, vr3_v = validate_nft_name(load64(e + 16));
             if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
         }
         i = i + 1;
@@ -263,7 +278,7 @@ fn nft_map_render(m: i64): Str {
         while (i < elen) {
             if (i > 0) { str_builder_add_cstr(sb, ", "); }
             var e = vec_get(entries, i);
-            str_builder_add_cstr(sb, load64(e));
+            _set_add_value(sb, nft_map_key_type(m), load64(e));
             str_builder_add_cstr(sb, " : ");
             var vt = load64(e + 8);
             if (vt == MAPV_ACCEPT) { str_builder_add_cstr(sb, "accept"); }

@@ -486,9 +486,9 @@ fn _target_in_live(target_rule: i64, live_rules: i64): i64 {
 fn _diff_names_ok(rule: i64): i64 {
     var f_t, f_v = validate_family(live_rule_family(rule));
     if (is_err_result(f_t) == 1) { return 0; }
-    var t_t, t_v = validate_identifier(live_rule_table(rule));
+    var t_t, t_v = validate_nft_name(live_rule_table(rule));
     if (is_err_result(t_t) == 1) { return 0; }
-    var c_t, c_v = validate_identifier(live_rule_chain(rule));
+    var c_t, c_v = validate_nft_name(live_rule_chain(rule));
     if (is_err_result(c_t) == 1) { return 0; }
     return 1;
 }

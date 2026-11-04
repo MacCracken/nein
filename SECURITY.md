@@ -1,6 +1,6 @@
 # Security Policy
 
-Last refresh: **2026-08-21** (v1.6.5).
+Last refresh: **2026-11-04** (v1.9.1).
 
 ## Scope
 
@@ -61,7 +61,14 @@ threat in the threat model.
   closed-set validators backstop the character allowlist with semantic
   checks. As of v1.1.2, all validators carry `(s: cstring): i64` type
   annotations and the type-check CI gate confirms callers pass the
-  right shape.
+  right shape. Since 1.9.1 a name rendered bare (table, chain, set,
+  jump target, …) must also be one nft's grammar reads — no leading
+  digit or `-`, no nft keyword (`validate_nft_name`) — and an IPv6
+  address one nft parses; both were found by probing nft 1.1.7, and
+  `tests/integration/nft_grammar.tcyr` re-checks them against the
+  installed nft. Interface names are quoted where they render as
+  values (flowtable devices, ifname sets and maps). Builders check the
+  names, comments, ports and protocols they compose.
 - **No PATH-based execve** (T-3). The `nft` subprocess is invoked via a
   single pinned absolute path (`/usr/sbin/nft`); PATH is never consulted.
   A caller can override the path at runtime via `nein_set_nft_path`
@@ -99,7 +106,7 @@ threat in the threat model.
   each resolved dep. `cyrius deps --verify` in CI fails on hash
   mismatch. Cyrius itself is pinned in `cyrius.cyml`
   (`cyrius = "6.7.18"`). nein's git dep set (`cyrius.cyml` `[deps.*]`,
-  as of 1.9.0): libro 2.11.3, majra 2.13.0, bote 3.8.0 (`bote-core`),
+  as of 1.9.1): libro 2.11.3, majra 2.13.0, bote 3.8.9 (`bote-core`),
   sigil 3.13.15, patra 1.16.6 —
   sigil + patra carry explicit pins. sakshi dropped out of the git set at
   1.6.5 (libro 2.8.8 no longer pulls it transitively); it now resolves

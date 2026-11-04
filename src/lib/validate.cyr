@@ -88,6 +88,186 @@ fn validate_identifier(s: cstring): i64 {
     return nein_ok();
 }
 
+# --- nft names (1.9.1, audit I-10) ----------------------------------
+# validate_identifier's charset is not nft's grammar for a name. Where nein
+# renders a name bare — a table, chain, set, map, flowtable, ct timeout or
+# define name, a jump / goto target, an @reference — nft 1.1.7 refuses:
+#   - a name that starts with a digit or '-' (`3f2a`, `1abc`, `-x`), which
+#     its scanner reads as a number or an option;
+#   - one of its keywords (`fwd`, `log`, `counter`, `ip`, ... 160 of them).
+#     Keywords are case-sensitive: `FWD` is a name.
+# Through 1.9.0 both passed validation and failed the whole batch at apply.
+# The lists below were probed, not transcribed: 5,118 candidate words (every
+# word of nft(8), libnftables-json(5), the shipped example rulesets and JSON
+# schema, and libnftables' own strings) were each declared at twelve name
+# positions under nft 1.1.7, and a word is listed where nft refused it. Then
+# every lowercase name of 1 to 5 letters (12.4 million) and 12,582 wider
+# candidates (each part of libnftables' symbol names, and each candidate's
+# plural) were checked as names; with the list below, nft takes every one. A
+# keyword a later nft adds still fails closed, at apply, as before;
+# tests/integration/nft_grammar.tcyr re-checks the list against the installed nft.
+
+# 1 when the n-byte name s is a word of row: a run of n-byte words, one
+# space apart, in alphabetical order (0: no row). The fixed width steps word
+# to word with no scan, and the order stops at the first word past s's first
+# letter.
+fn _kw_row_has(s: cstring, n: i64, row: cstring): i64 {
+    if (row == 0) { return 0; }
+    var c = load8(s);
+    var i = 0;
+    var more = 1;
+    while (more == 1) {
+        var r = load8(row + i);
+        if (r == c) {
+            if (memeq(row + i, s, n) == 1) { return 1; }
+        }
+        if (r > c) { return 0; }
+        if (load8(row + i + n) == 0) { more = 0; }
+        i = i + n + 1;
+    }
+    return 0;
+}
+
+# nft's keywords in every name position, as rows of n-byte words, part 0-2
+# (0 past the last). 160 words of 2 to 11 bytes; the tests check the count,
+# each word's width and the order. `eq`, `xor`, `lshift` and `rshift` are
+# the operators `==`, `^`, `<<` and `>>` spelled out: nft lists them in its
+# errors as symbols, so neither the word sources nor the error harvest found
+# them, and an independent review did (1.9.1).
+fn _nft_kw_list(n: i64, part: i64): cstring {
+    if (n == 2) {
+        if (part == 0) { return "ah ct eq ge gt ip le lt mh ne or rt th xt"; }
+        return 0;
+    }
+    if (n == 3) {
+        if (part == 0) { return "add all and arp cpu day dst dup ecn esp fib fwd get gre hbh iif ip6 log map not oif"; }
+        if (part == 1) { return "osf rt0 rt2 set srh tcp udp vni xor"; }
+        return 0;
+    }
+    if (n == 4) {
+        if (part == 0) { return "comp dccp dnat drop flow frag goto hook hour icmp igmp inet jump list mark meta"; }
+        if (part == 1) { return "rule sctp size snat time type vlan vmap"; }
+        return 0;
+    }
+    if (n == 5) {
+        if (part == 0) { return "chain ether flags flush index ipsec jhash limit meter queue quota reset skgid skuid"; }
+        if (part == 1) { return "table vxlan"; }
+        return 0;
+    }
+    if (n == 6) {
+        if (part == 0) { return "accept bridge cgroup create define delete device exists export exthdr geneve gretap"; }
+        if (part == 1) { return "handle icmpv6 import insert lshift netdev numgen policy random reject rename return"; }
+        if (part == 2) { return "rshift socket tproxy tunnel typeof update"; }
+        return 0;
+    }
+    if (n == 7) {
+        if (part == 0) { return "comment counter destroy devices dynamic element expires ibrname iifname iiftype"; }
+        if (part == 1) { return "include missing monitor nftrace notrack obrname offload oifname oiftype pkttype"; }
+        if (part == 2) { return "replace ruleset secmark symhash timeout udplite"; }
+        return 0;
+    }
+    if (n == 8) {
+        if (part == 0) { return "constant continue describe elements ibriport iifgroup interval obriport oifgroup"; }
+        if (part == 1) { return "position priority redefine redirect synproxy undefine"; }
+        return 0;
+    }
+    if (n == 9) {
+        if (part == 0) { return "flowtable rtclassid"; }
+        return 0;
+    }
+    if (n == 10) {
+        if (part == 0) { return "auto-merge masquerade"; }
+        return 0;
+    }
+    if (n == 11) {
+        if (part == 0) { return "gc-interval"; }
+        return 0;
+    }
+    return 0;
+}
+
+# 1 when s (n bytes) is an nft keyword in every name position.
+fn _nft_keyword(s: cstring, n: i64): i64 {
+    if (n < 2 || n > 11) { return 0; }
+    var part = 0;
+    while (part < 3) {
+        if (_kw_row_has(s, n, _nft_kw_list(n, part)) == 1) { return 1; }
+        part = part + 1;
+    }
+    return 0;
+}
+
+# The keywords of nft's ct scope, which a ct timeout's NAME is read in
+# (`ct timeout state { ... }` is refused; probed, nft 1.1.7), as one row of
+# n-byte words per width (0: none). 28 words. Only the ct timeout
+# declaration needs them.
+fn _nft_ct_kw_list(n: i64): cstring {
+    if (n == 2) { return "id"; }
+    if (n == 4) { return "last name over zone"; }
+    if (n == 5) { return "bytes count daddr dport event label reply saddr state until"; }
+    if (n == 6) { return "avgpkt helper status"; }
+    if (n == 7) { return "helpers l3proto packets"; }
+    if (n == 8) { return "original protocol"; }
+    if (n == 9) { return "direction proto-dst proto-src"; }
+    if (n == 10) { return "expiration"; }
+    if (n == 11) { return "expectation"; }
+    return 0;
+}
+
+# 1 when s is a ct-scope keyword (see _nft_ct_kw_list).
+fn _nft_ct_keyword(s: cstring): i64 {
+    var n = strlen(s);
+    if (n < 2 || n > 11) { return 0; }
+    return _kw_row_has(s, n, _nft_ct_kw_list(n));
+}
+
+# The table names `nft list table <family> <name>` reads as keywords of its
+# list scope, as one row of n-byte words per width (0: none). `tables`,
+# `rules`, `count`, ... are names everywhere else, so `table inet rules` is
+# declared and applied, and then cannot be listed (probed, nft 1.1.7: 12,582
+# candidates as real tables in a namespace; 1.9.1). 16 words. Only
+# list_table_with_handles needs them.
+fn _nft_list_kw_list(n: i64): cstring {
+    if (n == 4) { return "maps sets"; }
+    if (n == 5) { return "count hooks rules"; }
+    if (n == 6) { return "chains counts limits meters quotas tables"; }
+    if (n == 7) { return "tunnels"; }
+    if (n == 8) { return "counters secmarks"; }
+    if (n == 9) { return "synproxys"; }
+    if (n == 10) { return "flowtables"; }
+    return 0;
+}
+
+# 1 when s is a list-scope keyword (see _nft_list_kw_list).
+fn _nft_list_keyword(s: cstring): i64 {
+    var n = strlen(s);
+    if (n < 2 || n > 11) { return 0; }
+    return _kw_row_has(s, n, _nft_list_kw_list(n));
+}
+
+# 1 when nft reads `@s` as something other than a reference to the set or
+# flowtable s: `@ll` and `@nh` are raw payload bases (`@nh,16,8`), and after
+# `flow offload` `@last` is a keyword (probed, nft 1.1.7). s already passed
+# validate_nft_name.
+fn _nft_ref_reserved(s: cstring, flowtable: i64): i64 {
+    if (streq(s, "ll") == 1 || streq(s, "nh") == 1) { return 1; }
+    if (flowtable == 1 && streq(s, "last") == 1) { return 1; }
+    return 0;
+}
+
+# Validate a name nein renders bare into nft text: a table, chain, set, map,
+# flowtable, ct timeout or define name, or a jump / goto target. Everything
+# validate_identifier checks, and nft's grammar for a name: it starts with a
+# letter or '_', and is no nft keyword (see above).
+fn validate_nft_name(s: cstring): i64 {
+    var vt, vv = validate_identifier(s);
+    if (is_err_result(vt) == 1) { return Err(vv); }
+    var c = load8(s);
+    if (c == 45 || (c >= 48 && c <= 57)) { return nein_err(NEIN_ERR_INVALID_RULE); }   # '-' or a digit
+    if (_nft_keyword(s, strlen(s)) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
+    return nein_ok();
+}
+
 # --- Strict address parsing (1.8.2, audit I-9) ----------------------
 # Through 1.8.1 validate_addr checked only the character set (hex digits,
 # '.', ':', '/') and that a '.' or ':' appeared, so "dead1.cafe" — a hex-only
@@ -139,12 +319,13 @@ fn _is_hex_char(c: i64): i64 {
 
 # s[a..b) is exactly an IPv6 address: up to eight 1-4 digit hex groups, at
 # most one "::", optionally ending in a dotted-quad (which counts as two
-# groups). No zone index.
+# groups, and needs the "::" — see the end). No zone index.
 fn _is_ipv6_span(s: cstring, a: i64, b: i64): i64 {
     if (b - a < 2) { return 0; }
     var i = a;
     var groups = 0;
     var compressed = 0;
+    var dotted = 0;
     if (load8(s + i) == 58) {                               # leading ':'
         if (load8(s + i + 1) != 58) { return 0; }           # only as "::"
         compressed = 1;
@@ -161,6 +342,7 @@ fn _is_ipv6_span(s: cstring, a: i64, b: i64): i64 {
         if (i == start) { return 0; }
         if (i < b && load8(s + i) == 46) {                  # dotted-quad tail
             if (_is_ipv4_span(s, start, b) == 0) { return 0; }
+            dotted = 1;
             groups = groups + 2;
             i = b;
             done = 1;
@@ -188,6 +370,12 @@ fn _is_ipv6_span(s: cstring, a: i64, b: i64): i64 {
         return 1;
     }
     if (groups != 8) { return 0; }
+    # Six groups and a dotted quad with no "::" (`1:2:3:4:5:6:1.2.3.4`, RFC
+    # 4291's x:x:x:x:x:x:d.d.d.d) is an address nft's scanner has no rule for:
+    # `ip6 saddr` with it is a syntax error and the batch fails at apply. Every
+    # compressed form with a dotted quad parses (1.9.1; a differential run of
+    # 2,329 spellings against nft 1.1.7 disagreed on this form and no other).
+    if (dotted == 1) { return 0; }
     return 1;
 }
 

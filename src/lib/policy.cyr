@@ -87,6 +87,58 @@ fn _validate_policy_rules(rules: i64): i64 {
             var vr1_t, vr1_v = validate_addr(peer);
             if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
         }
+        # Each port as firewall_validate will hold it: a protocol nft has, a
+        # port 0-65535. Through 1.9.0 a port of 70000 passed here and the
+        # firewall built from the policy failed (1.9.1, the audit B-8 class).
+        var ports = policy_rule_ports(pr);
+        var j = 0;
+        while (j < vec_len(ports)) {
+            var pp = vec_get(ports, j);
+            if (_in_range(policy_port_protocol(pp), PROTO_TCP, PROTO_ICMPV6) == 0) {
+                return nein_err(NEIN_ERR_INVALID_RULE);
+            }
+            if (_in_range(policy_port_port(pp), 0, 65535) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
+# Build the comment string "policy:NAME direction from/to PEER"
+fn _policy_comment(name: cstring, direction: cstring, preposition: cstring, peer: cstring): cstring {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "policy:");
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, direction);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, preposition);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, peer);
+    var s = str_builder_build(sb);
+    # Need null-terminated cstr for rule_set_comment
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# Ok when every comment the build gives a rule list's rules fits
+# validate_comment: `policy:<name> ingress from <peer>`, one per rule with
+# ports. Through 1.9.0 a 64-byte name with a long IPv6 peer composed 134 bytes
+# and the firewall failed validation, after this policy had passed (1.9.1,
+# the audit B-8 class).
+fn _policy_comments_ok(name: cstring, rules: i64, direction: cstring, preposition: cstring): i64 {
+    var rlen = vec_len(rules);
+    var i = 0;
+    while (i < rlen) {
+        var pr = vec_get(rules, i);
+        if (vec_len(policy_rule_ports(pr)) > 0) {
+            var c = _policy_comment(name, direction, preposition, policy_rule_peer(pr));
+            var vc_t, vc_v = validate_comment(c);
+            if (is_err_result(vc_t) == 1) { return Err(vc_v); }
+        }
         i = i + 1;
     }
     return nein_ok();
@@ -114,31 +166,17 @@ fn policy_validate(np: i64): i64 {
     var vr3_t, vr3_v = _validate_policy_rules(policy_egress(np));
     if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
 
+    var vc1_t, vc1_v = _policy_comments_ok(policy_name(np), policy_ingress(np), "ingress", "from");
+    if (is_err_result(vc1_t) == 1) { return Err(vc1_v); }
+    var vc2_t, vc2_v = _policy_comments_ok(policy_name(np), policy_egress(np), "egress", "to");
+    if (is_err_result(vc2_t) == 1) { return Err(vc2_v); }
+
     return nein_ok();
 }
 
 # ================================================================
 # Convert policy to rules
 # ================================================================
-
-# Build the comment string "policy:NAME direction from/to PEER"
-fn _policy_comment(name: cstring, direction: cstring, preposition: cstring, peer: cstring): cstring {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "policy:");
-    str_builder_add_cstr(sb, name);
-    str_builder_add_cstr(sb, " ");
-    str_builder_add_cstr(sb, direction);
-    str_builder_add_cstr(sb, " ");
-    str_builder_add_cstr(sb, preposition);
-    str_builder_add_cstr(sb, " ");
-    str_builder_add_cstr(sb, peer);
-    var s = str_builder_build(sb);
-    # Need null-terminated cstr for rule_set_comment
-    var out = alloc(str_len(s) + 1);
-    memcpy(out, str_data(s), str_len(s));
-    store8(out + str_len(s), 0);
-    return out;
-}
 
 # The policy's own endpoint, matched on every rule it renders (1.8.2,
 # audit B-6): through 1.8.1 neither `target` nor `default_action` was read

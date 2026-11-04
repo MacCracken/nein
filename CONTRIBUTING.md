@@ -16,7 +16,7 @@ Last refresh: **2026-08-21** (v1.6.10).
 ## Prerequisites
 
 - The Cyrius toolchain at the version pinned in `cyrius.cyml`
-  (`[package].cyrius`, **6.7.18** as of 1.9.0). Install it the way CI does,
+  (`[package].cyrius`, **6.7.18** as of 1.9.1). Install it the way CI does,
   with the upstream installer keyed on the pin:
   ```sh
   CYRIUS_VERSION="$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')"

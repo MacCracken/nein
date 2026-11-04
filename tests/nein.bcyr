@@ -37,6 +37,10 @@ fn bench_validate_iface() { validate_iface("br-container"); return 0; }
 fn bench_validate_comment() { validate_comment("container port mapping 8080 to internal 80"); return 0; }
 fn bench_validate_ct_state() { validate_ct_state("established"); return 0; }
 fn bench_validate_family() { validate_family("inet"); return 0; }
+# validate_nft_name (1.9.1): a miss after the longest letter row, and the
+# worst-case hit, the last word of the second row.
+fn bench_validate_nft_name_miss() { validate_nft_name("input"); return 0; }
+fn bench_validate_nft_name_keyword() { validate_nft_name("ipsec"); return 0; }
 
 # --- rule render ---
 
@@ -431,6 +435,8 @@ fn bench_bridge_large_render() { firewall_render(_bench_bridge_large_fw); return
 # separately from rendering it, which is where an O(n^2) assembly bug would
 # hide behind a linear render.
 fn bench_engine_100_agents_to_firewall() { pe_to_firewall(_bench_engine_100); return 0; }
+# pe_validate composes and checks each agent's chain names (1.9.1, B-8).
+fn bench_pe_validate_100_agents() { pe_validate(_bench_engine_100); return 0; }
 fn bench_geoip_10_countries_to_firewall() { geoip_to_firewall(_bench_geoip_10); return 0; }
 fn bench_mesh_to_firewall() { mesh_to_firewall(_bench_mesh_cfg); return 0; }
 
@@ -487,6 +493,8 @@ fn main() {
     b = bench_new("validate_comment"); bench_run(b, &bench_validate_comment, 100000); vec_push(all, b);
     b = bench_new("validate_ct_state"); bench_run(b, &bench_validate_ct_state, 100000); vec_push(all, b);
     b = bench_new("validate_family"); bench_run(b, &bench_validate_family, 100000); vec_push(all, b);
+    b = bench_new("validate_nft_name/miss"); bench_run(b, &bench_validate_nft_name_miss, 100000); vec_push(all, b);
+    b = bench_new("validate_nft_name/keyword"); bench_run(b, &bench_validate_nft_name_keyword, 100000); vec_push(all, b);
 
     b = bench_new("rule_render/simple"); bench_run(b, &bench_rule_render_simple, 100000); vec_push(all, b);
     b = bench_new("rule_render/service"); bench_run(b, &bench_rule_render_service, 100000); vec_push(all, b);
@@ -537,6 +545,7 @@ fn main() {
     # --- conversion benches (1.6.8) — build step, timed apart from render ---
     b = bench_new("bridge_large_to_firewall"); bench_run(b, &bench_bridge_large_to_firewall, 1000); vec_push(all, b);
     b = bench_new("engine_100_agents_to_firewall"); bench_run(b, &bench_engine_100_agents_to_firewall, 200); vec_push(all, b);
+    b = bench_new("pe_validate_100_agents"); bench_run(b, &bench_pe_validate_100_agents, 200); vec_push(all, b);
     b = bench_new("geoip_10_countries_to_firewall"); bench_run(b, &bench_geoip_10_countries_to_firewall, 10000); vec_push(all, b);
     b = bench_new("mesh_to_firewall"); bench_run(b, &bench_mesh_to_firewall, 10000); vec_push(all, b);
 

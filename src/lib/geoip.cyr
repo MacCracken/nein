@@ -98,9 +98,43 @@ fn _validate_cidr_list(cidrs: i64): i64 {
     return nein_ok();
 }
 
+# Concat "table_name" + optional suffix
+fn _table_name_with_suffix(base: cstring, suffix: cstring): cstring {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, base);
+    str_builder_add_cstr(sb, suffix);
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# 1 when any country carries CIDRs of the family (v6 = 1: IPv6), which the
+# build gives a table of its own.
+fn _any_has_cidrs(countries: i64, v6: i64): i64 {
+    var clen = vec_len(countries);
+    var i = 0;
+    while (i < clen) {
+        var cb = vec_get(countries, i);
+        var cidrs = country_cidrs_v4(cb);
+        if (v6 == 1) { cidrs = country_cidrs_v6(cb); }
+        if (vec_len(cidrs) > 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn geoip_validate(bl: i64): i64 {
-    var vr1_t, vr1_v = validate_identifier(geoip_table_name(bl));
+    var vr1_t, vr1_v = validate_nft_name(geoip_table_name(bl));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    # With IPv6 CIDRs the build adds the table `<name>_v6`: a name of 62-64
+    # bytes passed through 1.9.0 and composed one past firewall_validate's
+    # limit (1.9.1, audit B-8).
+    if (_any_has_cidrs(geoip_countries(bl), 1) == 1) {
+        var v6_t, v6_v = validate_nft_name(_table_name_with_suffix(geoip_table_name(bl), "_v6"));
+        if (is_err_result(v6_t) == 1) { return Err(v6_v); }
+    }
     # The block matches SOURCE addresses, so the hook must see inbound packets
     # (1.8.2, audit B-9): `geoip_set_hook(HOOK_OUTPUT)` validated and rendered
     # an `ip saddr @geo_xx drop` that can never match a locally sent packet.
@@ -156,18 +190,6 @@ fn _geo_set_name(code: cstring): cstring {
     return out;
 }
 
-# Concat "table_name" + optional suffix
-fn _table_name_with_suffix(base: cstring, suffix: cstring): cstring {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, base);
-    str_builder_add_cstr(sb, suffix);
-    var s = str_builder_build(sb);
-    var out = alloc(str_len(s) + 1);
-    memcpy(out, str_data(s), str_len(s));
-    store8(out + str_len(s), 0);
-    return out;
-}
-
 # Concat "geoblock CODE"
 fn _geoblock_comment(code: cstring): cstring {
     var sb = str_builder_new();
@@ -181,19 +203,6 @@ fn _geoblock_comment(code: cstring): cstring {
 }
 
 # Check if any country has non-empty cidrs in the given family
-fn _any_has_cidrs(countries: i64, v6: i64): i64 {
-    var clen = vec_len(countries);
-    var i = 0;
-    while (i < clen) {
-        var cb = vec_get(countries, i);
-        var cidrs = country_cidrs_v4(cb);
-        if (v6 == 1) { cidrs = country_cidrs_v6(cb); }
-        if (vec_len(cidrs) > 0) { return 1; }
-        i = i + 1;
-    }
-    return 0;
-}
-
 fn _build_table(bl: i64, family: i64, v6: i64): i64 {
     var suffix = "";
     if (v6 == 1) { suffix = "_v6"; }

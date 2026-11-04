@@ -112,7 +112,7 @@ fn firewall_validate(fw: i64): i64 {
     while (i < tlen) {
         var t = vec_get(tables, i);
 
-        var vr1_t, vr1_v = validate_identifier(table_name(t));
+        var vr1_t, vr1_v = validate_nft_name(table_name(t));
         if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
         var fam = table_family(t);
         if (fam < FAMILY_INET || fam > FAMILY_NETDEV) { return nein_err(NEIN_ERR_INVALID_RULE); }
@@ -173,7 +173,7 @@ fn firewall_validate(fw: i64): i64 {
         j = 0;
         while (j < vlen) {
             var chain = vec_get(vec2, j);
-            var vr7_t, vr7_v = validate_identifier(chain_name(chain));
+            var vr7_t, vr7_v = validate_nft_name(chain_name(chain));
             if (is_err_result(vr7_t) == 1) { return Err(vr7_v); }
             var vh_t, vh_v = chain_header_validate(chain);
             if (is_err_result(vh_t) == 1) { return Err(vh_v); }

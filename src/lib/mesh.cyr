@@ -46,7 +46,7 @@ fn mesh_clear_excl_out_cidrs(m: i64): i64 {
 # ================================================================
 
 fn mesh_validate(m: i64): i64 {
-    var vr1_t, vr1_v = validate_identifier(mesh_table_name(m));
+    var vr1_t, vr1_v = validate_nft_name(mesh_table_name(m));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var cidrs = mesh_excl_out_cidrs(m);
     var clen = vec_len(cidrs);

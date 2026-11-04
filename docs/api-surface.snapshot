@@ -408,3 +408,4 @@ validate::validate_identifier/1
 validate::validate_iface/1
 validate::validate_log_prefix/1
 validate::validate_nft_element/1
+validate::validate_nft_name/1

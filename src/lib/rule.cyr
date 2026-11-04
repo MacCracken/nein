@@ -827,15 +827,21 @@ fn rule_validate(r: i64): i64 {
         } elif (mt == MATCH_IIF || mt == MATCH_OIF) {
             var vr2_t, vr2_v = validate_iface(v1);
             if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
-        } elif (mt == MATCH_CT_HELPER || mt == MATCH_FLOW_OFFLOAD ||
-          mt == MATCH_CT_TIMEOUT_SET) {
+        } elif (mt == MATCH_CT_HELPER || mt == MATCH_CT_TIMEOUT_SET) {
+            # Rendered quoted (`ct helper "x"`), so an nft keyword is a name here.
             var vr3_t, vr3_v = validate_identifier(v1);
             if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
+        } elif (mt == MATCH_FLOW_OFFLOAD) {
+            # `flow offload @NAME`: a name nft can read after '@' (1.9.1, I-10).
+            var vr4_t, vr4_v = validate_nft_name(v1);
+            if (is_err_result(vr4_t) == 1) { return Err(vr4_v); }
+            if (_nft_ref_reserved(v1, 1) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
         } elif (mt == MATCH_SET_LOOKUP) {
             # Closed set of selectors (1.8.2, audit I-2) — see _is_set_lookup_field.
             if (_is_set_lookup_field(v1) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
-            var vr5_t, vr5_v = validate_identifier(v2);
+            var vr5_t, vr5_v = validate_nft_name(v2);
             if (is_err_result(vr5_t) == 1) { return Err(vr5_v); }
+            if (_nft_ref_reserved(v2, 0) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
         } elif (mt == MATCH_ICMP_TYPE || mt == MATCH_ICMPV6_TYPE) {
             var vr6_t, vr6_v = validate_identifier(v1);
             if (is_err_result(vr6_t) == 1) { return Err(vr6_v); }
@@ -873,7 +879,7 @@ fn rule_validate(r: i64): i64 {
     var vt = verdict_type(v);
     if (_rule_verdict_numbers_ok(v) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
     if (vt == VERDICT_JUMP || vt == VERDICT_GOTO) {
-        var vr10_t, vr10_v = validate_identifier(verdict_val1(v));
+        var vr10_t, vr10_v = validate_nft_name(verdict_val1(v));
         if (is_err_result(vr10_t) == 1) { return Err(vr10_v); }
     } elif (vt == VERDICT_LOG) {
         if (verdict_val1(v) != 0) {

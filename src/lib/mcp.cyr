@@ -346,11 +346,11 @@ fn _mcp_check_rule_args(args: cstring): cstring {
 
     var table = jsonx_get_str(args, "table");
     if (table == 0) { table = "filter"; }
-    if (is_err_result(validate_identifier(table)) == 1) { return "invalid 'table' name"; }
+    if (is_err_result(validate_nft_name(table)) == 1) { return "invalid 'table' name"; }
 
     var chain = jsonx_get_str(args, "chain");
     if (chain == 0) { chain = "input"; }
-    if (is_err_result(validate_identifier(chain)) == 1) { return "invalid 'chain' name"; }
+    if (is_err_result(validate_nft_name(chain)) == 1) { return "invalid 'chain' name"; }
 
     var src = jsonx_get_str(args, "source");
     if (src != 0) {

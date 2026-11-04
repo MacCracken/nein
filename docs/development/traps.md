@@ -1,6 +1,6 @@
 # Traps
 
-Last refresh: **2026-11-03** (v1.9.0).
+Last refresh: **2026-11-04** (v1.9.1).
 
 Things that looked right, were wrong, and cost a round of investigation each.
 Kept so the next person does not re-step in them. This is reference, not a plan:
@@ -110,6 +110,37 @@ code untouched. Bisecting the includes moved it back and forth (one subset
 305 µs, a larger one 263 µs) — placement, not cost. When one benchmark moves
 after a change that did not touch it, run the previous bench file against the
 new sources before calling it a regression or a win.
+
+Data moves it too (1.9.1). `validate_ct_state` read 85 → 124 ns with its code
+unchanged: 1.9.1's keyword rows moved where its `"new"` / `"established"`
+literals land. A dummy 1- or 3-byte string literal placed before it brought it
+back to 88–91 ns; 7 bytes or more, 124–128; padding *code* before it did
+nothing. Try both kinds of padding before calling a move a cost.
+
+**Injection-safe is not the same as parseable (1.9.1).** Every validator
+since 1.0 asked "can this value inject a command?" and none asked "can nft
+read it?" — so `validate_identifier` took `fwd`, `log` and `3f2a` (a hex
+container id), `validate_addr` took `1:2:3:4:5:6:1.2.3.4`, and each failed
+the whole batch at apply. A list of nft keywords transcribed from the man page
+would have been wrong both ways: keywords are scoped (`state` is a name, except
+as a ct timeout's), and the man page does not say which. Probe the parser
+instead — declare each candidate at each position under `nft -c` in an
+`unshare -rn` namespace and keep what it refuses — then keep a test that asks
+the installed nft again (`tests/integration/nft_grammar.tcyr`), harvesting the
+words nft itself lists in its "expected any of" errors so a new keyword names
+itself. Word lists still miss what nobody writes as a word: `eq`, `xor`,
+`lshift` and `rshift` are keywords nft prints in its errors as `==`, `^`, `<<`
+and `>>`, and an independent review, not the probe, found them. Where the space
+is small enough, enumerate it: every lowercase name of 1–5 letters (12.4
+million) checks in batches in under 100 s, and the test checks every name up to
+3 characters on each run.
+
+**A validator can be quadratic in the work it repeats (1.9.1).** `pe_validate`'s
+duplicate-address check compared every pair of agents and re-parsed the later
+address of each pair: n²/2 address parses, 112 ms at 1,000 agents. No
+benchmark measured `pe_validate` until a bench was added for 1.9.1's composed
+names, and it showed 1.1 ms at 100 agents. Parsing each address once into a
+buffer made it 15 ms; benchmark the validators at the sizes consumers run.
 
 Three toolchain subcommands do **not** do what their names suggest, and each
 cost a round of investigation:

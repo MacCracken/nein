@@ -4,6 +4,223 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.9.1] — 2026-11-04
+
+**Hardening: what nein validates is now what nft can parse.** Two of the 2026-11-03 audit's deferred
+LOWs (I-10, B-8), two defects of the same class found while fixing them, and four more found by an
+independent review of this change before release. Each let a value through validation that nft
+refuses, so the whole batch failed at apply. None was an injection: every one failed closed.
+bote **3.8.0 → 3.8.9**. `pe_validate` is 4.2× faster at 100 agents and 7.5× at 1,000.
+**1,145 unit** (was 993) assertions, a new integration test that has the installed nft judge nein's
+validators, 3 new benchmarks.
+
+No consumer contract changes. Configurations that validated before and now refuse are ones nft
+always refused at apply: they now fail at validation, with the error at the call that made them.
+One rendered-text change: interface names in flowtable `devices` and in ifname sets and maps are
+quoted (see Changed).
+
+### Security
+
+- **Names nft cannot read are refused** (audit I-10, LOW). New public `validate_nft_name`:
+  everything `validate_identifier` checks, plus a leading letter or `_` and no nft keyword. It is
+  applied wherever a name is rendered bare:
+  - table, chain, set, map, flowtable, ct timeout and define names;
+  - jump, goto and map-jump targets;
+  - set-lookup and `flow offload` references;
+  - the live-command layer (`flush_table`, `delete_rule_live`, …);
+  - diff ops;
+  - the MCP tools' `table` / `chain` arguments.
+
+  Keywords are case-sensitive: `FWD` is a name. Quoted positions keep keywords (`ct helper "ip"`,
+  `counter name "log"`).
+- **The keyword lists were probed, not transcribed.** Everything ran against `nft -c` 1.1.7, in an
+  `unshare -rn` namespace:
+  - 5,118 candidate words were each declared at twelve name positions, and every one nft refused
+    was kept. The candidates came from nft(8), libnftables-json(5), the shipped example rulesets
+    and JSON schema, and libnftables' own strings.
+  - 160 keywords are refused at every name position (`fwd`, `log`, `counter`, `ip`, `bridge`, …).
+    Four of them (`eq`, `xor`, `lshift`, `rshift`) came from the review; see below.
+  - 28 more are refused only as a ct timeout's name, which nft reads in its ct scope (`state`,
+    `zone`, `last`, …).
+  - 16 more are refused only as the table name in `nft list table` (`rules`, `tables`, `count`, …).
+    `list_table_with_handles` refuses them, and with it `find_rules_by_comment`.
+  - `@ll` and `@nh` are raw payload bases, and `flow offload @last` reads a keyword.
+  - Every lowercase name of 1 to 5 letters (12,356,549) and 12,582 wider candidates (each part of
+    libnftables' symbol names, and each candidate's plural) were then checked in batches. With the
+    lists above, nft takes every one.
+- **Names starting with a digit or `-` are refused** (found probing for I-10, LOW). nft 1.1.7 reads
+  `3f2a` and `1abc` as numbers and `-x` as an option, at every name position. `validate_identifier`
+  took them. So an engine agent named by a hex container id composed the chain `3f2a_in`, and the
+  batch failed.
+- **Builders check what they compose** (audit B-8, LOW). Each name check reuses the build's own
+  composition helper, so the check and the build cannot drift. A builder config that passes its own
+  validation now builds a firewall that passes `firewall_validate`. Through 1.9.0 each check below
+  passed in the builder and the firewall then failed:
+  - `ap_validate`: chains `<id>_in` and `<id>_out`, and with outbound hosts the set `<id>_hosts`.
+    An id of 61–64 bytes composed a name past `firewall_validate`'s 64-byte limit. Each port spec's
+    protocol and port are held to what `firewall_validate` holds them to (found by the review:
+    `ps_tcp(70000)` passed).
+  - `bridge_config_validate`: `<prefix>_filter`, `<prefix>_nat` and `<prefix>_iso`.
+  - `iso_validate`: the set `iso_<group>`.
+  - `geoip_validate`: the table name itself, and `<name>_v6` when there are IPv6 CIDRs.
+  - `mesh_validate` and `pe_validate`: the table name itself.
+  - `policy_validate`: each rule's comment, `policy:<name> ingress from <peer>`, against
+    `validate_comment`'s 128 bytes; a 64-byte name and a long IPv6 peer composed 130. Also each
+    port's protocol and port (review).
+- **An IPv6 address nft cannot parse is refused** (found by the new grammar test, LOW). nft's
+  scanner has no rule for RFC 4291's six groups plus a dotted quad with no `::`
+  (`1:2:3:4:5:6:1.2.3.4`), and `validate_addr` took it. Every compressed form with a dotted quad
+  parses, and is still accepted. A differential run of 2,329 generated IPv6 spellings against nft
+  1.1.7 disagreed on this form and no other, and agrees on all of them now.
+- **Interface names are quoted where they render as values** (found by the review, LOW).
+  Flowtable `devices` and ifname set elements and map keys rendered bare. There nft reads `vxlan`,
+  `bridge`, `gre`, `ip` or `3eth` as a keyword or a number. Linux allows each of them as an
+  interface name. `validate_iface` keeps quotes out, so quoting is safe.
+
+### Changed
+
+- **Rendered text: interface names as values are quoted.** This means flowtable devices
+  (`devices = { "eth0", "eth1" }`) and ifname set elements and map keys. nft reads both forms as
+  the same interface, and the live diff compares rules only, so nothing converges differently. A
+  consumer that string-matches rendered output sees the quotes.
+- **`pe_validate` parses each agent's address once** for its duplicate check (B-3), into one
+  `alloc(alen * 16)`. Through 1.9.0 its inner loop re-parsed every later address for every agent.
+  See Performance.
+- **The MCP `nein_allow` / `nein_deny` / `nein_validate` tools** refuse a `table` or `chain` that
+  is no nft name (`invalid 'table' name`).
+
+### Changed — pins
+
+bote-core **3.8.0 → 3.8.9**. nein builds its tool definitions only through bote's constructors, with
+empty input schemas, so the ToolDef / PropertyDef growth across 3.8.x does not reach it. The handler
+ABI and the minimum cyrius (6.7.13) are unchanged. What a host sees through nein's tools:
+- since 3.8.6, a request that names any key twice, at any depth, is refused by bote's codec
+  (`-32600`) before nein's own unique-key check runs;
+- since 3.8.7, tool names follow the spec's rule, which nein's `nein_*` names meet;
+- schemas are compiled at registration, and composition keywords are judged.
+
+`bote-core.cyr` grows by about 3,700 lines. The lock moves by two lines (commit and bundle hash). It
+was re-resolved from an empty `lib/` and is byte-identical on a second pass. Every other pin was
+already its repo's latest release.
+
+### Tests
+
+- **Found in review, fixed before release.** An independent review of the change found:
+  - four keywords missing from the list: `eq`, `xor`, `lshift` and `rshift`, which nft prints in
+    its errors as `==`, `^`, `<<` and `>>`, so neither the word sources nor the error harvest
+    could find them;
+  - the `list table` scope;
+  - bare interface names;
+  - unchecked builder ports.
+
+  Each was confirmed against nft and fixed. The grammar test now checks names exhaustively up to 3
+  characters, and draws its list-scope candidates from nft's own errors, so the first two kinds of
+  miss fail it by name.
+- `tests/nein.tcyr` **993 → 1,145**, in three new groups and several extended ones:
+  - `validate_nft_name`: each refusal class, near misses (`FWD`, `fwd2`, `_3f2a`, `ih`, `neq`), and
+    every listed word. Each is checked to be its row's width, in strict order (so none is listed
+    twice), an identifier, and refused. The counts pin the lists at 160, 28 and 16.
+  - `nft_name_positions`: a keyword or digit-led name at every position `firewall_validate`
+    walks, with a valid name beside each one. The quoted positions still take keywords. Each
+    live command refuses before running nft, as do `list table` list-scope names, diff ops and the
+    MCP argument check. Interface names render quoted, and addresses do not.
+  - `builder_composed_names`: every builder at its limit and one byte past it, and out-of-range
+    ports and protocols. A config that validates builds a firewall that validates.
+  - `validate_addr` covers the dotted-quad rule, and `pe_validate` catches a duplicate that is the
+    first and last of four agents.
+- **`tests/integration/nft_grammar.tcyr`** (new) runs the installed nft inside `unshare -rn`, and
+  SKIPs where it cannot, as `nft_load` does. Locally it reports 780 checks, 0 failed, 0 notes. It
+  covers:
+  - every listed keyword as a chain name;
+  - the ct-scope words both as ct timeout names and as chain names;
+  - every name of 1–3 characters from `[a-z0-9_-]` that nein takes, as chains in batches, with a
+    refused batch bisected to the word;
+  - every word nft lists in its own "expected any of" errors that nein takes, as a chain name;
+  - list-scope candidates from nft's `list` / `reset` / `monitor` errors and their plurals, as
+    real tables that are then listed;
+  - near misses and the `@` references;
+  - 400 IPv6 spellings generated the same way each run;
+  - each builder's output at the B-8 limits, and quoted interface names, loaded.
+
+  It FAILs when nein takes what nft refuses, naming the word, and NOTEs the reverse (an older nft
+  has fewer keywords).
+- `fuzz/validate.fcyr` now checks two relations, not only "no crash": `validate_nft_name` takes a
+  subset of what `validate_identifier` takes, never with a leading digit or `-`; and
+  `validate_addr` never takes a dotted quad without `::`.
+- **Checked against broken code.** 27 hand-made mutants of the new code: 26 fail the unit suite,
+  and the 27th is equivalent (a later early exit in the row scan, which changes speed, not the
+  result). Among them:
+  - the leading-digit rule removed;
+  - the keyword check disabled;
+  - a keyword row or the word `eq` dropped;
+  - each builder's composed-name, port and protocol check removed;
+  - the `@ll`, ct-scope and list-scope checks removed;
+  - the IPv6 rule removed;
+  - quoting removed;
+  - the row stride off by one;
+  - the dedupe buffer offsets wrong.
+
+  The grammar test names `eq` when it is dropped and `rules` when it leaves the list-scope list.
+  With keywords disabled it reports 243 failures, and with the IPv6 rule removed it reports 13; the
+  fuzz driver fails too. A first version of one MCP assertion crashed (`streq` on 0) under the
+  keyword mutant instead of failing, and now fails cleanly.
+- Coverage floors: API test coverage **68% → 71%** (293/411). The live-command layer's refusals
+  are now tested, and so is `iso_validate` directly. Doc coverage stays at **19%** (80/411).
+
+### Performance
+
+Against the 1.9.0 baseline, on the same machine (factor 1.023×), 56 of 56 benchmarks were compared
+with 0 regressions. **A 1.9.1 baseline is recorded** in `docs/benchmarks/history.csv` (59
+benchmarks, 2026-11-04T19:59:11Z), and the bench-regression gate passes against it: 59 of 59, factor
+1.000×, 0 regressions.
+
+| bench | 1.9.0 ns | 1.9.1 ns | |
+|---|---|---|---|
+| `pe_validate`, 100 agents (A/B) | 1,105,000 | 259,780 | **4.2× faster**, despite the new checks: each address is parsed once |
+| `pe_validate`, 1,000 agents (A/B) | 112,118,000 | 15,008,000 | **7.5× faster** |
+| `pe_validate_100_agents` (new) | — | 281,233 | the bench suite's 100-agent engine |
+| `validate_nft_name/miss` (new) | — | 131 | `input`, a miss through the longest rows; `validate_identifier/short` is 39 |
+| `validate_nft_name/keyword` (new) | — | 116 | `ipsec`, the last word of its row |
+| `firewall_validate` | 1,888 | 2,311 | +19% (normalized): three names, each looked up as a keyword |
+| `flowtable_render` | 1,044 | 1,261 | +19%: the device names are quoted (four more appends) |
+| `mcp_dispatch_validate` | 2,737 | 2,941 | +5.6%: `table` / `chain` as nft names, and bote 3.8.9's request checks |
+| `engine_100_agents_validate` | 673,310 | 692,434 | +1.0% |
+
+Notes on how these were measured:
+- **The A/B rows.** `pe_validate` had no benchmark in 1.9.0, so the `(A/B)` rows come from one
+  small harness, built against 1.9.0's sources and 1.9.1's, with 100 and 1,000 agents of one port
+  each.
+- **The keyword lookup was first written as a scan** of a space-separated row per first letter,
+  and measured at 416 ns. That made `firewall_validate` +40% and `mcp_dispatch_validate` +19%.
+  Rows of fixed-width words in alphabetical order step word to word and stop early. That brought
+  it to 131 ns.
+- **`validate_ct_state` reads 85 → 124 ns and its code did not change.** The cause is data layout.
+  1.9.1's keyword rows move where its `"new"` / `"established"` literals land. In a harness of
+  only `error.cyr` + `validate.cyr`, a dummy 1- or 3-byte string literal placed before it, with no
+  logic change, gives 88–91 ns; one of 7 bytes or more gives 124–128. Padding code instead does
+  nothing.
+- **`firewall_1000_rules_validate` reads −4%** (311,738 → 298,691, also layout). Its rules carry
+  no names.
+
+### Documentation
+
+- Threat model T-1: the validator table gains `validate_nft_name` and the strict `validate_addr`.
+  It adds "validated must mean parseable", and the residual risk of a keyword list probed from one
+  nft release. T-5: `pe_validate`'s parse-once fix, with measured numbers.
+- `SECURITY.md`: the injection bullet names the nft-grammar checks; bote 3.8.9. Its own refresh
+  line, which still read 2026-08-21 / v1.6.5, is corrected.
+- Audit report: I-10 and B-8 fixed, and the six findings made while fixing them and in review are
+  recorded.
+- Roadmap: I-10 and B-8 removed. The named-objects item is corrected: `counter name "x"` resolves
+  when the table already holds the object, so retiring the verdict would break a consumer. New
+  items: netns's unvalidated composed comments (they need a new `nsf_validate`, so a minor), and
+  re-probing the keyword lists on each nft release.
+- `traps.md`, two new traps: injection-safe is not parseable (probe the parser); a validator can be
+  quadratic in the work it repeats.
+- `testing.md`, `mcp-host-integration.md` (arguments: bote's own duplicate-key refusal,
+  `table` / `chain` as nft names), `dependencies.md`, `supply-chain-policy.md`, `overview.md`,
+  `capability-map.md`, README, CONTRIBUTING, CLAUDE.md, `doc-health.md`.
+
 ## [1.9.0] — 2026-11-03
 
 **The consumer-contract minor: the three MEDIUMs the 2026-11-03 audit deferred to 1.9.0, and two

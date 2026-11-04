@@ -82,8 +82,203 @@ fn test_validate_identifier() {
     return 0;
 }
 
+# A fresh cstring of n copies of byte c.
+fn _t_fill(n: i64, c: i64): cstring {
+    var p = alloc(n + 1);
+    memset(p, c, n);
+    store8(p + n, 0);
+    return p;
+}
+
+# 1.9.1, audit I-10: nft's grammar for a bare name, probed against nft 1.1.7.
+fn test_validate_nft_name() {
+    test_group("validate_nft_name");
+    assert(is_ok(validate_nft_name("filter")) == 1, "filter is a name");
+    assert(is_ok(validate_nft_name("nat")) == 1, "nat is a name");
+    assert(is_ok(validate_nft_name("input")) == 1, "input is a name");
+    assert(is_ok(validate_nft_name("postrouting")) == 1, "postrouting is a name");
+    assert(is_ok(validate_nft_name("_3f2a")) == 1, "a leading underscore is a name");
+    assert(is_ok(validate_nft_name("a-b")) == 1, "an inner hyphen is a name");
+    assert(is_ok(validate_nft_name("FWD")) == 1, "keywords are case-sensitive: FWD is a name");
+    assert(is_ok(validate_nft_name("fwd2")) == 1, "a keyword with a suffix is a name");
+    assert(is_ok(validate_nft_name("xfwd")) == 1, "a keyword with a prefix is a name");
+    assert(is_ok(validate_nft_name("fw")) == 1, "a keyword's prefix is a name");
+    assert(is_ok(validate_nft_name("ih")) == 1, "ih is a name (probed)");
+    assert(is_ok(validate_nft_name("k")) == 1, "a letter with no keywords is a name");
+    assert(is_ok(validate_nft_name(_t_fill(64, 97))) == 1, "64 bytes is a name");
+
+    # Keywords: the audit's example, common chain names, and the edges of the
+    # per-letter lists (first, last, the second half of a split list).
+    assert(is_err_result(validate_nft_name("fwd")) == 1, "fwd refused (I-10)");
+    assert(is_err_result(validate_nft_name("log")) == 1, "log refused");
+    assert(is_err_result(validate_nft_name("counter")) == 1, "counter refused");
+    assert(is_err_result(validate_nft_name("ip")) == 1, "ip refused");
+    assert(is_err_result(validate_nft_name("bridge")) == 1, "bridge refused");
+    assert(is_err_result(validate_nft_name("dnat")) == 1, "dnat refused");
+    assert(is_err_result(validate_nft_name("accept")) == 1, "accept refused (first listed)");
+    assert(is_err_result(validate_nft_name("xt")) == 1, "xt refused (last letter)");
+    assert(is_err_result(validate_nft_name("gc-interval")) == 1, "gc-interval refused (11 bytes, the longest)");
+    assert(is_err_result(validate_nft_name("ct")) == 1, "ct refused (2 bytes, the shortest)");
+    assert(is_err_result(validate_nft_name("ipsec")) == 1, "ipsec refused (second i list)");
+    assert(is_err_result(validate_nft_name("ruleset")) == 1, "ruleset refused (second r list)");
+    assert(is_err_result(validate_nft_name("auto-merge")) == 1, "auto-merge refused");
+    # The operators spelled out: nft lists them in its errors as symbols
+    # (`==`, `^`, `<<`, `>>`), so neither word source nor error harvest found
+    # them; an independent review did.
+    assert(is_err_result(validate_nft_name("eq")) == 1, "eq refused (==)");
+    assert(is_err_result(validate_nft_name("xor")) == 1, "xor refused (^)");
+    assert(is_err_result(validate_nft_name("lshift")) == 1, "lshift refused (<<)");
+    assert(is_err_result(validate_nft_name("rshift")) == 1, "rshift refused (>>)");
+    assert(is_ok(validate_nft_name("neq")) == 1, "neq is a name");
+    # The list scope: names everywhere else, keywords to `nft list table`.
+    assert(is_ok(validate_nft_name("rules")) == 1, "rules is a name");
+    assert_eq(_nft_list_keyword("rules"), 1, "rules is a list-scope keyword");
+    assert_eq(_nft_list_keyword("tables"), 1, "tables is a list-scope keyword");
+    assert_eq(_nft_list_keyword("count"), 1, "count is a list-scope keyword");
+    assert_eq(_nft_list_keyword("flowtables"), 1, "flowtables is a list-scope keyword (the longest)");
+    assert_eq(_nft_list_keyword("filter"), 0, "filter is no list-scope keyword");
+    assert_eq(_nft_list_keyword("rule"), 0, "rule is no list-scope keyword (it is a keyword everywhere)");
+
+    # A leading digit or hyphen: nft reads a number or an option.
+    assert(is_err_result(validate_nft_name("3f2a")) == 1, "a leading digit refused (a container id)");
+    assert(is_err_result(validate_nft_name("123")) == 1, "all digits refused");
+    assert(is_err_result(validate_nft_name("0")) == 1, "0 refused");
+    assert(is_err_result(validate_nft_name("-x")) == 1, "a leading hyphen refused");
+
+    # Everything validate_identifier refuses, still refused.
+    assert(is_err_result(validate_nft_name(0)) == 1, "NULL refused");
+    assert(is_err_result(validate_nft_name("")) == 1, "empty refused");
+    assert(is_err_result(validate_nft_name("evil;drop")) == 1, "injection refused");
+    assert(is_err_result(validate_nft_name(_t_fill(65, 97))) == 1, "65 bytes refused");
+
+    # The narrower lists.
+    assert_eq(_nft_ct_keyword("state"), 1, "state is a ct-scope keyword");
+    assert_eq(_nft_ct_keyword("zone"), 1, "zone is a ct-scope keyword");
+    assert_eq(_nft_ct_keyword("last"), 1, "last is a ct-scope keyword");
+    assert_eq(_nft_ct_keyword("web"), 0, "web is no ct-scope keyword");
+    assert_eq(_nft_ref_reserved("ll", 0), 1, "@ll is a raw payload base");
+    assert_eq(_nft_ref_reserved("nh", 0), 1, "@nh is a raw payload base");
+    assert_eq(_nft_ref_reserved("last", 0), 0, "@last is a set reference");
+    assert_eq(_nft_ref_reserved("last", 1), 1, "flow offload @last is refused");
+    assert_eq(_nft_ref_reserved("ft", 1), 0, "flow offload @ft is a reference");
+
+    # Every listed word: as wide as its row says (the lookup steps by that
+    # width), in strict alphabetical order within its width (the lookup stops
+    # early on it; strict, so none is listed twice), an identifier nein would
+    # otherwise take, and refused. The totals pin the lists to the nft 1.1.7
+    # probe (160 + 28).
+    var words = vec_new();
+    var misfiled = 0;
+    var n = 2;
+    while (n <= 11) {
+        var prev = 0;
+        var part = 0;
+        while (part < 3) {
+            var row = vec_new();
+            _t_split(_nft_kw_list(n, part), row);
+            var r = 0;
+            while (r < vec_len(row)) {
+                var w = vec_get(row, r);
+                if (strlen(w) != n) { misfiled = misfiled + 1; }
+                if (prev != 0 && _t_before(prev, w) == 0) { misfiled = misfiled + 1; }
+                prev = w;
+                vec_push(words, w);
+                r = r + 1;
+            }
+            part = part + 1;
+        }
+        n = n + 1;
+    }
+    assert_eq(vec_len(words), 160, "160 keywords listed");
+    assert_eq(misfiled, 0, "every keyword is its row's width, in strict order");
+    var taken = 0;
+    var k = 0;
+    while (k < vec_len(words)) {
+        var kw = vec_get(words, k);
+        if (is_ok(validate_identifier(kw)) == 0 || is_ok(validate_nft_name(kw)) == 1) { taken = taken + 1; }
+        k = k + 1;
+    }
+    assert_eq(taken, 0, "every keyword is an identifier validate_nft_name refuses");
+    var ct = vec_new();
+    n = 2;
+    while (n <= 11) {
+        var crow = vec_new();
+        _t_split(_nft_ct_kw_list(n), crow);
+        var cprev = 0;
+        var q = 0;
+        while (q < vec_len(crow)) {
+            var cw = vec_get(crow, q);
+            if (strlen(cw) != n) { misfiled = misfiled + 1; }
+            if (cprev != 0 && _t_before(cprev, cw) == 0) { misfiled = misfiled + 1; }
+            cprev = cw;
+            vec_push(ct, cw);
+            q = q + 1;
+        }
+        n = n + 1;
+    }
+    assert_eq(vec_len(ct), 28, "28 ct-scope keywords listed");
+    var lst = vec_new();
+    n = 2;
+    while (n <= 11) {
+        var lrow = vec_new();
+        _t_split(_nft_list_kw_list(n), lrow);
+        var lprev = 0;
+        var lq = 0;
+        while (lq < vec_len(lrow)) {
+            var lw = vec_get(lrow, lq);
+            if (strlen(lw) != n) { misfiled = misfiled + 1; }
+            if (lprev != 0 && _t_before(lprev, lw) == 0) { misfiled = misfiled + 1; }
+            if (_nft_list_keyword(lw) == 0) { misfiled = misfiled + 1; }
+            lprev = lw;
+            vec_push(lst, lw);
+            lq = lq + 1;
+        }
+        n = n + 1;
+    }
+    assert_eq(vec_len(lst), 16, "16 list-scope keywords listed");
+    assert_eq(misfiled, 0, "every ct-scope keyword is its row's width, in strict order");
+    var ct_ok = 0;
+    k = 0;
+    while (k < vec_len(ct)) { ct_ok = ct_ok + _nft_ct_keyword(vec_get(ct, k)); k = k + 1; }
+    assert_eq(ct_ok, 28, "every ct-scope keyword is found");
+    return 0;
+}
+
+# 1 when cstring a sorts strictly before b, byte by byte.
+fn _t_before(a: cstring, b: cstring): i64 {
+    var i = 0;
+    while (load8(a + i) != 0 && load8(a + i) == load8(b + i)) { i = i + 1; }
+    if (load8(a + i) < load8(b + i)) { return 1; }
+    return 0;
+}
+
+# Push each space-separated word of list (0: none) onto out as a cstring.
+fn _t_split(list: cstring, out: i64): i64 {
+    if (list == 0) { return 0; }
+    var i = 0;
+    while (load8(list + i) != 0) {
+        var j = i;
+        while (load8(list + j) != 0 && load8(list + j) != 32) { j = j + 1; }
+        var w = alloc(j - i + 1);
+        memcpy(w, list + i, j - i);
+        store8(w + j - i, 0);
+        vec_push(out, w);
+        i = j;
+        if (load8(list + i) == 32) { i = i + 1; }
+    }
+    return 0;
+}
+
 fn test_validate_addr() {
     test_group("validate_addr");
+    # A dotted quad needs "::" (1.9.1): nft has no rule for six groups and a
+    # dotted quad, and refuses the batch.
+    assert(is_err_result(validate_addr("1:2:3:4:5:6:1.2.3.4")) == 1, "x:x:x:x:x:x:d.d.d.d refused (nft cannot parse it)");
+    assert(is_err_result(validate_addr("0:0:0:0:0:ffff:10.0.0.1/128")) == 1, "uncompressed v4-mapped refused");
+    assert(is_ok(validate_addr("::ffff:10.0.0.1")) == 1, "::ffff:d.d.d.d ok");
+    assert(is_ok(validate_addr("1:2:3:4:5::1.2.3.4")) == 1, "compressed with a dotted quad ok");
+    assert(is_ok(validate_addr("1::4:5:6:1.2.3.4")) == 1, "compressed, three groups and a dotted quad ok");
+    assert(is_ok(validate_addr("1:2:3:4:5:6:7:8")) == 1, "eight groups ok");
     assert(is_ok(validate_addr("10.0.0.1")) == 1, "10.0.0.1 ok");
     assert(is_ok(validate_addr("192.168.0.0/16")) == 1, "CIDR ok");
     assert(is_ok(validate_addr("172.17.0.2")) == 1, "172 ok");
@@ -964,7 +1159,7 @@ fn test_flowtable() {
     var rendered = flowtable_render(ft);
     assert(str_contains_cstr(rendered, "flowtable ft {") == 1, "ft name");
     assert(str_contains_cstr(rendered, "hook ingress priority 0;") == 1, "ft hook");
-    assert(str_contains_cstr(rendered, "devices = { eth0, eth1 }") == 1, "ft devices");
+    assert(str_contains_cstr(rendered, "devices = { \"eth0\", \"eth1\" }") == 1, "ft devices, quoted (1.9.1)");
 
     # Validate good
     devs = vec_new();
@@ -1845,6 +2040,20 @@ fn test_engine() {
     pe_add_agent(dpe, agent_policy_new("svc-a", "10.0.0.1"));
     pe_add_agent(dpe, agent_policy_new("svc-z", "::ffff:10.0.0.1"));
     assert(is_err_result(pe_validate(dpe)) == 1, "duplicate address (v4-mapped spelling) rejected");
+    # Each address parsed once into its own 16 bytes (1.9.1): the pair is
+    # found wherever it sits, here first and last of four.
+    var d4 = policy_engine_new();
+    pe_add_agent(d4, agent_policy_new("svc-a", "fd00::7"));
+    pe_add_agent(d4, agent_policy_new("svc-b", "10.0.0.2"));
+    pe_add_agent(d4, agent_policy_new("svc-c", "10.0.0.3"));
+    pe_add_agent(d4, agent_policy_new("svc-d", "fd00:0::7"));
+    assert(is_err_result(pe_validate(d4)) == 1, "duplicate address first and last of four rejected");
+    var u4 = policy_engine_new();
+    pe_add_agent(u4, agent_policy_new("svc-a", "fd00::7"));
+    pe_add_agent(u4, agent_policy_new("svc-b", "10.0.0.2"));
+    pe_add_agent(u4, agent_policy_new("svc-c", "10.0.0.3"));
+    pe_add_agent(u4, agent_policy_new("svc-d", "fd00::8"));
+    assert(is_ok(pe_validate(u4)) == 1, "four distinct addresses accepted");
     var spe = policy_engine_new();
     pe_add_agent(spe, agent_policy_new("svc-a", "10.0.0.1/32"));
     pe_add_agent(spe, agent_policy_new("svc-6", "fd00::6"));
@@ -3415,6 +3624,311 @@ fn test_sign_v2() {
     return 0;
 }
 
+# ================================================================
+# 1.9.1 — nft names at every position (audit I-10), and the names and
+# comments builders compose (audit B-8)
+# ================================================================
+
+# 1 when firewall_validate refuses a firewall holding table t.
+fn _nn_bad(t: i64): i64 {
+    var fw = firewall_new();
+    firewall_add_table(fw, t);
+    var vt, vv = firewall_validate(fw);
+    return is_err_result(vt);
+}
+
+# A table "t" holding one chain "c" with one rule r.
+fn _nn_rule_table(r: i64): i64 {
+    var t = table_new("t", FAMILY_INET);
+    var c = chain_regular("c");
+    chain_add_rule(c, r);
+    table_add_chain(t, c);
+    return t;
+}
+
+# 1 when the message got is want (0, no message, is not).
+fn _nn_says(got: cstring, want: cstring): i64 {
+    if (got == 0) { return 0; }
+    return streq(got, want);
+}
+
+fn test_nft_name_positions() {
+    test_group("nft_name_positions");
+    assert_eq(_nn_bad(table_new("t", FAMILY_INET)), 0, "table t validates");
+    assert_eq(_nn_bad(table_new("fwd", FAMILY_INET)), 1, "table fwd refused");
+    assert_eq(_nn_bad(table_new("3f2a", FAMILY_INET)), 1, "table 3f2a refused");
+
+    var tc = table_new("t", FAMILY_INET);
+    table_add_chain(tc, chain_regular("log"));
+    assert_eq(_nn_bad(tc), 1, "chain log refused");
+    var tc2 = table_new("t", FAMILY_INET);
+    table_add_chain(tc2, chain_base("prerouting", CHAIN_FILTER, HOOK_PREROUTING, 0, POLICY_ACCEPT));
+    assert_eq(_nn_bad(tc2), 0, "chain prerouting validates");
+
+    var ts = table_new("t", FAMILY_INET);
+    table_add_set(ts, nft_set_new("counter", SET_IPV4_ADDR));
+    assert_eq(_nn_bad(ts), 1, "set counter refused");
+    var ts2 = table_new("t", FAMILY_INET);
+    table_add_set(ts2, nft_set_new("allow", SET_IPV4_ADDR));
+    assert_eq(_nn_bad(ts2), 0, "set allow validates");
+
+    var tm = table_new("t", FAMILY_INET);
+    table_add_map(tm, nft_map_new("vmap", SET_IPV4_ADDR));
+    assert_eq(_nn_bad(tm), 1, "map vmap refused");
+    var tm2 = table_new("t", FAMILY_INET);
+    var m2 = nft_map_new("m", SET_IPV4_ADDR);
+    nft_map_add_entry(m2, "10.0.0.1", MAPV_JUMP, "jump");
+    table_add_map(tm2, m2);
+    assert_eq(_nn_bad(tm2), 1, "map entry jump to a keyword refused");
+    var tm3 = table_new("t", FAMILY_INET);
+    var m3 = nft_map_new("m", SET_IPV4_ADDR);
+    nft_map_add_entry(m3, "10.0.0.1", MAPV_JUMP, "svc");
+    table_add_map(tm3, m3);
+    assert_eq(_nn_bad(tm3), 0, "map entry jump to svc validates");
+
+    var devs = vec_new();
+    vec_push(devs, "lo");
+    var tf = table_new("t", FAMILY_INET);
+    table_add_flowtable(tf, flowtable_new("flow", 0, devs));
+    assert_eq(_nn_bad(tf), 1, "flowtable flow refused");
+    var tf2 = table_new("t", FAMILY_INET);
+    table_add_flowtable(tf2, flowtable_new("ft", 0, devs));
+    assert_eq(_nn_bad(tf2), 0, "flowtable ft validates");
+
+    var tt = table_new("t", FAMILY_INET);
+    table_add_ct_timeout(tt, ct_timeout_new("state", PROTO_TCP));
+    assert_eq(_nn_bad(tt), 1, "ct timeout state refused (ct scope)");
+    var tt2 = table_new("t", FAMILY_INET);
+    table_add_ct_timeout(tt2, ct_timeout_new("ip", PROTO_TCP));
+    assert_eq(_nn_bad(tt2), 1, "ct timeout ip refused");
+    var tt3 = table_new("t", FAMILY_INET);
+    table_add_ct_timeout(tt3, ct_timeout_new("web", PROTO_TCP));
+    assert_eq(_nn_bad(tt3), 0, "ct timeout web validates");
+
+    var td = table_new("t", FAMILY_INET);
+    table_add_define(td, define_new("ip", "10.0.0.1"));
+    assert_eq(_nn_bad(td), 1, "define ip refused");
+    var td2 = table_new("t", FAMILY_INET);
+    table_add_define(td2, define_new("lan", "10.0.0.1"));
+    assert_eq(_nn_bad(td2), 0, "define lan validates");
+
+    assert_eq(_nn_bad(_nn_rule_table(rule_new(verdict_jump("log")))), 1, "jump log refused");
+    assert_eq(_nn_bad(_nn_rule_table(rule_new(verdict_goto("drop")))), 1, "goto drop refused");
+    assert_eq(_nn_bad(_nn_rule_table(rule_new(verdict_jump("1st")))), 1, "jump to a digit-led chain refused");
+    assert_eq(_nn_bad(_nn_rule_table(rule_new(verdict_jump("svc")))), 0, "jump svc validates");
+
+    var rs = rule_new(verdict_accept());
+    rule_add_match(rs, match_set_lookup("ip saddr", "ll"));
+    assert_eq(_nn_bad(_nn_rule_table(rs)), 1, "@ll refused (raw payload base)");
+    var rs2 = rule_new(verdict_accept());
+    rule_add_match(rs2, match_set_lookup("ip saddr", "set"));
+    assert_eq(_nn_bad(_nn_rule_table(rs2)), 1, "@set refused (keyword)");
+    var rs3 = rule_new(verdict_accept());
+    rule_add_match(rs3, match_set_lookup("ip saddr", "last"));
+    assert_eq(_nn_bad(_nn_rule_table(rs3)), 0, "@last validates as a set reference");
+
+    var ro = rule_new(verdict_accept());
+    rule_add_match(ro, match_flow_offload("last"));
+    assert_eq(_nn_bad(_nn_rule_table(ro)), 1, "flow offload @last refused");
+    var ro2 = rule_new(verdict_accept());
+    rule_add_match(ro2, match_flow_offload("ft"));
+    assert_eq(_nn_bad(_nn_rule_table(ro2)), 0, "flow offload @ft validates");
+
+    # Quoted positions keep keywords: nft reads a quoted string, not a name.
+    var rq = rule_new(verdict_accept());
+    rule_add_match(rq, match_ct_helper("ip"));
+    assert_eq(_nn_bad(_nn_rule_table(rq)), 0, "ct helper \"ip\" validates (quoted)");
+    assert_eq(_nn_bad(_nn_rule_table(rule_new(verdict_counter_named("log")))), 0,
+      "counter name \"log\" validates (quoted)");
+
+    # The live-command layer refuses before it runs nft.
+    var ft_t, ft_v = flush_table("inet", "fwd");
+    assert_eq(nein_err_code(ft_t, ft_v), NEIN_ERR_INVALID_RULE, "flush_table fwd refused");
+    var dc_t, dc_v = delete_chain("inet", "t", "log");
+    assert_eq(nein_err_code(dc_t, dc_v), NEIN_ERR_INVALID_RULE, "delete_chain log refused");
+    var dr_t, dr_v = delete_rule_live("inet", "t", "3c", 5);
+    assert_eq(nein_err_code(dr_t, dr_v), NEIN_ERR_INVALID_RULE, "delete_rule_live on a digit-led chain refused");
+    var dt_t, dt_v = delete_table("inet", "bridge");
+    assert_eq(nein_err_code(dt_t, dt_v), NEIN_ERR_INVALID_RULE, "delete_table bridge refused");
+    var fc_t, fc_v = flush_chain("inet", "filter", "jump");
+    assert_eq(nein_err_code(fc_t, fc_v), NEIN_ERR_INVALID_RULE, "flush_chain jump refused");
+    var ar_t, ar_v = add_rule_live("inet", "ip", "input", "accept");
+    assert_eq(nein_err_code(ar_t, ar_v), NEIN_ERR_INVALID_RULE, "add_rule_live in table ip refused");
+    var ir_t, ir_v = insert_rule_live("inet", "filter", "9in", "accept");
+    assert_eq(nein_err_code(ir_t, ir_v), NEIN_ERR_INVALID_RULE, "insert_rule_live in chain 9in refused");
+    var aa_t, aa_v = add_rule_after_live("inet", "filter", "counter", 3, "accept");
+    assert_eq(nein_err_code(aa_t, aa_v), NEIN_ERR_INVALID_RULE, "add_rule_after_live in chain counter refused");
+    var rr_t, rr_v = replace_rule_live("inet", "-x", "input", 3, "accept");
+    assert_eq(nein_err_code(rr_t, rr_v), NEIN_ERR_INVALID_RULE, "replace_rule_live in table -x refused");
+    var lt_t, lt_v = list_table_with_handles("inet", "fwd");
+    assert_eq(nein_err_code(lt_t, lt_v), NEIN_ERR_INVALID_RULE, "list_table_with_handles fwd refused");
+    var lr_t, lr_v = list_table_with_handles("inet", "rules");
+    assert_eq(nein_err_code(lr_t, lr_v), NEIN_ERR_INVALID_RULE, "list_table_with_handles rules refused (list scope)");
+    var fr_t, fr_v = find_rules_by_comment("inet", "tables", "agent-1");
+    assert_eq(nein_err_code(fr_t, fr_v), NEIN_ERR_INVALID_RULE, "find_rules_by_comment in table tables refused");
+    assert_eq(_nn_bad(table_new("rules", FAMILY_INET)), 0, "a table named rules still validates (a name to declare)");
+
+    # Interface names are quoted where they render as values (1.9.1): bare,
+    # nft reads `vxlan` or `3eth` as a keyword or a number.
+    var qdevs = vec_new();
+    vec_push(qdevs, "vxlan");
+    vec_push(qdevs, "3eth");
+    var qft = flowtable_render(flowtable_new("ft", 0, qdevs));
+    assert(str_contains_cstr(qft, "devices = { \"vxlan\", \"3eth\" }") == 1, "flowtable devices quoted");
+    var qs = nft_set_new("ifs", SET_IFNAME);
+    nft_set_add_element(qs, "bridge");
+    var qsr = nft_set_render(qs);
+    assert(str_contains_cstr(qsr, "elements = { \"bridge\" }") == 1, "ifname set elements quoted");
+    var qa = nft_set_new("addrs", SET_IPV4_ADDR);
+    nft_set_add_element(qa, "10.0.0.1");
+    assert(str_contains_cstr(nft_set_render(qa), "elements = { 10.0.0.1 }") == 1, "address elements stay bare");
+    var qm = nft_map_new("ifm", SET_IFNAME);
+    nft_map_add_entry(qm, "gre", MAPV_ACCEPT, 0);
+    assert(str_contains_cstr(nft_map_render(qm), "elements = { \"gre\" : accept }") == 1, "ifname map keys quoted");
+    assert_eq(_diff_names_ok(_live_rule_new("inet", "filter", "log", "accept", 4)), 0, "diff op on chain log refused");
+    assert_eq(_diff_names_ok(_live_rule_new("inet", "filter", "input", "accept", 4)), 1, "diff op on input usable");
+    assert_eq(_nn_says(_mcp_check_rule_args("{\"protocol\":\"tcp\",\"port\":22,\"table\":\"fwd\"}"),
+        "invalid 'table' name"), 1, "MCP refuses table fwd");
+    assert_eq(_nn_says(_mcp_check_rule_args("{\"protocol\":\"tcp\",\"port\":22,\"chain\":\"jump\"}"),
+        "invalid 'chain' name"), 1, "MCP refuses chain jump");
+    assert(_mcp_check_rule_args("{\"protocol\":\"tcp\",\"port\":22,\"chain\":\"FWD\"}") == 0, "MCP takes chain FWD");
+    return 0;
+}
+
+# 1 when pe validates and its firewall validates.
+fn _nn_pe_ok(pe: i64): i64 {
+    var vt, vv = pe_validate(pe);
+    if (is_err_result(vt) == 1) { return 0; }
+    var ft, fv = firewall_validate(pe_to_firewall(pe));
+    if (is_err_result(ft) == 1) { return 0; }
+    return 1;
+}
+
+fn _nn_pe(agent_id: cstring, host: cstring): i64 {
+    var pe = policy_engine_new();
+    var ap = agent_policy_new(agent_id, "10.0.0.5");
+    ap_allow_inbound(ap, ps_tcp(8080));
+    if (host != 0) { ap_allow_outbound_host(ap, host); }
+    pe_add_agent(pe, ap);
+    return pe;
+}
+
+# A policy named `name` allowing tcp/443 from `peer`.
+fn _nn_policy(name: cstring, peer: cstring): i64 {
+    var np = nein_network_policy_new(name, "any", PACT_ALLOW);
+    var pr = policy_rule_new(peer);
+    policy_rule_add_port(pr, PROTO_TCP, 443);
+    policy_add_ingress(np, pr);
+    return np;
+}
+
+fn test_builder_composed_names() {
+    test_group("builder_composed_names");
+    # Engine: `<id>_in`, `<id>_out`, and with outbound hosts `<id>_hosts`.
+    assert_eq(_nn_pe_ok(_nn_pe(_t_fill(60, 97), 0)), 1, "60-byte agent id: <id>_out is 64, validates and builds");
+    assert(is_err_result(pe_validate(_nn_pe(_t_fill(61, 97), 0))) == 1, "61-byte agent id refused (<id>_out is 65)");
+    assert_eq(_nn_pe_ok(_nn_pe(_t_fill(58, 97), "10.0.0.9")), 1, "58-byte id with hosts: <id>_hosts is 64");
+    assert(is_err_result(pe_validate(_nn_pe(_t_fill(59, 97), "10.0.0.9"))) == 1,
+      "59-byte id with hosts refused (<id>_hosts is 65)");
+    assert_eq(_nn_pe_ok(_nn_pe(_t_fill(59, 97), 0)), 1, "59-byte id without hosts validates");
+    assert(is_err_result(pe_validate(_nn_pe("3f2a", 0))) == 1, "digit-led agent id refused (3f2a_in)");
+    assert_eq(_nn_pe_ok(_nn_pe("log", 0)), 1, "agent id log validates: log_in is a name");
+    # Ports and protocols as firewall_validate holds them.
+    var pp1 = policy_engine_new();
+    var app = agent_policy_new("svc", "10.0.0.5");
+    ap_allow_inbound(app, ps_tcp(70000));
+    pe_add_agent(pp1, app);
+    assert(is_err_result(pe_validate(pp1)) == 1, "inbound port 70000 refused");
+    var pp2 = policy_engine_new();
+    var app2 = agent_policy_new("svc", "10.0.0.5");
+    ap_allow_outbound(app2, port_spec_new(9, 443, TRANS_TCP));
+    pe_add_agent(pp2, app2);
+    assert(is_err_result(pe_validate(pp2)) == 1, "outbound protocol 9 refused");
+    var pp3 = policy_engine_new();
+    var app3 = agent_policy_new("svc", "10.0.0.5");
+    ap_allow_inbound(app3, ps_tcp(65535));
+    pe_add_agent(pp3, app3);
+    assert_eq(_nn_pe_ok(pp3), 1, "port 65535 validates and builds");
+    var npp = nein_network_policy_new("p", "any", PACT_ALLOW);
+    var prp = policy_rule_new("10.0.0.0/8");
+    policy_rule_add_port(prp, PROTO_TCP, 70000);
+    policy_add_egress(npp, prp);
+    assert(is_err_result(policy_validate(npp)) == 1, "policy port 70000 refused");
+    var npp2 = nein_network_policy_new("p", "any", PACT_ALLOW);
+    var prp2 = policy_rule_new("any");
+    policy_rule_add_port(prp2, 0, 443);
+    policy_add_ingress(npp2, prp2);
+    assert(is_err_result(policy_validate(npp2)) == 1, "policy protocol 0 refused");
+    var pek = _nn_pe("svc", 0);
+    pe_set_table_name(pek, "fwd");
+    assert(is_err_result(pe_validate(pek)) == 1, "engine table fwd refused");
+
+    # Bridge: `<prefix>_filter` (the longest), `_nat`, `_iso`; `iso_<group>`.
+    var cfg = bridge_config_new("br0", "172.17.0.0/16", "eth0");
+    bridge_set_table_prefix(cfg, _t_fill(57, 98));
+    var bf = bridge_firewall_new(cfg);
+    var cidrs = vec_new();
+    vec_push(cidrs, "172.17.0.0/24");
+    bf_add_isolation_group(bf, isolation_group_new(_t_fill(60, 99), cidrs));
+    assert(is_ok(bf_validate(bf)) == 1, "57-byte prefix, 60-byte group validate");
+    assert(is_ok(firewall_validate(bf_to_firewall(bf))) == 1, "and build a firewall that validates");
+    bridge_set_table_prefix(cfg, _t_fill(58, 98));
+    assert(is_err_result(bridge_config_validate(cfg)) == 1, "58-byte prefix refused (<prefix>_filter is 65)");
+    bridge_set_table_prefix(cfg, "3f");
+    assert(is_err_result(bridge_config_validate(cfg)) == 1, "digit-led prefix refused (3f_filter)");
+    bridge_set_table_prefix(cfg, "fwd");
+    assert(is_ok(bridge_config_validate(cfg)) == 1, "prefix fwd validates: fwd_filter is a name");
+    bridge_set_table_prefix(cfg, "nein");
+    var bf2 = bridge_firewall_new(cfg);
+    bf_add_isolation_group(bf2, isolation_group_new(_t_fill(61, 99), cidrs));
+    assert(is_err_result(bf_validate(bf2)) == 1, "61-byte group refused (iso_<name> is 65)");
+    var bf3 = bridge_firewall_new(cfg);
+    bf_add_isolation_group(bf3, isolation_group_new("3f", cidrs));
+    assert(is_ok(bf_validate(bf3)) == 1, "digit-led group validates: iso_3f is a name");
+    assert(is_ok(iso_validate(isolation_group_new(_t_fill(60, 99), cidrs))) == 1, "iso_validate: 60-byte group");
+    assert(is_err_result(iso_validate(isolation_group_new(_t_fill(61, 99), cidrs))) == 1,
+      "iso_validate: 61-byte group refused");
+
+    # GeoIP: the name itself, and `<name>_v6` with IPv6 CIDRs.
+    var v4 = vec_new();
+    vec_push(v4, "1.2.3.0/24");
+    var v6 = vec_new();
+    vec_push(v6, "2001:db8::/32");
+    var g1 = geoip_new();
+    geoip_set_table_name(g1, _t_fill(61, 100));
+    geoip_block_country(g1, country_block_dual("XX", v4, v6));
+    assert(is_ok(geoip_validate(g1)) == 1, "61-byte geoip name with IPv6 validates (<name>_v6 is 64)");
+    assert(is_ok(firewall_validate(geoip_to_firewall(g1))) == 1, "and builds a firewall that validates");
+    var g2 = geoip_new();
+    geoip_set_table_name(g2, _t_fill(62, 100));
+    geoip_block_country(g2, country_block_dual("XX", v4, v6));
+    assert(is_err_result(geoip_validate(g2)) == 1, "62-byte geoip name with IPv6 refused");
+    var g3 = geoip_new();
+    geoip_set_table_name(g3, _t_fill(62, 100));
+    geoip_block_country(g3, country_block_dual("XX", v4, vec_new()));
+    assert(is_ok(geoip_validate(g3)) == 1, "62-byte geoip name, IPv4 only, validates");
+    var g4 = geoip_new();
+    geoip_set_table_name(g4, "fwd");
+    assert(is_err_result(geoip_validate(g4)) == 1, "geoip table fwd refused");
+
+    # Mesh: the table name as given.
+    var me = mesh_envoy();
+    mesh_set_table_name(me, "ip");
+    assert(is_err_result(mesh_validate(me)) == 1, "mesh table ip refused");
+
+    # Policy: each rule's comment, `policy:<name> ingress from <peer>`, fits
+    # 128 bytes (7 + name + 14 + peer).
+    var longv6 = "ffff:ffff:ffff:ffff:ffff::255.255.255.255/128";   # 45 bytes, the longest peer nft parses
+    assert(is_ok(policy_validate(_nn_policy(_t_fill(62, 101), longv6))) == 1, "62-byte name + 45-byte peer: 128");
+    assert(is_err_result(policy_validate(_nn_policy(_t_fill(63, 101), longv6))) == 1,
+      "63-byte name + 45-byte peer refused: 129");
+    assert(is_ok(policy_validate(_nn_policy(_t_fill(64, 101), "10.0.0.0/8"))) == 1, "64-byte name, short peer");
+    var np0 = nein_network_policy_new(_t_fill(64, 101), "any", PACT_ALLOW);
+    policy_add_ingress(np0, policy_rule_new(longv6));
+    assert(is_ok(policy_validate(np0)) == 1, "a rule with no ports renders no comment");
+    return 0;
+}
+
 fn main() {
     alloc_init();
 
@@ -3423,6 +3937,7 @@ fn main() {
 
     # validate
     test_validate_identifier();
+    test_validate_nft_name();
     test_validate_addr();
     test_validate_iface();
     test_validate_ct_state();
@@ -3518,6 +4033,8 @@ fn main() {
     # sign (Ed25519 signed rulesets)
     test_sign();
     test_sign_v2();
+    test_nft_name_positions();
+    test_builder_composed_names();
 
     return assert_summary();
 }

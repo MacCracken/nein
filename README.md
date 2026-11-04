@@ -24,7 +24,7 @@ Consumers:
 | Module     | Purpose |
 |------------|---------|
 | `error`    | `NeinError` enum + Result helpers |
-| `validate` | Injection-safe validators for identifiers, addresses, interfaces, comments, set elements |
+| `validate` | Injection-safe validators for identifiers, addresses, interfaces, comments, set elements; names and addresses checked against nft's own grammar (`validate_nft_name`, 1.9.1) |
 | `rule`     | 30 Match variants, 13 Verdict variants, Rule struct, render/validate |
 | `set`      | Named sets (ipv4_addr, ipv6_addr, inet_service, inet_proto, ifname) and verdict maps |
 | `nat`      | DNAT, SNAT, masquerade, redirect, DnatRange with IPv6 bracketing |
@@ -235,8 +235,8 @@ cyrius lib sync                        # sync declared stdlib subset from pinned
 cyrius deps                            # resolve git bundles into ./lib/
 cyrius build src/main.cyr build/nein   # compile (x86_64)
 cyrius build --aarch64 src/main.cyr build/nein-aarch64
-cyrius test tests                      # all suites (993 unit + 41 integration assertions + an nft load test)
-cyrius bench tests/nein.bcyr           # run benchmarks (56 benchmarks)
+cyrius test tests                      # all suites (1,145 unit + 41 integration assertions + nft load and grammar tests)
+cyrius bench tests/nein.bcyr           # run benchmarks (59 benchmarks)
 cyrius fuzz                            # 7 per-target fuzz drivers
 ```
 

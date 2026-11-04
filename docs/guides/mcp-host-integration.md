@@ -18,7 +18,7 @@ exactly as it already does for the full bote bundle.
 # host cyrius.cyml
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
-tag = "1.9.0"
+tag = "1.9.1"
 modules = ["dist/nein-mcp.cyr"]
 ```
 
@@ -179,11 +179,18 @@ included), never open. To migrate:
 
 Every tool now refuses arguments that are not one JSON object whose top-level
 keys are spelled plainly and appear once: a duplicate key, or a key written
-with an escape (`"\u0070ort"`), is an error. bote reads a key as what it
-decodes to and lets the first duplicate win, while most JSON parsers let the
+with an escape (`"\u0070ort"`), is an error. bote read a key as what it
+decodes to and let the first duplicate win, while most JSON parsers let the
 last win, so a host-side filter or an approval UI could be shown a different
 argument than nein acts on. `port` must be a plain integer 1–65535 (no sign,
 leading zero, fraction or exponent). Tool results are unchanged in shape.
+
+Since bote 3.8.6 (nein 1.9.1 pins 3.8.9) a request that names any key twice,
+at any depth, is refused by bote's codec as `-32600` before nein sees it; nein's
+own check stays for hosts that call `nein_mcp_dispatch` with arguments they
+built. Since 1.9.1 `table` and `chain` must be names nft reads
+(`validate_nft_name`: no leading digit or `-`, no nft keyword such as `fwd`
+or `log`); through 1.9.0 such a name passed and the apply failed in nft.
 
 ## Signing (optional)
 

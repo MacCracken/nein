@@ -1,14 +1,15 @@
 # Testing Guide
 
-Last refresh: **2026-11-03** (v1.9.0). Replaces the Rust-era guide that
+Last refresh: **2026-11-04** (v1.9.1). Replaces the Rust-era guide that
 shipped with the v1.0.0 port.
 
 ## Unit Tests
 
-The full unit-test suite lives in `tests/nein.tcyr` — 993 assertions
-across 55 test groups (validators, rule rendering, NAT, sets/maps,
+The full unit-test suite lives in `tests/nein.tcyr` — 1,145 assertions
+across 58 test groups (validators, rule rendering, NAT, sets/maps,
 chains, tables, firewall validation, builders, policy, geoip, mesh,
-bridge, engine, config, netns, inspect, diff, sign, sign_v2, mcp).
+bridge, engine, config, netns, inspect, diff, sign, sign_v2, mcp, and
+since 1.9.1 nft names at every position and the names builders compose).
 
 ```sh
 cyrius test tests/nein.tcyr
@@ -34,7 +35,8 @@ Apply-layer integration tests need:
 
 The integration harness ships in `tests/integration/*.tcyr` — 41 assertions
 (14 `apply_outcome` + 8 `apply_smoke` + 19 `mcp_consume_smoke`) plus
-`nft_load` (1.8.2), run via `cyrius test tests/integration`.
+`nft_load` (1.8.2) and `nft_grammar` (1.9.1), run via
+`cyrius test tests/integration`.
 
 **`apply_outcome` (1.9.0) needs nothing** — no root, no nft. It stands nft in
 with small `/bin/sh` scripts (through `nein_set_nft_path`, in a fresh
@@ -50,7 +52,27 @@ unprivileged user namespaces disabled, as on GitHub's Ubuntu runners — it
 prints SKIP and passes, so **run it locally before every release.** It exists
 because every builder test checked substrings of rendered text, and the mesh
 ruleset nft has always refused shipped green (2026-11-03 audit B-4); on its
-first run it found two more renders nft refuses. On non-permissive hosts the
+first run it found two more renders nft refuses.
+
+**`nft_grammar` (1.9.1) has the installed nft judge nein's validators**, the
+same way (`unshare -rn`, SKIP where it cannot run — so locally before every
+release). It declares every listed keyword as a chain name, the ct-scope words
+both as ct timeout names and as chain names, fixed near-misses (`FWD`,
+`_3f2a`, a 64-byte name) and the references nft reads differently
+(`@ll`, `flow offload @last`); checks **every** name of 1–3 characters from
+`[a-z0-9_-]` that `validate_nft_name` takes as a chain, 4,000 to a batch, a
+refused batch bisected to the word; harvests every word nft names in its own
+"expected any of" errors and, for each `validate_nft_name` takes, checks nft
+takes it too; creates and lists real tables named by the words nft expects
+after `list` / `reset` / `monitor` (and their plurals) against
+`list_table_with_handles`; generates 400 IPv6 spellings the same way every run
+and checks each one `validate_addr` takes parses in nft; and loads each
+builder's output at the B-8 length limits, and quoted interface names. About
+11 s. It FAILs when nein takes what nft refuses (the batch
+would fail at apply) and NOTEs the reverse (an older nft with fewer keywords).
+A keyword a later nft adds shows up as a failure that names the word.
+
+On non-permissive hosts the
 apply assertions fall through the permission-denied class; the
 pure-function assertions still run. You can also run a smoke test
 manually:
@@ -84,10 +106,11 @@ pass vacuously while measuring nothing.
 
 ## Benchmarks
 
-The benchmark suite lives in `tests/nein.bcyr` — 56 benchmarks
+The benchmark suite lives in `tests/nein.bcyr` — 59 benchmarks
 covering validators, rule rendering, full firewall generation,
-multi-agent engine, namespace firewall, and (since 1.9.0) signing — v1
-against v2 on the same body — and the MCP gate.
+multi-agent engine, namespace firewall, (since 1.9.0) signing — v1
+against v2 on the same body — and the MCP gate, and (since 1.9.1)
+`validate_nft_name` and `pe_validate` at 100 agents.
 
 ⚠ **Code layout moves single benchmarks.** Adding includes to the bench
 binary (1.9.0: the sign and MCP modules) moved `firewall_1000_rules_validate`
@@ -170,7 +193,10 @@ cyrius fuzz
 driver exits 0; crash attribution is by driver name.
 
 CI runs a bare `cyrius fuzz` — no iteration count and no timeout. The first
-five drivers are fixed deterministic corpora; `diff_parse_live` is a seeded
+five drivers are fixed deterministic corpora (`validate` also asserts two
+relations since 1.9.1: `validate_nft_name` takes a subset of what
+`validate_identifier` takes and never a leading digit or `-`, and
+`validate_addr` never takes a dotted quad without `::`); `diff_parse_live` is a seeded
 mutation fuzzer (real nft 1.1.7 listings, 20,000 deterministic mutations,
 under a second) with strict semantic oracles — golden parses of every seed,
 header-backed attribution, valid live names, no op on a table the target

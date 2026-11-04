@@ -1,6 +1,6 @@
 # Dependencies
 
-Last refresh: **2026-11-03** (v1.9.0, cyrius 6.7.18).
+Last refresh: **2026-11-04** (v1.9.1, cyrius 6.7.18).
 
 Why each entry in `cyrius.cyml`'s `[deps]` block exists, and why the
 resolution order is what it is. This file is the prose home for that
@@ -87,11 +87,11 @@ It is an explicit `[deps.sigil]` git pin instead — see below.
 
 ## `[deps.*]` — git pins
 
-| Dep | Tag (v1.9.0) | Bundle | Why |
+| Dep | Tag (v1.9.1) | Bundle | Why |
 |-----|--------------|--------|-----|
 | `libro` | 2.11.3 | `dist/libro.cyr` | bote's manifest graph references it |
 | `majra` | 2.13.0 | `dist/majra.cyr` | bote's manifest graph references it |
-| `bote-core` | 3.8.0 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
+| `bote-core` | 3.8.9 | `dist/bote-core.cyr` | MCP core, transport-free bundle |
 | `sigil` | 3.13.15 | `dist/sigil.cyr` | Ed25519 + sha256 + hex for `sign.cyr` |
 | `patra` | 1.16.6 | `dist/patra.cyr` | libro's audit store links it |
 
@@ -123,9 +123,10 @@ references them and Cyrius resolves single-pass.
 | 1.8.1 | 6.7.18 | 2.11.3 | 2.13.0 | 3.7.5 | 3.13.15 | 1.16.6 |
 | 1.8.2 | 6.7.18 | 2.11.3 | 2.13.0 | 3.7.6 | 3.13.15 | 1.16.6 |
 | 1.9.0 | 6.7.18 | 2.11.3 | 2.13.0 | 3.8.0 | 3.13.15 | 1.16.6 |
+| 1.9.1 | 6.7.18 | 2.11.3 | 2.13.0 | 3.8.9 | 3.13.15 | 1.16.6 |
 
 Since 1.8.1 every pin is its repo's newest release and all the rules agree: bote
-3.8.0 (3.7.6 at 1.8.2, 3.7.5 at 1.8.1) pins cyrius 6.7.18 and libro 2.11.3 + majra 2.13.0, and libro 2.11.3 pins
+3.8.9 (3.8.0 at 1.9.0, 3.7.6 at 1.8.2, 3.7.5 at 1.8.1) pins cyrius 6.7.18 and libro 2.11.3 + majra 2.13.0, and libro 2.11.3 pins
 exactly the sigil 3.13.15 / patra 1.16.6 the 6.7.18 snapshot folds. At 1.8.0 the
 rules disagreed: libro 2.11.0 asked for
 sigil 3.13.12, and nein's root pin won (`cyrius deps` printed `sigil 3.13.12

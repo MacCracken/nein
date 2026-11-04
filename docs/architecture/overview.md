@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Last refresh: **2026-11-03** (v1.9.0 — public-fn count; `sign` and `mcp` descriptions. Previously v1.8.2 — the apply path's memfds and deadline; buffer list).
+Last refresh: **2026-11-04** (v1.9.1 — public-fn count; `validate_nft_name`; `pe_validate`'s address buffer. Previously v1.9.0 — public-fn count; `sign` and `mcp` descriptions. Previously v1.8.2 — the apply path's memfds and deadline; buffer list).
 
 ## Design Philosophy
 
@@ -42,7 +42,7 @@ src/
   main.cyr            — top-level include graph + main() entry
   lib/
     error.cyr         — NeinError enum + nein_ok/nein_err/nein_err_code
-    validate.cyr      — 9 public validators (security boundary)
+    validate.cyr      — 10 public validators (security boundary; names and IPv6 checked against nft's grammar, 1.9.1)
     rule.cyr          — Match (30 variants), Verdict (13 variants), Rule
     set.cyr           — NftSet, NftMap (named sets + verdict maps)
     nat.cyr           — DNAT, SNAT, masquerade, redirect, DnatRange
@@ -98,8 +98,8 @@ else is pure rendering and can run with no permissions.
 ## Type Boundary
 
 The public-fn surface is tracked in
-[`docs/api-surface.snapshot`](../api-surface.snapshot) (410 fns as of
-v1.9.0). The CI gate fails on unexplained adds or removes.
+[`docs/api-surface.snapshot`](../api-surface.snapshot) (411 fns as of
+v1.9.1). The CI gate fails on unexplained adds or removes.
 
 Conventions:
 
@@ -144,9 +144,11 @@ The legitimate `var buf[N]` patterns (1.8.2):
 - `buf[4096]` in `apply.cyr` `_nein_memfd_read` — the read target for
   nft's captured stdout / stderr, at most 4096 per read (the pipe-era
   `pipe_in/err/out[16]` and `errbuf[4096]` are gone)
-- `head[16]`, `tail[16]`, `four[16]` in `validate.cyr` `_addr_bytes`, and
-  `a[16]` / `b[16]` in `engine.cyr` `pe_validate` — 16-byte canonical
-  address buffers, filled byte by byte within 16
+- `head[16]`, `tail[16]`, `four[16]` in `validate.cyr` `_addr_bytes` —
+  16-byte canonical address buffers, filled byte by byte within 16. Since
+  1.9.1 `pe_validate` keeps its agents' canonical addresses in one
+  `alloc(alen * 16)` instead of `a[16]` / `b[16]`: agent i at `i * 16`,
+  the last ending at `alen * 16`
 - `bad[8]` / `st[8]` / `dst[8]` in `diff.cyr` / `mcp.cyr` — one i64 status
   slot each
 - `buf[20]` in `_sb_add_hex` (`rule.cyr`) — reverse-write scratch for

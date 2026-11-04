@@ -1,9 +1,11 @@
-# Fuzz: validate.cyr — 8 public validators
+# Fuzz: validate.cyr — 9 public validators
 #
 # Iterates a corpus of adversarial + edge-case inputs through every
 # validator. The contract: validators must NEVER crash on any input,
-# only return Ok or Err. We don't assert outcomes — we only confirm
-# the harness runs to completion without segfaulting or hanging.
+# only return Ok or Err. Outcomes are asserted for two relations only
+# (1.9.1): validate_nft_name takes a subset of what validate_identifier
+# takes, never with a leading digit or '-'; and validate_addr never takes
+# a dotted quad without "::" (nft cannot parse x:x:x:x:x:x:d.d.d.d).
 
 include "src/lib/error.cyr"
 include "src/lib/validate.cyr"
@@ -24,10 +26,46 @@ include "src/lib/netns.cyr"
 
 alloc_init();
 
-# Each entry hits all 8 validators. No input should crash; only Ok / Err.
+fn _fail(why) {
+    println("fuzz/validate: FAIL");
+    println(why);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
+# 1 when s holds a '.' and a ':' but no "::" (s is not NULL).
+fn _dotted_uncompressed(s): i64 {
+    var n = strlen(s);
+    var dot = 0;
+    var colon = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(s + i);
+        if (c == 46) { dot = 1; }
+        if (c == 58) {
+            colon = 1;
+            if (i + 1 < n && load8(s + i + 1) == 58) { return 0; }
+        }
+        i = i + 1;
+    }
+    if (dot == 1 && colon == 1) { return 1; }
+    return 0;
+}
+
+# Each entry hits all 9 validators. No input should crash; only Ok / Err.
 fn _hit_all(s) {
     validate_identifier(s);
-    validate_addr(s);
+    var nt, nv = validate_nft_name(s);
+    if (is_err_result(nt) == 0) {
+        var it, iv = validate_identifier(s);
+        if (is_err_result(it) == 1) { _fail("validate_nft_name took what validate_identifier refuses"); }
+        var c0 = load8(s);
+        if (c0 == 45 || (c0 >= 48 && c0 <= 57)) { _fail("validate_nft_name took a leading digit or '-'"); }
+    }
+    var at, av = validate_addr(s);
+    if (is_err_result(at) == 0) {   # an address taken is not NULL
+        if (_dotted_uncompressed(s) == 1) { _fail("validate_addr took a dotted quad without ::"); }
+    }
     validate_iface(s);
     validate_ct_state(s);
     validate_comment(s);
@@ -45,6 +83,18 @@ _hit_all("inet");
 _hit_all("established");
 _hit_all("table-1_foo");
 _hit_all("a");
+
+# --- Corpus: nft names and address spellings (1.9.1) ---
+_hit_all("fwd");
+_hit_all("FWD");
+_hit_all("3f2a");
+_hit_all("-x");
+_hit_all("_x");
+_hit_all("gc-interval");
+_hit_all("1:2:3:4:5:6:1.2.3.4");
+_hit_all("0:0:0:0:0:ffff:10.0.0.1/128");
+_hit_all("::ffff:10.0.0.1");
+_hit_all("1:2:3:4:5::1.2.3.4");
 
 # --- Corpus: empty / short ---
 _hit_all("");

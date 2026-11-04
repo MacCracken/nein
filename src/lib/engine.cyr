@@ -79,9 +79,72 @@ fn ap_allow_outbound_host(ap: i64, cidr: cstring): i64 { vec_push(load64(ap + 32
 fn ap_set_allow_established(ap: i64, flag: i64): i64 { store64(ap + 40, flag); return ap; }
 fn ap_set_allow_loopback(ap: i64, flag: i64): i64 { store64(ap + 48, flag); return ap; }
 
+# ================================================================
+# Names the build composes from an agent id (defined here, ahead of
+# ap_validate, which checks them)
+# ================================================================
+
+fn _cstr_from_sb(sb: i64): cstring {
+    var s = str_builder_build(sb);
+    var out = alloc(str_len(s) + 1);
+    memcpy(out, str_data(s), str_len(s));
+    store8(out + str_len(s), 0);
+    return out;
+}
+
+# "AGENT_ID_in" or "AGENT_ID_out"
+fn _chain_name(agent_id: cstring, suffix: cstring): cstring {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_id);
+    str_builder_add_cstr(sb, suffix);
+    return _cstr_from_sb(sb);
+}
+
+# "AGENT_ID_hosts" — set name for host restrictions
+fn _host_set_name(agent_id: cstring): cstring {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agent_id);
+    str_builder_add_cstr(sb, "_hosts");
+    return _cstr_from_sb(sb);
+}
+
+# Ok when every port spec in specs holds the numbers firewall_validate will
+# (rule.cyr, _rule_match_numbers_ok): a protocol nft has and a port 0-65535.
+# Through 1.9.0 `ps_tcp(70000)` passed ap_validate and the firewall built from
+# it failed validation (1.9.1, the audit B-8 class).
+fn _ap_ports_ok(specs: i64): i64 {
+    var n = vec_len(specs);
+    var i = 0;
+    while (i < n) {
+        var ps = vec_get(specs, i);
+        if (_in_range(ps_protocol(ps), PROTO_TCP, PROTO_ICMPV6) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        if (_in_range(ps_port(ps), 0, 65535) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+        i = i + 1;
+    }
+    return nein_ok();
+}
+
 fn ap_validate(ap: i64): i64 {
     var vr1_t, vr1_v = validate_identifier(ap_agent_id(ap));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
+    # The names the build composes from the id (1.9.1, audit B-8): chains
+    # `<id>_in` and `<id>_out`, and with outbound hosts the set `<id>_hosts`.
+    # Each must be a name nft reads, or the firewall this agent builds fails
+    # validation: through 1.9.0 an id of 61-64 bytes passed here and composed
+    # a chain name past firewall_validate's 64 bytes, and an id starting with
+    # a digit (`3f2a`, a container id) composed `3f2a_in`, which nft refuses.
+    var vi_t, vi_v = validate_nft_name(_chain_name(ap_agent_id(ap), "_in"));
+    if (is_err_result(vi_t) == 1) { return Err(vi_v); }
+    var vo_t, vo_v = validate_nft_name(_chain_name(ap_agent_id(ap), "_out"));
+    if (is_err_result(vo_t) == 1) { return Err(vo_v); }
+    if (vec_len(ap_allowed_outbound_hosts(ap)) > 0) {
+        var vs_t, vs_v = validate_nft_name(_host_set_name(ap_agent_id(ap)));
+        if (is_err_result(vs_t) == 1) { return Err(vs_v); }
+    }
+    var pi_t, pi_v = _ap_ports_ok(ap_allowed_inbound(ap));
+    if (is_err_result(pi_t) == 1) { return Err(pi_v); }
+    var po_t, po_v = _ap_ports_ok(ap_allowed_outbound(ap));
+    if (is_err_result(po_t) == 1) { return Err(po_v); }
     var vr2_t, vr2_v = validate_addr(ap_agent_addr(ap));
     if (is_err_result(vr2_t) == 1) { return Err(vr2_v); }
     # An agent is ONE host (1.8.2, audit B-3). Dispatch jumps on the agent's
@@ -108,14 +171,6 @@ fn ap_validate(ap: i64): i64 {
 # ================================================================
 # Comment builders for engine rules
 # ================================================================
-
-fn _cstr_from_sb(sb: i64): cstring {
-    var s = str_builder_build(sb);
-    var out = alloc(str_len(s) + 1);
-    memcpy(out, str_data(s), str_len(s));
-    store8(out + str_len(s), 0);
-    return out;
-}
 
 # "AGENT_ID loopback"
 fn _loopback_comment(agent_id: cstring): cstring {
@@ -176,22 +231,6 @@ fn _dispatch_comment(direction: cstring, preposition: cstring, agent_id: cstring
     str_builder_add_cstr(sb, preposition);
     str_builder_add_cstr(sb, " ");
     str_builder_add_cstr(sb, agent_id);
-    return _cstr_from_sb(sb);
-}
-
-# "AGENT_ID_in" or "AGENT_ID_out"
-fn _chain_name(agent_id: cstring, suffix: cstring): cstring {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, agent_id);
-    str_builder_add_cstr(sb, suffix);
-    return _cstr_from_sb(sb);
-}
-
-# "AGENT_ID_hosts" — set name for host restrictions
-fn _host_set_name(agent_id: cstring): cstring {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, agent_id);
-    str_builder_add_cstr(sb, "_hosts");
     return _cstr_from_sb(sb);
 }
 
@@ -439,7 +478,7 @@ fn pe_get_agent(pe: i64, agent_id: cstring): i64 {
 }
 
 fn pe_validate(pe: i64): i64 {
-    var vr1_t, vr1_v = validate_identifier(pe_table_name(pe));
+    var vr1_t, vr1_v = validate_nft_name(pe_table_name(pe));
     if (is_err_result(vr1_t) == 1) { return Err(vr1_v); }
     var agents = pe_agents(pe);
     var alen = vec_len(agents);
@@ -451,16 +490,22 @@ fn pe_validate(pe: i64): i64 {
     }
     # No two agents on one address (B-3): the second's chain would never be
     # reached, its policy silently replaced by the first's. Compared as
-    # canonical bytes, so "fd00::1" and "fd00:0::1" are one address.
-    var a[16];
-    var b[16];
+    # canonical bytes, so "fd00::1" and "fd00:0::1" are one address. Each
+    # address is parsed once, into its own 16 bytes of `canon` (alen * 16
+    # bytes): through 1.9.0 the inner loop re-parsed every later address for
+    # every agent, n^2/2 parses (1.1 ms at 100 agents; 1.9.1).
+    if (alen < 2) { return nein_ok(); }
+    var canon = alloc(alen * 16);
     i = 0;
     while (i < alen) {
-        _addr_bytes(ap_agent_addr(vec_get(agents, i)), &a);
+        _addr_bytes(ap_agent_addr(vec_get(agents, i)), canon + i * 16);
+        i = i + 1;
+    }
+    i = 0;
+    while (i < alen) {
         var j = i + 1;
         while (j < alen) {
-            _addr_bytes(ap_agent_addr(vec_get(agents, j)), &b);
-            if (memeq(&a, &b, 16) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
+            if (memeq(canon + i * 16, canon + j * 16, 16) == 1) { return nein_err(NEIN_ERR_INVALID_RULE); }
             j = j + 1;
         }
         i = i + 1;

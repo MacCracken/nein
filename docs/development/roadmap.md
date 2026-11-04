@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-11-03 (post v1.9.0 — the consumer-contract minor: replay-bound v2 signing, the MCP gate contract and tool classes, outcome-unknown applies, GeoIP on prerouting. Every 2026-11-03 audit MEDIUM is now fixed. Forward-looking only: completed items removed.)
+Last refresh: 2026-11-04 (post v1.9.1 — hardening: nft names checked against nft's own grammar (I-10), builder-composed names and comments (B-8), an IPv6 spelling nft cannot parse, `pe_validate` no longer quadratic in parses; bote 3.8.9. Forward-looking only: completed items removed.)
 
 This file tracks **what is next**. Shipped history lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); audit findings and their status in
@@ -9,14 +9,16 @@ lessons that cost a round of investigation in [`traps.md`](traps.md).
 
 ---
 
-## Where things stand — v1.9.0
+## Where things stand — v1.9.1
 
 nein is feature-complete for the consumers identified at port time (stiva,
-daimon, aegis, sutra): 21 modules, 410 public fns, 993 unit + 41 integration
-assertions, 56 benchmarks, 7 fuzz drivers, and a load test that has real nft
-parse every builder's output. Pinned at cyrius 6.7.18 with every dependency at
-its latest release (bote 3.8.0). Every MEDIUM-or-higher finding of the
-2026-11-03 audit is fixed; the open LOWs are below. Consumers still on cyrius
+daimon, aegis, sutra): 21 modules, 411 public fns, 1,145 unit + 41 integration
+assertions, 59 benchmarks, 7 fuzz drivers, a load test that has real nft parse
+every builder's output, and a grammar test that has the installed nft judge
+every name rule and a few hundred IPv6 spellings nein's validators take.
+Pinned at cyrius 6.7.18 with every dependency at its latest release (bote
+3.8.9). Every MEDIUM-or-higher finding of the 2026-11-03 audit is fixed, and
+of its deferred LOWs I-10 and B-8 (1.9.1); the open ones are below. Consumers still on cyrius
 6.6.x stay on nein 1.7.1, the last release built on 6.6.20.
 
 Everything below is driven by a consumer, by the language, or by a finding
@@ -38,27 +40,33 @@ deferred with a reason — not by speculation.
 - **Engine dispatch by process, not by source address** (audit B-2, related).
   Outbound dispatch keys on `ip saddr`, which any local process can choose with
   `bind()`. `meta skuid` / `socket cgroupv2` binds a policy to the process.
-- **Identifiers that are nft keywords** (audit I-10). `validate_identifier`
-  accepts `fwd`, which nft refuses as a chain name; the batch fails closed.
-  Needs nft's keyword list, or quoting of names nft allows quoted.
 - **Named stateful objects** (audit I-7, part). `counter name "x"` references
-  a counter object nein's table model cannot declare, so it always fails at
-  apply. Model counter / quota / limit objects in tables, or retire the verdict.
-- **Builder name lengths** (audit B-8). Builders accept ids that, once composed
-  into `<id>_in`, `<prefix>_filter`, `iso_<name>`, exceed `firewall_validate`'s
-  64-byte limit; the firewall then fails validation (closed). Validate the
-  composed names in the builders.
+  a counter object nein's table model cannot declare, so it fails at apply
+  unless something outside nein declared that object in the same table (nft
+  merges the table blocks, and then the reference resolves — checked on 1.1.7,
+  1.9.1). Model counter / quota / limit objects in tables; retiring the verdict
+  would break a consumer that declares its objects out of band.
 - **Tighten the bench thresholds.** Since 1.8.2 the bench gate normalizes every
   delta by the run's median shift, so the cross-machine offset no longer has
   to fit inside the thresholds. The 90% (ns) / 80% (µs) thresholds and
   `BENCH_NS_THRESHOLD` were sized for that offset; after a few CI runs show the
   normalized spread (±27% on the first), drop them toward 50% and retire the
   per-bench override.
-- **Raise the coverage ratchets.** API test coverage is gated at 68% (direction
-  of travel 80%), doc coverage at 19% (the deficit is one-line accessors). Raise
-  each floor to the measured figure as it moves; never lower one.
+- **Raise the coverage ratchets.** API test coverage is gated at 71% (1.9.1;
+  direction of travel 80%), doc coverage at 19% (the deficit is one-line
+  accessors). Raise each floor to the measured figure as it moves; never lower
+  one.
+- **The netns builder composes comments it never validates.** `nsf_build`
+  writes `<agent> outbound <proto>:<port> -> <host>`, which a 64-byte agent
+  name and a long IPv6 host push past 128 bytes; the firewall then fails
+  `firewall_validate` (closed). The other builders check what they compose since
+  1.9.1 (B-8); netns has no validator to put the check in, so it needs a new
+  public `nsf_validate` — a minor's addition.
+- **The keyword lists are nft 1.1.7's** (1.9.1). Re-probe on each nft release
+  the CI or the consumers move to; `tests/integration/nft_grammar.tcyr` names
+  any word the installed nft lists in its errors and refuses as a name.
 - **Consumer adoption** (work in the consumers' repos, tracked here):
-  - **daimon → 1.9.0** (on 1.8.1 today). Its gate returns `1`, which 1.9.0
+  - **daimon → 1.9.x** (on 1.8.1 today). Its gate returns `1`, which 1.9.0
     reads as a denial, so the bump fails closed until the gate returns
     `NEIN_GATE_PERMIT` — and it permits every `nein_tool_read_only` tool, so
     its unauthenticated `POST /v1/mcp/call` hands the live root ruleset to any
