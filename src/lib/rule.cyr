@@ -1161,6 +1161,129 @@ fn rule_validate(r: i64): i64 {
 }
 
 # ================================================================
+# Family — what a table of each family can hold (1.9.3)
+# ================================================================
+# rule_validate judges a rule on its own; nft judges it in its table's family,
+# and refuses `ip saddr` in an ip6 table, conntrack in an arp or netdev one,
+# `reject with icmpx` in an ip one. Through 1.9.2 such a rule validated and the
+# whole batch failed at apply. firewall_validate now asks these, with the
+# table's family. Every answer was probed against nft 1.1.7 (each match and
+# verdict alone in a table of each family: tests/integration/nft_family.tcyr),
+# not read from the man page. Families are FAMILY_* (table.cyr).
+
+# The rule's ip payload (saddr / daddr, dscp, frag-off) can load: not in ip6
+# or arp tables.
+fn _fam_has_ip(fam: i64): i64 {
+    if (fam == FAMILY_IP6 || fam == FAMILY_ARP) { return 0; }
+    return 1;
+}
+
+# ip6 payload and extension headers: not in ip or arp tables.
+fn _fam_has_ip6(fam: i64): i64 {
+    if (fam == FAMILY_IP || fam == FAMILY_ARP) { return 0; }
+    return 1;
+}
+
+# Transport and icmp headers (`tcp dport`, `tcp flags`, `icmp type`): not in
+# arp tables. `th dport` and `meta l4proto` load everywhere.
+fn _fam_has_l4(fam: i64): i64 {
+    if (fam == FAMILY_ARP) { return 0; }
+    return 1;
+}
+
+# Conntrack (`ct state`, `ct helper`, `ct count`, `ct mark set`, ct timeouts):
+# not in arp or netdev tables (the kernel answers "Protocol error").
+fn _fam_has_ct(fam: i64): i64 {
+    if (fam == FAMILY_ARP || fam == FAMILY_NETDEV) { return 0; }
+    return 1;
+}
+
+# Flowtables and `flow offload`: inet, ip and ip6 tables only.
+fn _fam_has_flowtable(fam: i64): i64 {
+    if (fam == FAMILY_INET || fam == FAMILY_IP || fam == FAMILY_IP6) { return 1; }
+    return 0;
+}
+
+# A set lookup's selector (validate.cyr's closed set) in a table of family
+# `fam`; `th`, `meta l4proto` and the interface names load everywhere.
+fn _set_field_family_ok(field: cstring, fam: i64): i64 {
+    if (streq(field, "ip saddr") == 1 || streq(field, "ip daddr") == 1) { return _fam_has_ip(fam); }
+    if (streq(field, "ip6 saddr") == 1 || streq(field, "ip6 daddr") == 1) { return _fam_has_ip6(fam); }
+    if (streq(field, "tcp dport") == 1 || streq(field, "tcp sport") == 1
+      || streq(field, "udp dport") == 1 || streq(field, "udp sport") == 1) {
+        return _fam_has_l4(fam);
+    }
+    return 1;
+}
+
+# Rule `r` in a table of family `fam`: -1 when nft refuses it there, else 1
+# when it holds a statement only some hooks take (a reject, a flow offload:
+# see chain.cyr's _chain_rule_context_ok) and 0 when it holds none. One scan
+# of the matches answers both, as firewall_validate asks both of every rule.
+fn _rule_family_needs(r: i64, fam: i64): i64 {
+    var needs = 0;
+    var matches = rule_matches(r);
+    var len = vec_len(matches);
+    var i = 0;
+    if (fam == FAMILY_INET) {
+        # An inet table takes every match and verdict nein renders (the probe
+        # found no refusal there), so only the hook needs are left to find.
+        while (i < len) {
+            if (match_type(vec_get(matches, i)) == MATCH_FLOW_OFFLOAD) { return 1; }
+            i = i + 1;
+        }
+        var ivt = verdict_type(rule_verdict(r));
+        if (ivt == VERDICT_REJECT || ivt == VERDICT_REJECT_WITH) { return 1; }
+        return 0;
+    }
+    while (i < len) {
+        var m = vec_get(matches, i);
+        var mt = match_type(m);
+        var ok = 1;
+        if (mt == MATCH_SOURCE_ADDR || mt == MATCH_DEST_ADDR || mt == MATCH_DSCP || mt == MATCH_FRAG_OFF) {
+            ok = _fam_has_ip(fam);
+        } elif (mt == MATCH_SOURCE_ADDR6 || mt == MATCH_DEST_ADDR6 || mt == MATCH_IPV6_EXT_HDR) {
+            ok = _fam_has_ip6(fam);
+        } elif (mt == MATCH_PROTOCOL) {
+            # Bare `tcp` before a port is the transport header; alone it renders
+            # `meta l4proto tcp`, which loads everywhere.
+            if (i + 1 < len) {
+                if (_is_port_match(match_type(vec_get(matches, i + 1))) == 1) { ok = _fam_has_l4(fam); }
+            }
+        } elif (mt == MATCH_TCP_FLAGS || mt == MATCH_ICMP_TYPE || mt == MATCH_ICMPV6_TYPE
+          || mt == MATCH_ICMP_TYPE_CODE || mt == MATCH_ICMPV6_TYPE_CODE) {
+            ok = _fam_has_l4(fam);
+        } elif (mt == MATCH_CT_STATE || mt == MATCH_CT_HELPER || mt == MATCH_CONN_LIMIT
+          || mt == MATCH_CT_TIMEOUT_SET) {
+            ok = _fam_has_ct(fam);
+        } elif (mt == MATCH_SET_LOOKUP) {
+            ok = _set_field_family_ok(match_val1(m), fam);
+        } elif (mt == MATCH_FLOW_OFFLOAD) {
+            ok = _fam_has_flowtable(fam);
+            needs = 1;
+        }
+        if (ok == 0) { return 0 - 1; }
+        i = i + 1;
+    }
+    var v = rule_verdict(r);
+    var vt = verdict_type(v);
+    if (vt == VERDICT_REJECT || vt == VERDICT_REJECT_WITH) {
+        if (fam == FAMILY_ARP) { return 0 - 1; }   # "cannot use reject with arp"
+        if (vt == VERDICT_REJECT_WITH) {
+            var why = verdict_val1(v);
+            # icmpx is the inet / bridge / netdev abstraction: "abstracted ICMP
+            # unreachable not supported" in ip and ip6 tables.
+            if (why == REJECT_ICMPX_ADMIN_PROHIB && (fam == FAMILY_IP || fam == FAMILY_IP6)) { return 0 - 1; }
+            # An ICMPv4 reason in an ip6 table: "conflicting protocols".
+            if (why != REJECT_ICMPX_ADMIN_PROHIB && why != REJECT_TCP_RESET && fam == FAMILY_IP6) { return 0 - 1; }
+        }
+        needs = 1;
+    }
+    if (vt == VERDICT_SET_CT_MARK && _fam_has_ct(fam) == 0) { return 0 - 1; }
+    return needs;
+}
+
+# ================================================================
 # Convenience functions
 # ================================================================
 

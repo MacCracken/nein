@@ -235,8 +235,8 @@ cyrius lib sync                        # sync declared stdlib subset from pinned
 cyrius deps                            # resolve git bundles into ./lib/
 cyrius build src/main.cyr build/nein   # compile (x86_64)
 cyrius build --aarch64 src/main.cyr build/nein-aarch64
-cyrius test tests                      # all suites (1,327 unit + 41 integration assertions + nft load, grammar and diff-convergence tests)
-cyrius bench tests/nein.bcyr           # run benchmarks (63 benchmarks)
+cyrius test tests                      # all suites (1,432 unit + 41 integration assertions + nft load, grammar, diff-convergence and family tests)
+cyrius bench tests/nein.bcyr           # run benchmarks (64 benchmarks)
 cyrius fuzz                            # 7 per-target fuzz drivers
 ```
 

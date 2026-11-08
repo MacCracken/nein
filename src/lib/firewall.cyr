@@ -100,6 +100,118 @@ fn firewall_render_checked(fw: i64): i64 {
     return Ok(firewall_render(fw));
 }
 
+# ---- What the kernel checks when it binds chains (1.9.3) ----
+#
+# A rule is held to the type and hook of every base chain that can reach it
+# through jump / goto, not to its own chain's: `dnat` in a regular chain loads
+# only if every base chain that reaches it is a nat chain on prerouting or
+# output. A path of more than 15 jumps below a base chain is refused ("Too
+# many links") — a reachable cycle is one — and so is any jump to a base
+# chain. A regular chain no base chain reaches is not checked, by the kernel
+# or here. All probed against nft 1.1.7 on Linux 7.2 with real loads: `nft -c`
+# checks none of it (tests/integration/nft_family.tcyr).
+var _NFT_JUMP_MAX = 15;
+
+# Chain names to indices, open addressing on a djb2 hash, so each jump
+# resolves in O(1): the engine's 100-agent firewall has 200 jumps over 203
+# chains, and a scan per jump made its validation 4x slower. Local, not the
+# stdlib hashmap, which would add a stdlib leaf to dist/nein.cyr's sidecar.
+# Layout: [mask:8][slots: (mask + 1) * 8], a slot 0 or a chain index + 1.
+fn _fw_name_hash(s: cstring): i64 {
+    var h = 5381;
+    var i = 0;
+    var c = load8(s);
+    while (c != 0) {
+        h = (h << 5) + h + c;
+        i = i + 1;
+        c = load8(s + i);
+    }
+    return h;
+}
+
+fn _fw_index_new(chains: i64): i64 {
+    var n = vec_len(chains);
+    var cap = 8;
+    while (cap < n * 2) { cap = cap * 2; }
+    var ix = alloc(cap * 8 + 8);
+    store64(ix, cap - 1);
+    var z = 0;
+    while (z < cap) { store64(ix + 8 + z * 8, 0); z = z + 1; }
+    var i = 0;
+    while (i < n) {
+        var h = _fw_name_hash(chain_name(vec_get(chains, i))) & (cap - 1);
+        while (load64(ix + 8 + h * 8) != 0) { h = (h + 1) & (cap - 1); }
+        store64(ix + 8 + h * 8, i + 1);
+        i = i + 1;
+    }
+    return ix;
+}
+
+# Index of the chain named `name`, or -1.
+fn _fw_index_get(ix: i64, chains: i64, name: cstring): i64 {
+    var mask = load64(ix);
+    var h = _fw_name_hash(name) & mask;
+    var v = load64(ix + 8 + h * 8);
+    while (v != 0) {
+        if (streq(chain_name(vec_get(chains, v - 1)), name) == 1) { return v - 1; }
+        h = (h + 1) & mask;
+        v = load64(ix + 8 + h * 8);
+    }
+    return 0 - 1;
+}
+
+# Walk chain `ci`, reached `depth` jumps below a base chain of type `ctype` at
+# hook `hook`. `tg[i]` holds chain i's jump targets (a Vec of indices, or 0)
+# and `nd[i]` is 1 when chain i holds a statement only some hooks take, so a
+# chain without one is never scanned. `seen[i]` is 0, or 1 + the deepest
+# depth chain i was explored at: each chain's rules are checked once per base
+# chain, and a chain is only walked again from deeper, so the work is bounded
+# by 15 walks a chain.
+fn _fw_walk(chains: i64, tg: i64, nd: i64, fam: i64, ctype: i64, hook: i64, ci: i64, depth: i64, seen: i64): i64 {
+    if (depth > _NFT_JUMP_MAX) { return 0; }
+    var prev = load64(seen + ci * 8);
+    if (prev != 0 && prev - 1 >= depth) { return 1; }
+    store64(seen + ci * 8, depth + 1);
+    if (prev == 0 && load64(nd + ci * 8) == 1) {
+        var rules = chain_rules(vec_get(chains, ci));
+        var k = 0;
+        while (k < vec_len(rules)) {
+            if (_chain_rule_context_ok(vec_get(rules, k), fam, ctype, hook) == 0) { return 0; }
+            k = k + 1;
+        }
+    }
+    var tv = load64(tg + ci * 8);
+    if (tv != 0) {
+        var e = 0;
+        while (e < vec_len(tv)) {
+            if (_fw_walk(chains, tg, nd, fam, ctype, hook, vec_get(tv, e), depth + 1, seen) == 0) { return 0; }
+            e = e + 1;
+        }
+    }
+    return 1;
+}
+
+# Walk from each base chain of table `t` (tg / nd as _fw_walk takes them):
+# 1 when every rule each one reaches is one the kernel takes there.
+fn _fw_bases_ok(t: i64, tg: i64, nd: i64): i64 {
+    var chains = table_chains(t);
+    var n = vec_len(chains);
+    var fam = table_family(t);
+    var seen = 0;
+    var j = 0;
+    while (j < n) {
+        var b = vec_get(chains, j);
+        if (chain_type_val(b) != 0) {
+            if (seen == 0) { seen = alloc(n * 8); }
+            var z = 0;
+            while (z < n) { store64(seen + z * 8, 0); z = z + 1; }
+            if (_fw_walk(chains, tg, nd, fam, chain_type_val(b), chain_hook(b), j, 0, seen) == 0) { return 0; }
+        }
+        j = j + 1;
+    }
+    return 1;
+}
+
 fn firewall_validate(fw: i64): i64 {
     var tables = firewall_tables(fw);
     var tlen = vec_len(tables);
@@ -134,6 +246,7 @@ fn firewall_validate(fw: i64): i64 {
         while (j < vlen) {
             var vr3_t, vr3_v = flowtable_validate(vec_get(vec2, j));
             if (is_err_result(vr3_t) == 1) { return Err(vr3_v); }
+            if (_fam_has_flowtable(fam) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
             j = j + 1;
         }
 
@@ -144,6 +257,7 @@ fn firewall_validate(fw: i64): i64 {
         while (j < vlen) {
             var vr4_t, vr4_v = ct_timeout_validate(vec_get(vec2, j));
             if (is_err_result(vr4_t) == 1) { return Err(vr4_v); }
+            if (_fam_has_ct(fam) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
             j = j + 1;
         }
 
@@ -167,9 +281,14 @@ fn firewall_validate(fw: i64): i64 {
             j = j + 1;
         }
 
-        # Chains
+        # Chains. Each rule's family is checked here, and its jump target and
+        # whether it holds a hook-restricted statement are recorded for the
+        # walk below (one scan of each rule; 1.9.3).
         vec2 = table_chains(t);
         vlen = vec_len(vec2);
+        var ix = _fw_index_new(vec2);
+        var tg = alloc(vlen * 8 + 8);
+        var nd = alloc(vlen * 8 + 8);
         j = 0;
         while (j < vlen) {
             var chain = vec_get(vec2, j);
@@ -177,16 +296,38 @@ fn firewall_validate(fw: i64): i64 {
             if (is_err_result(vr7_t) == 1) { return Err(vr7_v); }
             var vh_t, vh_v = chain_header_validate(chain);
             if (is_err_result(vh_t) == 1) { return Err(vh_v); }
+            # The table's family (1.9.3): its chain types and hooks, and what
+            # its rules can match. See rule.cyr's "Family".
+            if (_chain_header_family_ok(chain, fam) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
             var rules = chain_rules(chain);
             var rlen = vec_len(rules);
+            var tv = 0;
+            var need = 0;
             var k = 0;
             while (k < rlen) {
-                var vr8_t, vr8_v = chain_rule_validate(vec_get(rules, k));
+                var cr = vec_get(rules, k);
+                var vr8_t, vr8_v = chain_rule_validate(cr);
                 if (is_err_result(vr8_t) == 1) { return Err(vr8_v); }
+                var fneeds = _chain_rule_family_needs(cr, fam);
+                if (fneeds < 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+                if (fneeds > 0) { need = 1; }
+                var tgt = _chain_rule_jump_target(cr);
+                if (tgt != 0) {
+                    var ti = _fw_index_get(ix, vec2, tgt);
+                    if (ti >= 0) {
+                        # A jump or goto to a base chain: refused, reached or not.
+                        if (chain_type_val(vec_get(vec2, ti)) != 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
+                        if (tv == 0) { tv = vec_new(); }
+                        vec_push(tv, ti);
+                    }
+                }
                 k = k + 1;
             }
+            store64(tg + j * 8, tv);
+            store64(nd + j * 8, need);
             j = j + 1;
         }
+        if (_fw_bases_ok(t, tg, nd) == 0) { return nein_err(NEIN_ERR_INVALID_RULE); }
 
         i = i + 1;
     }

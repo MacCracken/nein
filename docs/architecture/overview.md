@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Last refresh: **2026-11-07** (v1.9.2 — the diff's comparison, `_addr_canon`'s buffers. Previously v1.9.1 — public-fn count; `validate_nft_name`; `pe_validate`'s address buffer. Previously v1.9.0 — public-fn count; `sign` and `mcp` descriptions. Previously v1.8.2 — the apply path's memfds and deadline; buffer list).
+Last refresh: **2026-11-07** (v1.9.3 — `firewall_validate`'s family and hook checks. Previously v1.9.2 — the diff's comparison, `_addr_canon`'s buffers. Previously v1.9.1 — public-fn count; `validate_nft_name`; `pe_validate`'s address buffer. Previously v1.9.0 — public-fn count; `sign` and `mcp` descriptions. Previously v1.8.2 — the apply path's memfds and deadline; buffer list).
 
 ## Design Philosophy
 
@@ -48,7 +48,7 @@ src/
     nat.cyr           — DNAT, SNAT, masquerade, redirect, DnatRange
     chain.cyr         — Chain, ChainType, Hook, Policy, ChainRule (ADR-0005)
     table.cyr         — Table, Family, Define, Flowtable, CtTimeout
-    firewall.cyr      — Top-level Firewall manager (add_table, validate, render)
+    firewall.cyr      — Top-level Firewall manager (add_table, validate, render; validation holds each rule to its table's family and its base chains' hooks, 1.9.3)
     builder.cyr       — Pre-built configs (basic_host_firewall, container_bridge, service_policy)
     policy.cyr        — Kubernetes-style NetworkPolicy
     geoip.cyr         — Country-CIDR interval sets (dual-stack)

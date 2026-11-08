@@ -68,6 +68,42 @@ fn chain_header_validate(c: i64): i64 {
     return nein_ok();
 }
 
+# A base chain's type and hook in a table of family `fam` (1.9.3, probed
+# against nft 1.1.7 on Linux 7.2). inet, ip and ip6: filter on any hook but
+# ingress, which only inet has; nat on prerouting, input, output and
+# postrouting; route on output. arp: filter on input and output. bridge: filter
+# on any hook but ingress. netdev: filter on ingress. Anything else nft refuses
+# ("does not support this hook", "Chain of type ... is not supported"). A
+# regular chain (type 0) carries no header.
+fn _chain_header_family_ok(c: i64, fam: i64): i64 {
+    var ct = chain_type_val(c);
+    if (ct == 0) { return 1; }
+    var h = chain_hook(c);
+    if (fam == FAMILY_INET || fam == FAMILY_IP || fam == FAMILY_IP6) {
+        if (ct == CHAIN_FILTER) {
+            if (h == HOOK_INGRESS && fam != FAMILY_INET) { return 0; }
+            return 1;
+        }
+        if (ct == CHAIN_NAT) {
+            if (h == HOOK_FORWARD || h == HOOK_INGRESS) { return 0; }
+            return 1;
+        }
+        if (h == HOOK_OUTPUT) { return 1; }   # route
+        return 0;
+    }
+    if (ct != CHAIN_FILTER) { return 0; }
+    if (fam == FAMILY_ARP) {
+        if (h == HOOK_INPUT || h == HOOK_OUTPUT) { return 1; }
+        return 0;
+    }
+    if (fam == FAMILY_BRIDGE) {
+        if (h == HOOK_INGRESS) { return 0; }
+        return 1;
+    }
+    if (fam == FAMILY_NETDEV && h == HOOK_INGRESS) { return 1; }
+    return 0;
+}
+
 # ================================================================
 # ChainRule — tagged wrapper: { type, inner }
 # Layout: [type:8][inner:8] = 16 bytes
@@ -107,6 +143,51 @@ fn chain_rule_validate(cr: i64): i64 {
     var inner = load64(cr + 8);
     if (ct == CR_NAT) { return nat_validate(inner); }
     return rule_validate(inner);
+}
+
+# The chain rule in a table of family `fam`: -1 when nft refuses it there,
+# else 1 when only some hooks take it (any NAT; see _rule_family_needs) and 0
+# when every hook does.
+fn _chain_rule_family_needs(cr: i64, fam: i64): i64 {
+    var inner = load64(cr + 8);
+    if (load64(cr) == CR_NAT) {
+        if (_nat_family_ok(inner, fam) == 0) { return 0 - 1; }
+        return 1;
+    }
+    return _rule_family_needs(inner, fam);
+}
+
+# 1 when the kernel takes the chain rule below a base chain of type `ctype` at
+# hook `hook`, in a table of family `fam` (1.9.3; `nft -c` does not check
+# this, only a load does). NAT: _nat_hook_ok. `reject`: not at postrouting,
+# and in a bridge table only at prerouting or input. `flow offload`: only at
+# forward. Everything else loads at every hook its chain type has.
+fn _chain_rule_context_ok(cr: i64, fam: i64, ctype: i64, hook: i64): i64 {
+    var inner = load64(cr + 8);
+    if (load64(cr) == CR_NAT) { return _nat_hook_ok(inner, ctype, hook); }
+    var vt = verdict_type(rule_verdict(inner));
+    if (vt == VERDICT_REJECT || vt == VERDICT_REJECT_WITH) {
+        if (hook == HOOK_POSTROUTING) { return 0; }
+        if (fam == FAMILY_BRIDGE && hook != HOOK_PREROUTING && hook != HOOK_INPUT) { return 0; }
+    }
+    if (hook != HOOK_FORWARD) {
+        var matches = rule_matches(inner);
+        var i = 0;
+        while (i < vec_len(matches)) {
+            if (match_type(vec_get(matches, i)) == MATCH_FLOW_OFFLOAD) { return 0; }
+            i = i + 1;
+        }
+    }
+    return 1;
+}
+
+# The chain a rule jumps or goes to, or 0.
+fn _chain_rule_jump_target(cr: i64): cstring {
+    if (load64(cr) != CR_RULE) { return 0; }
+    var v = rule_verdict(load64(cr + 8));
+    var vt = verdict_type(v);
+    if (vt == VERDICT_JUMP || vt == VERDICT_GOTO) { return verdict_val1(v); }
+    return 0;
 }
 
 # ================================================================

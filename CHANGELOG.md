@@ -4,6 +4,142 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.9.3] — 2026-11-07
+
+**Validation holds each rule to its table's family and to the hooks of the base chains that reach
+it.** `firewall_validate` judged every rule on its own. So a rule nft refuses where it sits
+validated, and the whole batch failed at apply. Examples: `ip saddr` in an ip6 table, conntrack in an
+arp table, `reject with icmpx` in an ip table, `dnat` below a filter chain, 16 nested jumps. It was
+measured first. A new integration test loaded every object, base-chain header and rule shape nein
+renders in each of the six families, then under each base chain. 492 cases validated and never
+loaded, and all are refused at validation now. The test's 3,557 cases agree with nft 1.1.7. The
+roadmap item named only the reject reasons; the class was 197 family cases and 295 hook cases.
+**1,432 unit** (was 1,327) assertions, a new nft integration test, `nft_load` now loads for real, 1
+new benchmark.
+
+No consumer contract changes and no new public functions. Every configuration refused now is one nft
+always refused at apply. The test's NOTE direction (nein refuses what nft takes) reports 0, so a
+configuration that applied through 1.9.2 still validates. daimon, stiva and aegis each build and
+pass their suites against this release. No pin changes: every dependency is still at its latest
+release.
+
+### Fixed
+
+- **Rules nft refuses in their table's family are refused** (found probing for audit P-8 in 1.9.2,
+  LOW: each failed closed at apply). The probe found 197 of 684 cases that validated and did not
+  load. The checks now applied:
+  - **arp** has no ip / ip6 / tcp / udp / icmp header, conntrack, exthdr, reject, NAT or flowtable.
+    `th dport`, `meta l4proto`, marks, limits, quotas, `vlan id` and interface names load there.
+  - **netdev** has no conntrack, NAT or flowtable.
+  - **bridge** has no NAT and no flowtable. ip / ip6 matches, conntrack and every reject load there.
+  - **ip** has no ip6 match, exthdr, IPv6 NAT target or `icmpx` reject.
+  - **ip6** has no ip match, `ip dscp`, `ip frag-off`, IPv4 NAT target, `icmpx` reject or ICMPv4
+    reject reason. `icmp type` loads in ip6 and `icmpv6 type` in ip; nft takes both.
+  - Set lookups follow their selector: `ip6 daddr @s` as `ip6 daddr`, `tcp dport @s` as `tcp dport`.
+  - Ct timeout objects are refused in arp and netdev, and flowtables outside inet, ip and ip6.
+- **Base-chain headers nft refuses in a family are refused.** inet, ip and ip6 take filter on any
+  hook (ingress only in inet), nat on prerouting / input / output / postrouting, and route on output.
+  arp takes filter on input and output. bridge takes filter on any hook but ingress. netdev takes
+  filter on ingress. Through 1.9.2, `chain_header_validate` checked only that the type and hook were
+  in range.
+- **Rules are held to the base chains that reach them.** The kernel checks these when it binds
+  chains, against every base chain that reaches a rule through `jump` / `goto`:
+  - `dnat`, port-range `dnat` and `redirect` load only below a nat chain on prerouting or output;
+  - `snat` loads only below one on postrouting or input, and `masquerade` only on postrouting;
+  - `reject` loads anywhere but postrouting, and in a bridge table only at prerouting or input;
+  - `flow offload` loads only at forward;
+  - more than 15 nested jumps are refused ("Too many links"), and a reachable cycle is one;
+  - a jump or goto to a base chain is refused, even from a chain no base chain reaches.
+
+  `firewall_validate` walks each base chain's reach. It checks each rule there once per base chain,
+  and walks a chain again only when it is reached deeper. A regular chain no base chain reaches is
+  not checked, by the kernel or by nein. A jump to a chain the target does not declare is followed
+  no further: that chain may exist live. A cycle no base chain reaches loads, and validates.
+
+### Changed
+
+- **`tests/integration/nft_load.tcyr` loads for real** (`nft -f` in a throwaway namespace). It used
+  `nft -c` from 1.8.2 to 1.9.2. Check mode parses and asks the kernel for the objects, but skips the
+  kernel's chain validation: `dnat` in a filter chain, `masquerade` at nat input, `flow offload` at
+  input, a jump to a base chain and 16 nested jumps all pass `nft -c` and fail a load. No builder
+  was affected; each loads for real, and `diff_converge` has loaded them since 1.9.2.
+
+### Tests
+
+- **`tests/integration/nft_family.tcyr`** (new) runs the installed nft inside `unshare -rn`, loading
+  for real, and SKIPs where it cannot. Locally it reports 3,557 agree, 0 failed, 0 notes in about
+  15 s. It has five parts:
+  - table objects × families;
+  - base-chain headers (3 types × 6 hooks) × families;
+  - 87 rule shapes and NAT forms × families, in a regular chain;
+  - each shape that loads in a family, under each header that family takes. These are batched, and
+    a refused batch is bisected to the shape;
+  - 17 jump cases: through jump and goto, from one base chain or two, 15 and 16 deep, reachable and
+    unreachable cycles, jumps to base chains, a 12-level diamond, and a chain reached shallow first
+    and deep later.
+
+  It FAILs when nein takes what nft refuses and NOTEs the reverse. Before building on `nft -c`, the
+  whole regular-chain matrix was run both ways: every verdict was identical, and every base-chain
+  refusal came from a real load alone.
+- `tests/nein.tcyr` **1,327 → 1,432**, one new group, `family_validity`:
+  - each family rule at a family that refuses it and one that takes it;
+  - each header rule;
+  - each statement at the hooks it takes and refuses, in inet and outside it;
+  - the jump cases, including the deeper second path;
+  - a direct test of the chain-name index (200 names in 512 slots, each found at its own index);
+  - that every builder still validates.
+- **Checked against broken code.** 50 mutants of the new checks. 48 failed the suite at once. The two
+  that survived were test gaps, and both fail now:
+  - the flow-offload hook check outside inet (every test of it had used an inet table, which takes
+    a fast path);
+  - the index's collision probing.
+
+  A first run also found a redundant check: snat's target family, which `nat_validate` already holds
+  to its source's. It was removed.
+- Coverage floors unchanged: API test coverage **89%** (368/411; no public fn added), doc coverage
+  **19%** (80/411).
+
+### Performance
+
+Against the 1.9.2 baseline on the same machine (factor 0.960×), 63 of 63 benchmarks were compared
+with 0 regressions. **A 1.9.3 baseline is recorded** in `docs/benchmarks/history.csv` (64
+benchmarks, 2026-11-08T06:33:14Z), and the bench-regression gate passes against it: 64 of 64, 0
+regressions.
+
+| bench (A/B, 3 rounds each) | 1.9.2 | 1.9.3 | |
+|---|---|---|---|
+| `firewall_validate` | 2.15 µs | 2.55 µs | +19%: three small tables, each now indexed and walked |
+| `firewall_1000_rules_validate` | 283 µs | 324 µs | +15%: each rule's family check, one scan with the jump lookup |
+| `engine_100_agents_validate` | 662 µs | 762 µs | +15%: 200 jumps resolved through the name index |
+| `bridge_large_validate` (new) | 82 µs | 92 µs | +12%: nat chains whose NAT rules the walk checks |
+
+Notes on how these were measured:
+- **The A/B rows** run the current bench file against 1.9.2's sources and 1.9.3's.
+- **The first version cost far more.** It resolved each jump by scanning the chain list and
+  scanned every rule three times in two passes. That made `engine_100_agents_validate` 4× slower
+  (2.65 ms) and the 1,000-rule validate +49%.
+- **What brought it down:**
+  - a chain-name index local to `firewall.cyr` (open addressing on a djb2 hash, so no stdlib
+    `hashmap` leaf joins `dist/nein.cyr`'s sidecar), which took the engine to +24%;
+  - one scan per rule for its family, its hook needs and its jump target, folded into
+    `firewall_validate`'s existing rule loop;
+  - an inet fast path that only looks for hook-restricted statements. inet refuses none of the shapes
+    nein renders.
+
+### Documentation
+
+- Threat model T-1: "and loadable where it sits", covering the family, header and hook checks, and
+  the residual of one nft and one kernel.
+- Audit report: the family class fixed (197 + 295 cases), and `nft_load`'s check mode recorded and
+  fixed.
+- Roadmap: the family item removed. New items: what the family check does not model (verdict-map
+  jumps, undeclared targets, `match_raw`, older kernels). The re-probe item covers `nft_family`, and
+  consumer adoption is updated to 1.9.3.
+- `traps.md`: `nft -c` is not a load.
+- `testing.md` (`nft_family`, `nft_load` loading for real, counts), `SECURITY.md`, `overview.md`,
+  `capability-map.md`, `dependencies.md`, `supply-chain-policy.md`, `mcp-host-integration.md`,
+  README, CONTRIBUTING, CLAUDE.md, `doc-health.md`.
+
 ## [1.9.2] — 2026-11-07
 
 **`nein_diff` stops rebuilding chains that are already in place** (audit P-8). nft lists a rule in its

@@ -18,7 +18,7 @@ exactly as it already does for the full bote bundle.
 # host cyrius.cyml
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
-tag = "1.9.2"
+tag = "1.9.3"
 modules = ["dist/nein-mcp.cyr"]
 ```
 
@@ -185,7 +185,7 @@ last win, so a host-side filter or an approval UI could be shown a different
 argument than nein acts on. `port` must be a plain integer 1–65535 (no sign,
 leading zero, fraction or exponent). Tool results are unchanged in shape.
 
-Since bote 3.8.6 (nein 1.9.2 pins 3.8.15) a request that names any key twice,
+Since bote 3.8.6 (nein 1.9.3 pins 3.8.15) a request that names any key twice,
 at any depth, is refused by bote's codec as `-32600` before nein sees it; nein's
 own check stays for hosts that call `nein_mcp_dispatch` with arguments they
 built. Since 1.9.1 `table` and `chain` must be names nft reads

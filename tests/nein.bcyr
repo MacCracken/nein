@@ -418,6 +418,9 @@ fn bench_firewall_1000_rules_render() { firewall_render(_bench_fw_1000); return 
 fn bench_firewall_1000_rules_validate() { firewall_validate(_bench_fw_1000); return 0; }
 fn bench_engine_100_agents_render() { firewall_render(_bench_engine_fw_100); return 0; }
 fn bench_engine_100_agents_validate() { firewall_validate(_bench_engine_fw_100); return 0; }
+# 1.9.3: a firewall whose nat chains hold NAT rules, so the hook walk scans
+# them (the engine's 200 jumps reach chains with nothing hook-restricted).
+fn bench_bridge_large_validate() { firewall_validate(_bench_bridge_large_fw); return 0; }
 fn bench_set_1000_elements_render() { nft_set_render(_bench_set_1000); return 0; }
 fn bench_table_20_defines_render() { table_render(_bench_table_20); return 0; }
 fn bench_deep_protocol_render() { rule_render(_bench_deep_rule); return 0; }
@@ -628,6 +631,7 @@ fn main() {
     b = bench_new("parse_v2"); bench_run(b, &bench_parse_v2, 10000); vec_push(all, b);
     b = bench_new("mcp_gate_check"); bench_run(b, &bench_mcp_gate_check, 100000); vec_push(all, b);
     b = bench_new("mcp_dispatch_validate"); bench_run(b, &bench_mcp_dispatch_validate, 100000); vec_push(all, b);
+    b = bench_new("bridge_large_validate"); bench_run(b, &bench_bridge_large_validate, 1000); vec_push(all, b);
     b = bench_new("diff_compute/100_plain"); bench_run(b, &bench_diff_compute_100_plain, 200); vec_push(all, b);
     b = bench_new("diff_compute/100_nft"); bench_run(b, &bench_diff_compute_100_nft, 200); vec_push(all, b);
     b = bench_new("addr_canon/ipv6"); bench_run(b, &bench_addr_canon_ipv6, 100000); vec_push(all, b);

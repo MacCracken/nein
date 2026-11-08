@@ -1,17 +1,18 @@
 # Testing Guide
 
-Last refresh: **2026-11-07** (v1.9.2). Replaces the Rust-era guide that
+Last refresh: **2026-11-07** (v1.9.3). Replaces the Rust-era guide that
 shipped with the v1.0.0 port.
 
 ## Unit Tests
 
-The full unit-test suite lives in `tests/nein.tcyr` — 1,327 assertions
-across 61 test groups (validators, rule rendering, NAT, sets/maps,
+The full unit-test suite lives in `tests/nein.tcyr` — 1,432 assertions
+across 62 test groups (validators, rule rendering, NAT, sets/maps,
 chains, tables, firewall validation, builders, policy, geoip, mesh,
 bridge, engine, config, netns, inspect, diff, sign, sign_v2, mcp,
 since 1.9.1 nft names at every position and the names builders compose,
-and since 1.9.2 the diff's canonical form — what nft lists for each rule
-shape — and a round trip through every struct accessor).
+since 1.9.2 the diff's canonical form — what nft lists for each rule
+shape — and a round trip through every struct accessor, and since 1.9.3
+what each family and each base chain can hold).
 
 ```sh
 cyrius test tests/nein.tcyr
@@ -37,8 +38,8 @@ Apply-layer integration tests need:
 
 The integration harness ships in `tests/integration/*.tcyr` — 41 assertions
 (14 `apply_outcome` + 8 `apply_smoke` + 19 `mcp_consume_smoke`) plus
-`nft_load` (1.8.2), `nft_grammar` (1.9.1) and `diff_converge` (1.9.2), run
-via `cyrius test tests/integration`.
+`nft_load` (1.8.2), `nft_grammar` (1.9.1), `diff_converge` (1.9.2) and
+`nft_family` (1.9.3), run via `cyrius test tests/integration`.
 
 **`apply_outcome` (1.9.0) needs nothing** — no root, no nft. It stands nft in
 with small `/bin/sh` scripts (through `nein_set_nft_path`, in a fresh
@@ -47,9 +48,11 @@ when nft dies on a signal, is killed at a shortened deadline, or is reaped
 with SIGCHLD ignored: `NEIN_ERR_OUTCOME_UNKNOWN` for an apply, a plain
 failure for a read, and the definite outcomes unchanged.
 
-**`nft_load` has real nft parse every builder's output** (`nft -c -f`, as root
+**`nft_load` has real nft load every builder's output** (`nft -f`, as root
 inside a throwaway user + network namespace via `unshare -rn`, so it needs no
-privilege and touches no host ruleset). Where that cannot run — no nft, or
+privilege and touches no host ruleset). Through 1.9.2 it used check mode
+(`nft -c -f`), which skips the kernel's hook validation: `dnat` in a filter
+chain passes `-c` and fails a load. Where that cannot run — no nft, or
 unprivileged user namespaces disabled, as on GitHub's Ubuntu runners — it
 prints SKIP and passes, so **run it locally before every release.** It exists
 because every builder test checked substrings of rendered text, and the mesh
@@ -73,6 +76,23 @@ builder's output at the B-8 length limits, and quoted interface names. About
 11 s. It FAILs when nein takes what nft refuses (the batch
 would fail at apply) and NOTEs the reverse (an older nft with fewer keywords).
 A keyword a later nft adds shows up as a failure that names the word.
+
+**`nft_family` (1.9.3) has real nft judge what each family and each base
+chain can hold**, the same way (`unshare -rn`, real loads, SKIP where it cannot
+run). It has five parts:
+- every table object (each set type, a verdict map, a flowtable, a ct timeout,
+  a define) in each of the six families;
+- every base-chain header (3 types × 6 hooks) in each family;
+- every rule shape nein renders and every NAT form, 87 in all, alone in a
+  regular chain of each family;
+- each shape that loads in a family, under each header that family takes
+  (batched per header, a refused batch bisected to the shape);
+- jump cases: rules reached through jump and goto from one or two base chains,
+  15 and 16 nested jumps, a cycle reached and one not, a jump to a base chain,
+  a 12-level diamond, and a chain reached shallow first and deep later.
+
+It reports 3,557 checks and FAILs on any case `firewall_validate` takes and nft
+refuses, or NOTEs the reverse. About 15 s.
 
 **`diff_converge` (1.9.2) has real nft judge the live diff**, the same way
 (`unshare -rn`, SKIP where it cannot run — locally before every release). Each
@@ -108,8 +128,8 @@ Two coverage gates run in CI as of v1.6.9, both **ratchets at the
 currently-measured figure** rather than aspirational targets:
 
 - `scripts/test-coverage.sh` — what fraction of the public API surface is
-  called by a test. Floor **89%** (368/411, 1.9.2; it was 64% at 1.6.9 and
-  71% at 1.9.1). Reference coverage: a fn called once counts, so it catches
+  called by a test. Floor **89%** (368/411, 1.9.2 and 1.9.3; it was 64% at
+  1.6.9 and 71% at 1.9.1). Reference coverage: a fn called once counts, so it catches
   "shipped an API, never tested it" and nothing finer. `--list` names every
   uncovered fn by module; at 1.9.2 the 43 left are accessors of bridge,
   policy, netns, geoip and mesh, `nein_diff` / `diff_apply` (they run nft) and
@@ -125,13 +145,15 @@ pass vacuously while measuring nothing.
 
 ## Benchmarks
 
-The benchmark suite lives in `tests/nein.bcyr` — 63 benchmarks
+The benchmark suite lives in `tests/nein.bcyr` — 64 benchmarks
 covering validators, rule rendering, full firewall generation,
 multi-agent engine, namespace firewall, (since 1.9.0) signing — v1
 against v2 on the same body — and the MCP gate, (since 1.9.1)
 `validate_nft_name` and `pe_validate` at 100 agents, and (since 1.9.2) the
 live diff of a 100-rule chain already in place, in nein's spelling and in
-nft's, the address canonicalizer and the counter-state strip.
+nft's, the address canonicalizer and the counter-state strip, and (since
+1.9.3) validating the large bridge firewall, whose nat chains the hook walk
+scans.
 
 ⚠ **Code layout moves single benchmarks.** Adding includes to the bench
 binary (1.9.0: the sign and MCP modules) moved `firewall_1000_rules_validate`

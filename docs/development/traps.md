@@ -1,6 +1,6 @@
 # Traps
 
-Last refresh: **2026-11-07** (v1.9.2).
+Last refresh: **2026-11-07** (v1.9.3).
 
 Things that looked right, were wrong, and cost a round of investigation each.
 Kept so the next person does not re-step in them. This is reference, not a plan:
@@ -158,6 +158,19 @@ predict nft's spelling only for the comparison. Emitting it would trade churn
 for a ruleset that an older nft may not parse. Loading a corpus of one chain
 per rule shape, which no test had done, also turned up two shapes nft never
 loaded (`gbytes`, `exthdr auth`).
+
+**`nft -c` is not a load (1.9.3).** Check mode parses the ruleset and asks
+the kernel for the objects, so it catches a refused family ("conflicting
+protocols"), an unknown hook, and conntrack in an arp table. It skips the
+kernel's chain validation, which runs when a base chain is bound: `dnat` in a
+filter chain, `masquerade` at nat input, `flow offload` at input, a jump to a
+base chain, and 16 nested jumps all pass `nft -c` and fail `nft -f`.
+`tests/integration/nft_load.tcyr` used `-c` from 1.8.2 to 1.9.2, so "every
+builder loads" meant "every builder parses". In a throwaway `unshare -rn`
+namespace a real load costs nothing extra, so load. And compare the two once
+before trusting either: run the same matrix with both, as 1.9.3 did. Every
+regular-chain verdict agreed, and every base-chain refusal came from the load
+alone.
 
 **A test can pass a rule it never exercises (1.9.2).** The diff's state strip
 keeps quoted text intact, and both tests of that passed when quote tracking

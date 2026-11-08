@@ -325,6 +325,50 @@ fn nat_validate(n: i64): i64 {
     return nein_ok();
 }
 
+# NAT in a table of family `fam` (1.9.3, probed against nft 1.1.7): inet, ip
+# and ip6 only ("NAT is only supported for IPv4/IPv6"), and in an ip or ip6
+# table every address the rule names must be that family's — nft refuses an
+# IPv6 target in an ip table and an IPv4 one in an ip6 table. See rule.cyr's
+# "Family".
+fn _nat_addr_family_ok(addr: cstring, fam: i64): i64 {
+    if (addr == 0) { return 1; }
+    var v6 = _addr_has_colon(addr);
+    if (fam == FAMILY_IP && v6 == 1) { return 0; }
+    if (fam == FAMILY_IP6 && v6 == 0) { return 0; }
+    return 1;
+}
+
+fn _nat_family_ok(n: i64, fam: i64): i64 {
+    if (fam != FAMILY_INET && fam != FAMILY_IP && fam != FAMILY_IP6) { return 0; }
+    var nt = nat_type(n);
+    if (nt == NAT_DNAT) { return _nat_addr_family_ok(nat_v3(n), fam); }
+    if (nt == NAT_DNAT_RANGE) { return _nat_addr_family_ok(nat_v4(n), fam); }
+    # snat's target needs no check of its own: nat_validate holds it to its
+    # source's family.
+    if (nt == NAT_MASQUERADE || nt == NAT_SNAT) { return _nat_addr_family_ok(nat_v1(n), fam); }
+    return 1;   # redirect names no address
+}
+
+# Where the kernel takes a NAT rule: dnat (and its port ranges) and redirect
+# only in a nat chain on prerouting or output, snat only in one on postrouting
+# or input, masquerade only on postrouting ("Operation not supported" anywhere
+# else, at load — `nft -c` does not check it). 1 when chain type `ctype` at
+# hook `hook` takes it.
+fn _nat_hook_ok(n: i64, ctype: i64, hook: i64): i64 {
+    if (ctype != CHAIN_NAT) { return 0; }
+    var nt = nat_type(n);
+    if (nt == NAT_MASQUERADE) {
+        if (hook == HOOK_POSTROUTING) { return 1; }
+        return 0;
+    }
+    if (nt == NAT_SNAT) {
+        if (hook == HOOK_POSTROUTING || hook == HOOK_INPUT) { return 1; }
+        return 0;
+    }
+    if (hook == HOOK_PREROUTING || hook == HOOK_OUTPUT) { return 1; }
+    return 0;
+}
+
 # --- Convenience ---
 
 fn port_forward(host_port: i64, container_addr: cstring, container_port: i64): i64 {

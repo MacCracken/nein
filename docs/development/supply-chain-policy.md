@@ -1,6 +1,6 @@
 # Dependency Supply-Chain Policy
 
-Last refresh: **2026-11-07** (v1.9.2).
+Last refresh: **2026-11-07** (v1.9.3).
 
 What nein is allowed to depend on, and how that is enforced. Successor to
 the Rust tree's `deny.toml` (cargo-deny), which was retired together with
@@ -105,7 +105,7 @@ bundles. The nearest equivalents already run in CI:
 
 ---
 
-## Current attestation (v1.9.2, cyrius 6.7.18)
+## Current attestation (v1.9.3, cyrius 6.7.18)
 
 | Dep | Tag | Source | Licence |
 |-----|-----|--------|---------|

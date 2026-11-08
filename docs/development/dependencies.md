@@ -1,6 +1,6 @@
 # Dependencies
 
-Last refresh: **2026-11-07** (v1.9.2, cyrius 6.7.18).
+Last refresh: **2026-11-07** (v1.9.3, cyrius 6.7.18).
 
 Why each entry in `cyrius.cyml`'s `[deps]` block exists, and why the
 resolution order is what it is. This file is the prose home for that
@@ -87,7 +87,7 @@ It is an explicit `[deps.sigil]` git pin instead — see below.
 
 ## `[deps.*]` — git pins
 
-| Dep | Tag (v1.9.2) | Bundle | Why |
+| Dep | Tag (v1.9.3) | Bundle | Why |
 |-----|--------------|--------|-----|
 | `libro` | 2.11.3 | `dist/libro.cyr` | bote's manifest graph references it |
 | `majra` | 2.13.0 | `dist/majra.cyr` | bote's manifest graph references it |
@@ -125,6 +125,7 @@ references them and Cyrius resolves single-pass.
 | 1.9.0 | 6.7.18 | 2.11.3 | 2.13.0 | 3.8.0 | 3.13.15 | 1.16.6 |
 | 1.9.1 | 6.7.18 | 2.11.3 | 2.13.0 | 3.8.9 | 3.13.15 | 1.16.6 |
 | 1.9.2 | 6.7.18 | 2.11.3 | 2.13.0 | 3.8.15 | 3.13.15 | 1.16.6 |
+| 1.9.3 | 6.7.18 | 2.11.3 | 2.13.0 | 3.8.15 | 3.13.15 | 1.16.6 |
 
 Since 1.8.1 every pin is its repo's newest release and all the rules agree: bote
 3.8.15 (3.8.9 at 1.9.1, 3.8.0 at 1.9.0, 3.7.6 at 1.8.2, 3.7.5 at 1.8.1) pins cyrius 6.7.18 and libro 2.11.3 + majra 2.13.0, and libro 2.11.3 pins

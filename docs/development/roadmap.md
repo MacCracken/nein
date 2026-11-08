@@ -1,6 +1,6 @@
 # Roadmap
 
-Last refresh: 2026-11-07 (post v1.9.2 — the live diff compares in nft's spelling (P-8), two rule shapes nft could never load, API test coverage 71% → 89%; bote 3.8.15. Forward-looking only: completed items removed.)
+Last refresh: 2026-11-07 (post v1.9.3 — validation holds each rule to its table's family and to the hooks of the base chains that reach it; `nft_load` loads for real. Forward-looking only: completed items removed.)
 
 This file tracks **what is next**. Shipped history lives in
 [`CHANGELOG.md`](../../CHANGELOG.md); audit findings and their status in
@@ -9,17 +9,19 @@ lessons that cost a round of investigation in [`traps.md`](traps.md).
 
 ---
 
-## Where things stand — v1.9.2
+## Where things stand — v1.9.3
 
 nein is feature-complete for the consumers identified at port time (stiva,
-daimon, aegis, sutra): 21 modules, 411 public fns, 1,327 unit + 41 integration
-assertions, 63 benchmarks, 7 fuzz drivers, and three tests that have real nft
-judge nein: a load test (every builder's output parses), a grammar test (every
-name rule and a few hundred IPv6 spellings), and a convergence test (what nein
-applied diffs as in sync, and a perturbed ruleset converges). Pinned at cyrius
+daimon, aegis, sutra): 21 modules, 411 public fns, 1,432 unit + 41 integration
+assertions, 64 benchmarks, 7 fuzz drivers, and four tests that have real nft
+judge nein: a load test (every builder's output loads), a grammar test (every
+name rule and a few hundred IPv6 spellings), a convergence test (what nein
+applied diffs as in sync, and a perturbed ruleset converges), and a family test
+(what validates in each family and under each base chain loads: 3,557 cases). Pinned at cyrius
 6.7.18 with every dependency at its latest release (bote 3.8.15). Every
 MEDIUM-or-higher finding of the 2026-11-03 audit is fixed, and of its deferred
-LOWs I-10 and B-8 (1.9.1) and P-8 (1.9.2); the open ones are below. Consumers
+LOWs I-10 and B-8 (1.9.1), P-8 (1.9.2) and the family class found probing for
+it (1.9.3); the open ones are below. Consumers
 still on cyrius 6.6.x stay on nein 1.7.1, the last release built on 6.6.20.
 
 Everything below is driven by a consumer, by the language, or by a finding
@@ -31,14 +33,18 @@ deferred with a reason — not by speculation.
 
 ### 1.9.x — hardening and follow-ups
 
-- **Rules valid in one family and refused in another** (found probing for
-  P-8, 1.9.2). `firewall_validate` checks each rule on its own, never against
-  its table's family, so `reject with icmpx …` in an ip or ip6 table and
-  `reject with icmp …` in an ip6 table validate and fail the batch at apply.
-  The class is wider than reject (`ip saddr` in an ip6 table, `vlan id` outside
-  bridge / netdev, `dnat ip6` in an ip table): probe each match and verdict in
-  each family, as `diff_converge`'s corpus does, and refuse what nft refuses.
-  It refuses only what never loaded, so it fits a patch, as 1.9.1's checks did.
+- **What the family check does not model** (1.9.3). `firewall_validate`
+  holds each rule to its table's family and to the hooks of every base chain
+  that reaches it, as nft 1.1.7 on Linux 7.2 does. It does not model:
+  - jumps through a verdict map (only `match_raw` can reference one);
+  - a jump to a chain the target does not declare, which may exist live;
+  - `match_raw` text;
+  - an older kernel, which may refuse more (inet's `ingress` hook is newer than
+    the others).
+
+  Each still fails closed at apply. Re-run `tests/integration/nft_family.tcyr`
+  on each nft and kernel the CI or the consumers move to. Its NOTE lines name
+  anything nein refuses that the installed nft takes.
 - **Spellings the diff does not model** (1.9.2). The comparison predicts nft
   1.1.7's listing. Three things still churn, each costing a rebuilt chain, never
   a false match: `match_raw` text (compared as written), nft's dependency
@@ -82,16 +88,17 @@ deferred with a reason — not by speculation.
   `firewall_validate` (closed). The other builders check what they compose since
   1.9.1 (B-8); netns has no validator to put the check in, so it needs a new
   public `nsf_validate` — a minor's addition.
-- **The keyword lists and the diff's spellings are nft 1.1.7's** (1.9.1,
-  1.9.2). Re-probe on each nft release the CI or the consumers move to:
-  `tests/integration/nft_grammar.tcyr` names any word the installed nft lists
-  in its errors and refuses as a name, and `diff_converge.tcyr` any rule shape
-  it lists in a spelling nein does not predict.
+- **The keyword lists, the diff's spellings and the family rules are nft
+  1.1.7's** (1.9.1–1.9.3). Re-probe on each nft release the CI or the
+  consumers move to. `tests/integration/nft_grammar.tcyr` names any word the
+  installed nft lists in its errors and refuses as a name. `diff_converge.tcyr`
+  names any rule shape it lists in a spelling nein does not predict, and
+  `nft_family.tcyr` any case nein and nft disagree on.
 - **Consumer adoption** (work in the consumers' repos, tracked here). As read
-  from their trees for 1.9.2: daimon, stiva and aegis all pin nein 1.9.1 on
-  cyrius 6.7.18, and each builds against 1.9.2 with its nein-touching suites
-  passing (daimon `mcp` 82, stiva 667 + 902, aegis 533), so the move to 1.9.2
-  is a tag bump.
+  from their trees for 1.9.3: daimon, stiva and aegis all pin nein 1.9.1 on
+  cyrius 6.7.18, and each builds against 1.9.3, stricter validation included,
+  with its nein-touching suites passing (daimon `mcp` 82, stiva 667 + 902,
+  aegis 533), so the move to 1.9.3 is a tag bump.
   - **daimon** migrated its gate per the host guide: it classifies with
     `nein_tool_class`, permits the offline tool, holds `READS_LIVE` and
     `MUTATES` behind switches that default off, and checks

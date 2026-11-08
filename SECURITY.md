@@ -1,6 +1,6 @@
 # Security Policy
 
-Last refresh: **2026-11-07** (v1.9.2).
+Last refresh: **2026-11-07** (v1.9.3).
 
 ## Scope
 
@@ -70,7 +70,10 @@ threat in the threat model.
   values (flowtable devices, ifname sets and maps). Builders check the
   names, comments, ports and protocols they compose. Since 1.9.2 the two
   rule shapes nft never loaded (`quota … gbytes`, `exthdr auth`) are
-  rendered loadably or refused.
+  rendered loadably or refused. Since 1.9.3 each rule is also held to its
+  table's family and to the hooks of every base chain that reaches it
+  through jump / goto, as the kernel holds it (`dnat` under a filter chain,
+  `ip saddr` in an ip6 table, 16 nested jumps are refused at validation).
 - **No PATH-based execve** (T-3). The `nft` subprocess is invoked via a
   single pinned absolute path (`/usr/sbin/nft`); PATH is never consulted.
   A caller can override the path at runtime via `nein_set_nft_path`
@@ -114,7 +117,7 @@ threat in the threat model.
   each resolved dep. `cyrius deps --verify` in CI fails on hash
   mismatch. Cyrius itself is pinned in `cyrius.cyml`
   (`cyrius = "6.7.18"`). nein's git dep set (`cyrius.cyml` `[deps.*]`,
-  as of 1.9.2): libro 2.11.3, majra 2.13.0, bote 3.8.15 (`bote-core`),
+  as of 1.9.3): libro 2.11.3, majra 2.13.0, bote 3.8.15 (`bote-core`),
   sigil 3.13.15, patra 1.16.6 —
   sigil + patra carry explicit pins. sakshi dropped out of the git set at
   1.6.5 (libro 2.8.8 no longer pulls it transitively); it now resolves

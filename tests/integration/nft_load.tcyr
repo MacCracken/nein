@@ -8,7 +8,10 @@
 # basic_host_firewall. The same audit found five more renders nft rejects
 # (`define $x`, `icmp accept`, `dnat to` in an inet table, `log level + group`,
 # `limit ... burst 0`). This file renders each builder through
-# firewall_render_checked and has nft PARSE it (`nft -c -f`, check mode).
+# firewall_render_checked and has nft LOAD it (`nft -f`, into a throwaway
+# namespace). Through 1.9.2 it used check mode (`nft -c -f`), which parses
+# and asks the kernel for the objects but skips its hook validation — `dnat`
+# in a filter chain passes `nft -c` and fails a load (found for 1.9.3).
 #
 # Runs nft as root inside a throwaway user + network namespace
 # (`unshare -rn`), so it needs no privilege and touches no host ruleset. Where
@@ -46,7 +49,6 @@ fn _nl_run_check(path: cstring): i64 {
     vec_push(args, _nl_unshare);
     vec_push(args, "-rn");
     vec_push(args, _nl_nft);
-    vec_push(args, "-c");
     vec_push(args, "-f");
     vec_push(args, path);
     return exec_vec(args);

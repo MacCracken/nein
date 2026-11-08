@@ -4288,6 +4288,280 @@ fn test_accessor_roundtrip() {
     assert_eq(vec_get(pe_agents(pe), 0), ap, "pe_agents");
 }
 
+# ---- 1.9.3: what a table of each family, and each base chain, can hold ----
+
+# 1 when firewall_validate takes chain rule `cr` alone in a chain of a
+# family-`fam` table: a regular chain when `ct` is 0, else a base chain.
+fn _fv(fam: i64, ct: i64, h: i64, cr: i64): i64 {
+    var fw = firewall_new();
+    var t = table_new("t", fam);
+    var c = chain_regular("c");
+    if (ct != 0) { c = chain_base("c", ct, h, 0, POLICY_ACCEPT); }
+    vec_push(chain_rules(c), cr);
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+    var vt, vv = firewall_validate(fw);
+    if (is_err_result(vt) == 1) { return 0; }
+    return 1;
+}
+
+fn _fvr(fam: i64, r: i64): i64 { return _fv(fam, 0, 0, chain_rule_new(CR_RULE, r)); }
+fn _fvn(fam: i64, n: i64): i64 { return _fv(fam, 0, 0, chain_rule_new(CR_NAT, n)); }
+fn _fm(m: i64): i64 { return rule_add_match(rule_new(verdict_accept()), m); }
+
+# A table of `fam` holding only base chain `ct` / `h`.
+fn _fh(fam: i64, ct: i64, h: i64): i64 {
+    var fw = firewall_new();
+    var t = table_new("t", fam);
+    table_add_chain(t, chain_base("c", ct, h, 0, POLICY_ACCEPT));
+    firewall_add_table(fw, t);
+    var vt, vv = firewall_validate(fw);
+    if (is_err_result(vt) == 1) { return 0; }
+    return 1;
+}
+
+fn _fchains(chains: i64): i64 {
+    var fw = firewall_new();
+    var t = table_new("t", FAMILY_IP);
+    var i = 0;
+    while (i < vec_len(chains)) { table_add_chain(t, vec_get(chains, i)); i = i + 1; }
+    firewall_add_table(fw, t);
+    var vt, vv = firewall_validate(fw);
+    if (is_err_result(vt) == 1) { return 0; }
+    return 1;
+}
+
+fn _fc(name: cstring, cr: i64): i64 {
+    var c = chain_regular(name);
+    if (cr != 0) { vec_push(chain_rules(c), cr); }
+    return c;
+}
+
+fn _fb(name: cstring, ct: i64, h: i64, cr: i64): i64 {
+    var c = chain_base(name, ct, h, 0, POLICY_ACCEPT);
+    if (cr != 0) { vec_push(chain_rules(c), cr); }
+    return c;
+}
+
+fn _fj(target: cstring): i64 { return chain_rule_new(CR_RULE, rule_new(verdict_jump(target))); }
+fn _fdnat(): i64 { return chain_rule_new(CR_NAT, port_forward(8080, "172.17.0.2", 80)); }
+
+fn _fdepth(n: i64): i64 {
+    var cs = vec_new();
+    vec_push(cs, _fb("b", CHAIN_FILTER, HOOK_INPUT, _fj("c1")));
+    var k = 1;
+    while (k < n) {
+        vec_push(cs, _fc(_b_name("c", k), _fj(_b_name("c", k + 1))));
+        k = k + 1;
+    }
+    vec_push(cs, _fc(_b_name("c", n), chain_rule_new(CR_RULE, rule_new(verdict_accept()))));
+    return _fchains(cs);
+}
+
+fn _b_name(p: cstring, n: i64): cstring {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, p);
+    str_builder_add_int(sb, n);
+    return str_cstr(str_builder_build(sb));
+}
+
+fn test_family_validity() {
+    test_group("family_validity");
+    # Matches, each against the families nft refuses it in (and one it takes).
+    assert_eq(_fvr(FAMILY_INET, deny_source("10.0.0.5")), 1, "ip saddr in inet");
+    assert_eq(_fvr(FAMILY_BRIDGE, deny_source("10.0.0.5")), 1, "ip saddr in bridge");
+    assert_eq(_fvr(FAMILY_NETDEV, deny_source("10.0.0.5")), 1, "ip saddr in netdev");
+    assert_eq(_fvr(FAMILY_IP6, deny_source("10.0.0.5")), 0, "ip saddr in ip6 refused");
+    assert_eq(_fvr(FAMILY_ARP, deny_source("10.0.0.5")), 0, "ip saddr in arp refused");
+    assert_eq(_fvr(FAMILY_IP, deny_source6("2001:db8::1")), 0, "ip6 saddr in ip refused");
+    assert_eq(_fvr(FAMILY_IP6, deny_source6("2001:db8::1")), 1, "ip6 saddr in ip6");
+    assert_eq(_fvr(FAMILY_IP6, _fm(match_dscp(46))), 0, "ip dscp in ip6 refused");
+    assert_eq(_fvr(FAMILY_IP6, _fm(match_frag_off(8191, NFT_CMP_NE, 0))), 0, "ip frag-off in ip6 refused");
+    assert_eq(_fvr(FAMILY_IP, _fm(match_ipv6_ext_hdr(EXT_FRAGMENT))), 0, "exthdr in ip refused");
+    assert_eq(_fvr(FAMILY_INET, _fm(match_ipv6_ext_hdr(EXT_FRAGMENT))), 1, "exthdr in inet");
+    assert_eq(_fvr(FAMILY_ARP, allow_tcp(22)), 0, "tcp dport in arp refused");
+    assert_eq(_fvr(FAMILY_ARP, _fm(match_dport(53))), 1, "th dport in arp");
+    assert_eq(_fvr(FAMILY_ARP, _fm(match_protocol(PROTO_TCP))), 1, "meta l4proto tcp in arp");
+    assert_eq(_fvr(FAMILY_ARP, _fm(match_tcp_flags("syn"))), 0, "tcp flags in arp refused");
+    assert_eq(_fvr(FAMILY_ARP, _fm(match_icmp_type("echo-request"))), 0, "icmp type in arp refused");
+    assert_eq(_fvr(FAMILY_ARP, _fm(match_icmpv6_type_code("destination-unreachable", 4))), 0,
+      "icmpv6 type code in arp refused");
+    assert_eq(_fvr(FAMILY_IP6, _fm(match_icmp_type("echo-request"))), 1, "icmp type in ip6 (nft takes it)");
+    assert_eq(_fvr(FAMILY_IP, _fm(match_icmpv6_type("echo-request"))), 1, "icmpv6 type in ip (nft takes it)");
+    assert_eq(_fvr(FAMILY_NETDEV, allow_established()), 0, "ct state in netdev refused");
+    assert_eq(_fvr(FAMILY_ARP, _fm(match_ct_helper("ftp"))), 0, "ct helper in arp refused");
+    assert_eq(_fvr(FAMILY_NETDEV, _fm(match_conn_limit(10))), 0, "ct count in netdev refused");
+    assert_eq(_fvr(FAMILY_BRIDGE, allow_established()), 1, "ct state in bridge");
+    assert_eq(_fvr(FAMILY_IP6, _fm(match_set_lookup("ip daddr", "s"))), 0, "ip daddr @set in ip6 refused");
+    assert_eq(_fvr(FAMILY_IP, _fm(match_set_lookup("ip6 saddr", "s"))), 0, "ip6 saddr @set in ip refused");
+    assert_eq(_fvr(FAMILY_ARP, _fm(match_set_lookup("udp sport", "s"))), 0, "udp sport @set in arp refused");
+    assert_eq(_fvr(FAMILY_ARP, _fm(match_set_lookup("th dport", "s"))), 1, "th dport @set in arp");
+    assert_eq(_fvr(FAMILY_ARP, _fm(match_set_lookup("iifname", "s"))), 1, "iifname @set in arp");
+    assert_eq(_fvr(FAMILY_BRIDGE, _fm(match_flow_offload("ft"))), 0, "flow offload in bridge refused");
+    assert_eq(_fvr(FAMILY_ARP, _fm(match_vlan_id(10))), 1, "vlan id in arp");
+    # Verdicts.
+    assert_eq(_fvr(FAMILY_ARP, rule_new(verdict_reject())), 0, "reject in arp refused");
+    assert_eq(_fvr(FAMILY_NETDEV, rule_new(verdict_reject())), 1, "reject in netdev");
+    assert_eq(_fvr(FAMILY_IP, rule_new(verdict_reject_with(REJECT_ICMPX_ADMIN_PROHIB))), 0, "icmpx in ip refused");
+    assert_eq(_fvr(FAMILY_IP6, rule_new(verdict_reject_with(REJECT_ICMPX_ADMIN_PROHIB))), 0, "icmpx in ip6 refused");
+    assert_eq(_fvr(FAMILY_BRIDGE, rule_new(verdict_reject_with(REJECT_ICMPX_ADMIN_PROHIB))), 1, "icmpx in bridge");
+    assert_eq(_fvr(FAMILY_IP6, rule_new(verdict_reject_with(REJECT_ICMP_HOST_UNREACH))), 0, "icmp reason in ip6 refused");
+    assert_eq(_fvr(FAMILY_IP, rule_new(verdict_reject_with(REJECT_ICMP_HOST_UNREACH))), 1, "icmp reason in ip");
+    assert_eq(_fvr(FAMILY_IP6, rule_add_match(rule_add_match(rule_new(verdict_reject_with(REJECT_TCP_RESET)),
+            match_protocol(PROTO_TCP)), match_dport(23))), 1, "tcp reset in ip6");
+    assert_eq(_fvr(FAMILY_NETDEV, rule_new(verdict_set_ct_mark(5))), 0, "ct mark set in netdev refused");
+    assert_eq(_fvr(FAMILY_ARP, rule_new(verdict_set_mark(5))), 1, "meta mark set in arp");
+    # NAT.
+    assert_eq(_fvn(FAMILY_BRIDGE, port_forward(8080, "172.17.0.2", 80)), 0, "NAT in bridge refused");
+    assert_eq(_fvn(FAMILY_NETDEV, nat_redirect(PROTO_TCP, 80, 3128, 0)), 0, "redirect in netdev refused");
+    assert_eq(_fvn(FAMILY_ARP, nat_snat("10.0.0.0/8", "192.0.2.1", 0)), 0, "snat in arp refused");
+    assert_eq(_fvn(FAMILY_IP, nat_dnat(PROTO_TCP, 8443, "fd00::2", 443, 0)), 0, "IPv6 dnat in ip refused");
+    assert_eq(_fvn(FAMILY_IP6, port_forward(8080, "172.17.0.2", 80)), 0, "IPv4 dnat in ip6 refused");
+    assert_eq(_fvn(FAMILY_IP6, port_range_forward(9000, 9010, "172.17.0.3", 10000)), 0, "IPv4 port range in ip6 refused");
+    assert_eq(_fvn(FAMILY_IP, nat_snat("10.0.0.0/8", "fd00::1", 0)), 0, "snat to IPv6 in ip refused");
+    assert_eq(_fvn(FAMILY_IP6, nat_masquerade("10.0.0.0/8", 0, 0)), 0, "IPv4 masquerade in ip6 refused");
+    assert_eq(_fvn(FAMILY_IP6, nat_redirect(PROTO_TCP, 80, 3128, 0)), 1, "redirect in ip6");
+    assert_eq(_fvn(FAMILY_INET, nat_masquerade("fd00::/8", 0, 0)), 1, "IPv6 masquerade in inet");
+    # Table objects.
+    var tf = table_new("t", FAMILY_BRIDGE);
+    var devs = vec_new();
+    vec_push(devs, "lo");
+    table_add_flowtable(tf, flowtable_new("ft", 0, devs));
+    var ff = firewall_new();
+    firewall_add_table(ff, tf);
+    assert(is_err_result(firewall_validate(ff)) == 1, "flowtable in bridge refused");
+    var tc = table_new("t", FAMILY_NETDEV);
+    table_add_ct_timeout(tc, ct_timeout_new("cto", PROTO_TCP));
+    var fc = firewall_new();
+    firewall_add_table(fc, tc);
+    assert(is_err_result(firewall_validate(fc)) == 1, "ct timeout in netdev refused");
+    var ts = table_new("t", FAMILY_ARP);
+    table_add_set(ts, nft_set_new("s", SET_IPV4_ADDR));
+    var fs = firewall_new();
+    firewall_add_table(fs, ts);
+    assert(is_err_result(firewall_validate(fs)) == 0, "set in arp");
+    # Base-chain headers.
+    assert_eq(_fh(FAMILY_INET, CHAIN_FILTER, HOOK_INGRESS), 1, "inet filter ingress");
+    assert_eq(_fh(FAMILY_IP, CHAIN_FILTER, HOOK_INGRESS), 0, "ip filter ingress refused");
+    assert_eq(_fh(FAMILY_IP6, CHAIN_NAT, HOOK_FORWARD), 0, "nat forward refused");
+    assert_eq(_fh(FAMILY_INET, CHAIN_NAT, HOOK_INGRESS), 0, "nat ingress refused");
+    assert_eq(_fh(FAMILY_IP, CHAIN_NAT, HOOK_INPUT), 1, "nat input");
+    assert_eq(_fh(FAMILY_IP, CHAIN_ROUTE, HOOK_INPUT), 0, "route input refused");
+    assert_eq(_fh(FAMILY_INET, CHAIN_ROUTE, HOOK_OUTPUT), 1, "route output in inet");
+    assert_eq(_fh(FAMILY_ARP, CHAIN_FILTER, HOOK_FORWARD), 0, "arp filter forward refused");
+    assert_eq(_fh(FAMILY_ARP, CHAIN_FILTER, HOOK_OUTPUT), 1, "arp filter output");
+    assert_eq(_fh(FAMILY_ARP, CHAIN_NAT, HOOK_INPUT), 0, "arp nat refused");
+    assert_eq(_fh(FAMILY_BRIDGE, CHAIN_FILTER, HOOK_PREROUTING), 1, "bridge filter prerouting");
+    assert_eq(_fh(FAMILY_BRIDGE, CHAIN_FILTER, HOOK_INGRESS), 0, "bridge filter ingress refused");
+    assert_eq(_fh(FAMILY_BRIDGE, CHAIN_NAT, HOOK_PREROUTING), 0, "bridge nat refused");
+    assert_eq(_fh(FAMILY_NETDEV, CHAIN_FILTER, HOOK_INGRESS), 1, "netdev filter ingress");
+    assert_eq(_fh(FAMILY_NETDEV, CHAIN_FILTER, HOOK_INPUT), 0, "netdev filter input refused");
+    assert_eq(_fh(FAMILY_NETDEV, CHAIN_ROUTE, HOOK_INGRESS), 0, "netdev route refused");
+    # Statements at hooks.
+    var dn = port_forward(8080, "172.17.0.2", 80);
+    assert_eq(_fv(FAMILY_IP, CHAIN_NAT, HOOK_PREROUTING, chain_rule_new(CR_NAT, dn)), 1, "dnat in nat prerouting");
+    assert_eq(_fv(FAMILY_IP, CHAIN_NAT, HOOK_OUTPUT, chain_rule_new(CR_NAT, dn)), 1, "dnat in nat output");
+    assert_eq(_fv(FAMILY_IP, CHAIN_NAT, HOOK_POSTROUTING, chain_rule_new(CR_NAT, dn)), 0, "dnat in nat postrouting refused");
+    assert_eq(_fv(FAMILY_IP, CHAIN_FILTER, HOOK_PREROUTING, chain_rule_new(CR_NAT, dn)), 0, "dnat in filter refused");
+    var sn = nat_snat("10.0.0.0/8", "192.0.2.1", 0);
+    assert_eq(_fv(FAMILY_IP, CHAIN_NAT, HOOK_INPUT, chain_rule_new(CR_NAT, sn)), 1, "snat in nat input");
+    assert_eq(_fv(FAMILY_IP, CHAIN_NAT, HOOK_PREROUTING, chain_rule_new(CR_NAT, sn)), 0, "snat in nat prerouting refused");
+    var mq = container_masquerade("172.17.0.0/16", "eth0");
+    assert_eq(_fv(FAMILY_IP, CHAIN_NAT, HOOK_POSTROUTING, chain_rule_new(CR_NAT, mq)), 1, "masquerade in nat postrouting");
+    assert_eq(_fv(FAMILY_IP, CHAIN_NAT, HOOK_INPUT, chain_rule_new(CR_NAT, mq)), 0, "masquerade in nat input refused");
+    var rd = nat_redirect(PROTO_TCP, 80, 3128, 0);
+    assert_eq(_fv(FAMILY_IP, CHAIN_NAT, HOOK_OUTPUT, chain_rule_new(CR_NAT, rd)), 1, "redirect in nat output");
+    assert_eq(_fv(FAMILY_IP, CHAIN_NAT, HOOK_INPUT, chain_rule_new(CR_NAT, rd)), 0, "redirect in nat input refused");
+    var rj = chain_rule_new(CR_RULE, rule_new(verdict_reject()));
+    assert_eq(_fv(FAMILY_INET, CHAIN_FILTER, HOOK_POSTROUTING, rj), 0, "reject at postrouting refused");
+    assert_eq(_fv(FAMILY_INET, CHAIN_FILTER, HOOK_FORWARD, rj), 1, "reject at forward");
+    assert_eq(_fv(FAMILY_BRIDGE, CHAIN_FILTER, HOOK_FORWARD, rj), 0, "bridge reject at forward refused");
+    assert_eq(_fv(FAMILY_BRIDGE, CHAIN_FILTER, HOOK_INPUT, rj), 1, "bridge reject at input");
+    var fo = chain_rule_new(CR_RULE, _fm(match_flow_offload("ft")));
+    assert_eq(_fv(FAMILY_INET, CHAIN_FILTER, HOOK_FORWARD, fo), 1, "flow offload at forward");
+    assert_eq(_fv(FAMILY_INET, CHAIN_FILTER, HOOK_INPUT, fo), 0, "flow offload at input refused");
+    # The same outside inet, which takes the family check's long path.
+    assert_eq(_fv(FAMILY_IP, CHAIN_FILTER, HOOK_INPUT, fo), 0, "flow offload at input refused in ip");
+    assert_eq(_fv(FAMILY_IP6, CHAIN_FILTER, HOOK_FORWARD, fo), 1, "flow offload at forward in ip6");
+    assert_eq(_fv(FAMILY_IP, CHAIN_FILTER, HOOK_POSTROUTING, rj), 0, "reject at postrouting refused in ip");
+    # The chain-name index: 200 names in 512 slots collide, and each must still
+    # resolve to its own chain.
+    var many = vec_new();
+    var mi = 0;
+    while (mi < 200) { vec_push(many, chain_regular(_b_name("agent_", mi))); mi = mi + 1; }
+    var mix = _fw_index_new(many);
+    var mok = 1;
+    mi = 0;
+    while (mi < 200) {
+        if (_fw_index_get(mix, many, _b_name("agent_", mi)) != mi) { mok = 0; }
+        mi = mi + 1;
+    }
+    assert_eq(mok, 1, "chain index: 200 names, each found at its own index");
+    assert_eq(_fw_index_get(mix, many, "agent_200"), 0 - 1, "chain index: an absent name is -1");
+    # Reached through jumps.
+    var j1 = vec_new();
+    vec_push(j1, _fb("i", CHAIN_FILTER, HOOK_INPUT, _fj("x")));
+    vec_push(j1, _fc("x", _fdnat()));
+    assert_eq(_fchains(j1), 0, "dnat jumped to from filter input refused");
+    var j2 = vec_new();
+    vec_push(j2, _fb("i", CHAIN_FILTER, HOOK_INPUT, chain_rule_new(CR_RULE, rule_new(verdict_goto("x")))));
+    vec_push(j2, _fc("x", _fdnat()));
+    assert_eq(_fchains(j2), 0, "and gone to");
+    var j3 = vec_new();
+    vec_push(j3, _fb("p", CHAIN_NAT, HOOK_PREROUTING, _fj("x")));
+    vec_push(j3, _fc("x", _fj("y")));
+    vec_push(j3, _fc("y", _fdnat()));
+    assert_eq(_fchains(j3), 1, "dnat two jumps below nat prerouting");
+    var j4 = vec_new();
+    vec_push(j4, _fb("p", CHAIN_NAT, HOOK_PREROUTING, _fj("x")));
+    vec_push(j4, _fb("i", CHAIN_FILTER, HOOK_INPUT, _fj("x")));
+    vec_push(j4, _fc("x", _fdnat()));
+    assert_eq(_fchains(j4), 0, "dnat reached from nat prerouting and filter input refused");
+    var j5 = vec_new();
+    vec_push(j5, _fb("i", CHAIN_FILTER, HOOK_INPUT, 0));
+    vec_push(j5, _fc("x", _fdnat()));
+    assert_eq(_fchains(j5), 1, "dnat no base chain reaches is not checked");
+    var j6 = vec_new();
+    vec_push(j6, _fb("i", CHAIN_FILTER, HOOK_INPUT, _fj("x")));
+    vec_push(j6, _fc("x", _fj("y")));
+    vec_push(j6, _fc("y", _fj("x")));
+    assert_eq(_fchains(j6), 0, "a cycle below a base chain refused");
+    var j7 = vec_new();
+    vec_push(j7, _fc("x", _fj("y")));
+    vec_push(j7, _fc("y", _fj("x")));
+    assert_eq(_fchains(j7), 1, "a cycle no base chain reaches");
+    var j8 = vec_new();
+    vec_push(j8, _fc("x", chain_rule_new(CR_RULE, rule_new(verdict_goto("o")))));
+    vec_push(j8, _fb("o", CHAIN_FILTER, HOOK_OUTPUT, 0));
+    assert_eq(_fchains(j8), 0, "a goto to a base chain refused, even unreached");
+    var j9 = vec_new();
+    vec_push(j9, _fb("i", CHAIN_FILTER, HOOK_INPUT, _fj("elsewhere")));
+    assert_eq(_fchains(j9), 1, "a jump to a chain the target does not declare (it may exist live)");
+    assert_eq(_fdepth(15), 1, "15 jumps below a base chain");
+    assert_eq(_fdepth(16), 0, "16 jumps refused");
+    # Walking again from deeper: x is first reached 1 jump down, then 15 down
+    # through the long path, where its own jump makes 16.
+    var jd = vec_new();
+    var head = _fb("b", CHAIN_FILTER, HOOK_INPUT, _fj("x"));
+    vec_push(chain_rules(head), _fj("c1"));
+    vec_push(jd, head);
+    var k = 1;
+    while (k < 14) {
+        vec_push(jd, _fc(_b_name("c", k), _fj(_b_name("c", k + 1))));
+        k = k + 1;
+    }
+    vec_push(jd, _fc("c14", _fj("x")));
+    vec_push(jd, _fc("x", _fj("y")));
+    vec_push(jd, _fc("y", chain_rule_new(CR_RULE, rule_new(verdict_accept()))));
+    assert_eq(_fchains(jd), 0, "depth counts the deepest path to a chain, not the first");
+    # Every builder still validates.
+    assert(is_err_result(firewall_validate(basic_host_firewall())) == 0, "basic_host validates");
+    assert(is_err_result(firewall_validate(mesh_to_firewall(mesh_envoy()))) == 0, "mesh validates");
+    var bf = bridge_firewall_new(bridge_config_new("br0", "172.17.0.0/16", "eth0"));
+    bf_add_port_mapping(bf, pm_tcp(8080, "172.17.1.5", 80));
+    assert(is_err_result(firewall_validate(bf_to_firewall(bf))) == 0, "bridge validates");
+}
+
 fn main() {
     alloc_init();
 
@@ -4397,6 +4671,7 @@ fn main() {
     test_diff_canonical();
     test_validate_parseable_192();
     test_accessor_roundtrip();
+    test_family_validity();
 
     return assert_summary();
 }
