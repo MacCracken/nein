@@ -43,8 +43,10 @@ cd "$REPO_ROOT"
 # hardening tests landed — the ratchet working as intended). 1.8.2: 262/397 =
 # 65%, raised again with the 2026-11-03 audit's tests. 1.9.0: 281/410 = 68%,
 # every 1.9.0 fn tested. 1.9.1: 295/411 = 71%, the live-command layer's
-# name refusals and validate_nft_name tested.
-MIN_PCT=71
+# name refusals and validate_nft_name tested. 1.9.2: 368/411 = 89%, every
+# struct accessor of rule / nat / chain / set / table / engine round-tripped
+# and the diff's canonical form tested.
+MIN_PCT=89
 LIST=0
 
 while [ $# -gt 0 ]; do

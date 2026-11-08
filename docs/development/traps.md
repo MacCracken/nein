@@ -1,6 +1,6 @@
 # Traps
 
-Last refresh: **2026-11-04** (v1.9.1).
+Last refresh: **2026-11-07** (v1.9.2).
 
 Things that looked right, were wrong, and cost a round of investigation each.
 Kept so the next person does not re-step in them. This is reference, not a plan:
@@ -141,6 +141,31 @@ address of each pair: n²/2 address parses, 112 ms at 1,000 agents. No
 benchmark measured `pe_validate` until a bench was added for 1.9.1's composed
 names, and it showed 1.1 ms at 100 agents. Parsing each address once into a
 buffer made it 15 ms; benchmark the validators at the sizes consumers run.
+
+**nft lists its own spelling, not yours (1.9.2).** `nein_diff` compared each
+target rule with the body nft lists, byte for byte, on the reasoning that nft
+prints what it was given. It does not. It masks host bits under a prefix and
+drops a `/32`, compresses IPv6 through inet_ntop, prints a mark as `0x%08x`
+and a DSCP value by name, drops defaults (`until`, `level warn`, an ip table's
+`port-unreachable`, `dnat ip` in an ip table), sorts set elements by value and
+unwraps a one-element set, and prints every `counter` with its values. So every
+chain holding any of those was rebuilt on every diff, and its counters zeroed.
+No test noticed, because nothing had nft list what nein applied. The
+load test had nft parse each ruleset and never asked for it back. Probe the
+listing the same way the parser was probed (`unshare -rn`, load, `nft -a list
+ruleset`, diff against itself: `tests/integration/diff_converge.tcyr`), and
+predict nft's spelling only for the comparison. Emitting it would trade churn
+for a ruleset that an older nft may not parse. Loading a corpus of one chain
+per rule shape, which no test had done, also turned up two shapes nft never
+loaded (`gbytes`, `exthdr auth`).
+
+**A test can pass a rule it never exercises (1.9.2).** The diff's state strip
+keeps quoted text intact, and both tests of that passed when quote tracking
+was deleted. Each quoted string began `"counter…`, so the separate
+token-start rule (no space before it) protected it on its own. A hand-made
+mutant found it, and so did the next one: the quota-usage token-end check had
+no test at all. Mutate each condition you wrote, and keep a test per mutant
+that dies, not per feature.
 
 Three toolchain subcommands do **not** do what their names suggest, and each
 cost a round of investigation:

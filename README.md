@@ -41,7 +41,7 @@ Consumers:
 | `netns`    | Per-agent network namespace firewall builder (pairs with agnodrm netns apply) |
 | `apply`    | Execute rulesets via `nft -f -` (fork+execve, ruleset staged in a memfd, deadline); batch + incremental rule ops |
 | `inspect`  | Query live firewall state — `status()` returns tables + rule count + raw ruleset |
-| `diff`     | Live-rule diff + idempotent apply — converge the live ruleset onto a target plan with the minimal nft op set |
+| `diff`     | Live-rule diff + idempotent apply — converge the live ruleset onto a target plan: a chain already in place (compared in the spelling nft lists, 1.9.2) is left alone, one that differs is rebuilt in one atomic batch |
 | `sign`     | Ed25519-signed rulesets — sign the rendered nft body, verify before apply; v2 (1.9.0) binds a seq, an expiry and a scope against replay (added 1.6.1) |
 | `mcp`      | MCP tool descriptors + handlers exposing nein's firewall ops over bote's Dispatcher/ToolRegistry, behind a host gate; tools classed offline / reads-live / mutates (added 1.6.0; gate contract 1.9.0) |
 
@@ -235,8 +235,8 @@ cyrius lib sync                        # sync declared stdlib subset from pinned
 cyrius deps                            # resolve git bundles into ./lib/
 cyrius build src/main.cyr build/nein   # compile (x86_64)
 cyrius build --aarch64 src/main.cyr build/nein-aarch64
-cyrius test tests                      # all suites (1,145 unit + 41 integration assertions + nft load and grammar tests)
-cyrius bench tests/nein.bcyr           # run benchmarks (59 benchmarks)
+cyrius test tests                      # all suites (1,327 unit + 41 integration assertions + nft load, grammar and diff-convergence tests)
+cyrius bench tests/nein.bcyr           # run benchmarks (63 benchmarks)
 cyrius fuzz                            # 7 per-target fuzz drivers
 ```
 

@@ -135,7 +135,7 @@ modules = ["dist/majra.cyr"]
 # See docs/development/dependencies.md.
 [deps.bote-core]
 git = "https://github.com/MacCracken/bote.git"
-tag = "3.8.9"
+tag = "3.8.15"
 modules = ["dist/bote-core.cyr"]
 
 # sigil crypto — explicit pin to the self-contained single-file dist bundle,

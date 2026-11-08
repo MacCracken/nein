@@ -484,6 +484,114 @@ fn _addr_bytes(s: cstring, out: i64): i64 {
     return 6;
 }
 
+# --- The address as nft lists it (1.9.2, audit P-8) ------------------
+# nft does not list an address as it was written: it masks the host bits
+# under a prefix (10.0.0.1/24 -> 10.0.0.0/24), drops a full-length prefix
+# (/32, /128), and prints IPv6 through inet_ntop (lowercase, leading zeros
+# dropped, the longest run of two or more zero groups as "::", the first on a
+# tie, a dotted quad only after ::ffff: or six zero groups). nein_diff
+# compares a target rule against that listing, so it needs the same spelling.
+# Probed against nft 1.1.7 (tests/integration/diff_converge.tcyr).
+
+fn _sb_add_hex_group(sb: i64, g: i64): i64 {
+    var digits = "0123456789abcdef";
+    var started = 0;
+    var shift = 12;
+    while (shift >= 0) {
+        var d = (g >> shift) & 15;
+        if (d != 0 || started == 1 || shift == 0) {
+            str_builder_add_byte(sb, load8(digits + d));
+            started = 1;
+        }
+        shift = shift - 4;
+    }
+    return 0;
+}
+
+fn _sb_add_quad(sb: i64, b: i64): i64 {
+    var q = 0;
+    while (q < 4) {
+        if (q > 0) { str_builder_add_cstr(sb, "."); }
+        str_builder_add_int(sb, load8(b + q));
+        q = q + 1;
+    }
+    return 0;
+}
+
+# glibc inet_ntop for 16 address bytes.
+fn _sb_add_ipv6(sb: i64, b: i64): i64 {
+    var w[64];
+    var i = 0;
+    while (i < 8) {
+        store64(&w + i * 8, (load8(b + i * 2) << 8) | load8(b + i * 2 + 1));
+        i = i + 1;
+    }
+    var best = 0 - 1;
+    var blen = 0;
+    var cur = 0 - 1;
+    var clen = 0;
+    i = 0;
+    while (i < 8) {
+        if (load64(&w + i * 8) == 0) {
+            if (cur < 0) { cur = i; clen = 1; } else { clen = clen + 1; }
+        } elif (cur >= 0) {
+            if (best < 0 || clen > blen) { best = cur; blen = clen; }
+            cur = 0 - 1;
+        }
+        i = i + 1;
+    }
+    if (cur >= 0 && (best < 0 || clen > blen)) { best = cur; blen = clen; }
+    if (best >= 0 && blen < 2) { best = 0 - 1; }
+    i = 0;
+    while (i < 8) {
+        if (best >= 0 && i >= best && i < best + blen) {
+            if (i == best) { str_builder_add_cstr(sb, ":"); }
+            i = i + 1;
+            continue;
+        }
+        if (i != 0) { str_builder_add_cstr(sb, ":"); }
+        if (i == 6 && best == 0 && (blen == 6 || (blen == 5 && load64(&w + 40) == 0xFFFF))) {
+            _sb_add_quad(sb, b + 12);
+            return 0;
+        }
+        _sb_add_hex_group(sb, load64(&w + i * 8));
+        i = i + 1;
+    }
+    if (best >= 0 && best + blen == 8) { str_builder_add_cstr(sb, ":"); }
+    return 0;
+}
+
+# `s` as nft 1.1.7 lists it, or 0 when `s` is not an address validate_addr
+# takes. Never changes which addresses `s` names: masking host bits under a
+# prefix is what nft does to it at load.
+fn _addr_canon(s: cstring): cstring {
+    var b[16];
+    var fam = _addr_bytes(s, &b);
+    if (fam == 0) { return 0; }
+    var len = strlen(s);
+    var slash = memchr(s, 47, len);
+    var full = 128;
+    var off = 0;
+    if (fam == 4) { full = 32; off = 12; }
+    var p = full;
+    if (slash >= 0) { p = atoi(s + slash + 1); }
+    var bit = 0;
+    while (bit < full) {
+        if (bit >= p) {
+            var at = &b + off + (bit >> 3);
+            store8(at, load8(at) & (255 - (128 >> (bit & 7))));
+        }
+        bit = bit + 1;
+    }
+    var sb = str_builder_new();
+    if (fam == 4) { _sb_add_quad(sb, &b + 12); } else { _sb_add_ipv6(sb, &b); }
+    if (p < full) {
+        str_builder_add_cstr(sb, "/");
+        str_builder_add_int(sb, p);
+    }
+    return str_cstr(str_builder_build(sb));
+}
+
 # 1 when `s` names a single host: no prefix, or /32 (IPv4) / /128 (IPv6).
 fn _addr_is_host(s: cstring): i64 {
     var fam = _addr_family(s);

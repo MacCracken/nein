@@ -622,9 +622,10 @@ fn test_rule_render_matches() {
     s = rule_render(rule_add_match(rule_new(verdict_drop()), match_quota(QUOTA_OVER, 25, QUNIT_MBYTES)));
     assert(streq(str_data(s), "quota over 25 mbytes drop") == 1, "quota over");
 
-    # quota until
+    # quota until — gbytes renders as mbytes: nft has no gbytes, and
+    # `quota until 100 gbytes` was a syntax error at apply (1.9.2)
     s = rule_render(rule_add_match(rule_new(verdict_accept()), match_quota(QUOTA_UNTIL, 100, QUNIT_GBYTES)));
-    assert(streq(str_data(s), "quota until 100 gbytes accept") == 1, "quota until");
+    assert(streq(str_data(s), "quota until 102400 mbytes accept") == 1, "quota until (gbytes as mbytes)");
 
     # flow offload
     s = rule_render(rule_add_match(rule_new(verdict_accept()), match_flow_offload("ft")));
@@ -3929,6 +3930,364 @@ fn test_builder_composed_names() {
     return 0;
 }
 
+# ---- 1.9.2: the diff compares in nft's spelling (audit P-8) ----
+
+fn _cn(r: i64, fam: i64): cstring { return _render_to_cstr(_rule_render_canon(r, fam)); }
+fn _cw(r: i64): cstring { return _render_to_cstr(rule_render(r)); }
+fn _cn1(m: i64, v: i64, fam: i64): cstring { return _cn(rule_add_match(rule_new(v), m), fam); }
+fn _cnat(n: i64, fam: i64): cstring { return _render_to_cstr(_nat_render_canon(n, fam)); }
+
+fn _ca(a: cstring, want: cstring, name: cstring): i64 {
+    var got = _addr_canon(a);
+    if (want == 0) { return assert(got == 0, name); }
+    if (got == 0) { return assert(0 == 1, name); }
+    return assert(streq(got, want) == 1, name);
+}
+
+fn test_diff_canonical() {
+    test_group("diff_canonical");
+    # Addresses as nft 1.1.7 lists them (each pair probed against it).
+    _ca("10.0.0.5/32", "10.0.0.5", "/32 dropped");
+    _ca("10.0.0.1/24", "10.0.0.0/24", "host bits masked under /24");
+    _ca("192.0.2.255/25", "192.0.2.128/25", "host bits masked under /25");
+    _ca("10.0.0.0/31", "10.0.0.0/31", "/31 kept");
+    _ca("0.0.0.0/0", "0.0.0.0/0", "/0 kept");
+    _ca("10.0.0.5", "10.0.0.5", "plain IPv4 unchanged");
+    _ca("2001:0db8::1", "2001:db8::1", "leading zeros dropped");
+    _ca("2001:DB8::A", "2001:db8::a", "lower case");
+    _ca("2001:db8:0:0:1:0:0:1", "2001:db8::1:0:0:1", "first of two equal zero runs");
+    _ca("1:0:0:2:0:0:0:3", "1:0:0:2::3", "the longest zero run");
+    _ca("1::2:0:0:0:3", "1:0:0:2::3", "a :: written at the shorter run moves");
+    _ca("1:0:2:3:4:5:6:7", "1:0:2:3:4:5:6:7", "a single zero group stays");
+    _ca("1:2:3:4:5:6:7:0", "1:2:3:4:5:6:7:0", "a trailing single zero stays");
+    _ca("1:0:0:0:0:0:0:0", "1::", "a trailing run");
+    _ca("::ffff:c000:201", "::ffff:192.0.2.1", "v4-mapped as a dotted quad");
+    _ca("::192.0.2.1", "::192.0.2.1", "v4-compatible as a dotted quad");
+    _ca("64:ff9b::1.2.3.4", "64:ff9b::102:304", "other dotted tails as hex");
+    _ca("::1", "::1", "loopback");
+    _ca("::", "::", "unspecified");
+    _ca("::/0", "::/0", "::/0");
+    _ca("fe80::1/64", "fe80::/64", "IPv6 host bits masked");
+    _ca("2001:db8::1/128", "2001:db8::1", "/128 dropped");
+    _ca("FD00::/8", "fd00::/8", "prefix lower case");
+    _ca("dead1.cafe", 0, "not an address: 0");
+    _ca(0, 0, "NULL: 0");
+
+    # Rules: canonical for the diff, as written for nft. The written form is
+    # what nein emits, and it does not change.
+    var r1 = rule_add_match(rule_new(verdict_accept()), match_source_addr("10.0.0.5/32"));
+    assert(streq(_cn(r1, FAMILY_INET), "ip saddr 10.0.0.5 accept") == 1, "canon: /32 address");
+    assert(streq(_cw(r1), "ip saddr 10.0.0.5/32 accept") == 1, "written: /32 kept");
+    assert(streq(_cn1(match_source_addr6("2001:DB8::A"), verdict_accept(), FAMILY_INET),
+        "ip6 saddr 2001:db8::a accept") == 1, "canon: IPv6 lower case");
+    assert(streq(_cn1(match_protocol(PROTO_ICMPV6), verdict_accept(), FAMILY_INET),
+        "meta l4proto ipv6-icmp accept") == 1, "canon: icmpv6 is ipv6-icmp");
+    assert(streq(_cw(rule_add_match(rule_new(verdict_accept()), match_protocol(PROTO_ICMPV6))),
+        "meta l4proto icmpv6 accept") == 1, "written: icmpv6");
+    assert(streq(_cn1(match_ct_state("new"), verdict_accept(), FAMILY_INET), "ct state new accept") == 1,
+      "canon: one ct state, bare");
+    assert(streq(_cn1(match_ct_state("related, established"), verdict_accept(), FAMILY_INET),
+        "ct state { established, related } accept") == 1, "canon: ct states in value order");
+    assert(streq(_cn1(match_ct_state("established,related,new"), verdict_accept(), FAMILY_INET),
+        "ct state { established, related, new } accept") == 1, "canon: three ct states");
+    assert(streq(_cn1(match_ct_state("invalid, new"), verdict_accept(), FAMILY_INET),
+        "ct state { invalid, new } accept") == 1, "canon: invalid first");
+    assert(streq(_cn1(match_ct_state("untracked"), verdict_accept(), FAMILY_INET),
+        "ct state untracked accept") == 1, "canon: untracked");
+    assert(streq(_cn(allow_established(), FAMILY_INET), "ct state { established, related } accept") == 1,
+      "canon: allow_established");
+    assert(streq(_cw(allow_established()), "ct state { established, related } accept") == 1,
+      "written: allow_established");
+    assert(streq(_cn1(match_tcp_flags("syn"), verdict_accept(), FAMILY_INET), "tcp flags == syn accept") == 1,
+      "canon: one tcp flag is ==");
+    assert(streq(_cn1(match_tcp_flags("syn,ack,fin"), verdict_accept(), FAMILY_INET),
+        "tcp flags { fin, syn, ack } accept") == 1, "canon: tcp flags in value order");
+    assert(streq(_cn1(match_tcp_flags("ack, syn"), verdict_accept(), FAMILY_INET),
+        "tcp flags { syn, ack } accept") == 1, "canon: tcp flags reordered");
+    assert(streq(_cn1(match_tcp_flags("syn|ack"), verdict_accept(), FAMILY_INET),
+        "tcp flags { syn|ack } accept") == 1, "canon: an unknown flag word stays as written");
+    assert(streq(_cn1(match_meta_mark(5), verdict_accept(), FAMILY_INET), "meta mark 0x00000005 accept") == 1,
+      "canon: mark as 8 hex digits");
+    assert(streq(_cn1(match_meta_mark(4294967295), verdict_accept(), FAMILY_INET),
+        "meta mark 0xffffffff accept") == 1, "canon: largest mark");
+    assert(streq(_cn1(match_quota(QUOTA_UNTIL, 2048, QUNIT_KBYTES), verdict_accept(), FAMILY_INET),
+        "quota 2 mbytes accept") == 1, "canon: until is the default, units normalized");
+    assert(streq(_cn1(match_quota(QUOTA_OVER, 1, QUNIT_GBYTES), verdict_drop(), FAMILY_INET),
+        "quota over 1024 mbytes drop") == 1, "canon: gbytes as mbytes");
+    assert(streq(_cn1(match_quota(QUOTA_OVER, 1024, QUNIT_BYTES), verdict_drop(), FAMILY_INET),
+        "quota over 1 kbytes drop") == 1, "canon: 1024 bytes is 1 kbytes");
+    assert(streq(_cn1(match_quota(QUOTA_OVER, 512, QUNIT_BYTES), verdict_drop(), FAMILY_INET),
+        "quota over 512 bytes drop") == 1, "canon: 512 bytes stays");
+    assert(streq(_cn1(match_quota(QUOTA_OVER, 0, QUNIT_KBYTES), verdict_drop(), FAMILY_INET),
+        "quota over 0 bytes drop") == 1, "canon: 0 is 0 bytes");
+    assert(streq(_cw(rule_add_match(rule_new(verdict_drop()), match_quota(QUOTA_OVER, 2048, QUNIT_KBYTES))),
+        "quota over 2048 kbytes drop") == 1, "written: units kept");
+    assert(streq(_cn1(match_dscp(46), verdict_accept(), FAMILY_INET), "ip dscp ef accept") == 1, "canon: dscp ef");
+    assert(streq(_cn1(match_dscp(0), verdict_accept(), FAMILY_INET), "ip dscp cs0 accept") == 1, "canon: dscp cs0");
+    assert(streq(_cn1(match_dscp(1), verdict_accept(), FAMILY_INET), "ip dscp lephb accept") == 1, "canon: dscp lephb");
+    assert(streq(_cn1(match_dscp(44), verdict_accept(), FAMILY_INET), "ip dscp va accept") == 1, "canon: dscp va");
+    assert(streq(_cn1(match_dscp(2), verdict_accept(), FAMILY_INET), "ip dscp 0x02 accept") == 1, "canon: unnamed dscp in hex");
+    assert(streq(_cn1(match_dscp(63), verdict_accept(), FAMILY_INET), "ip dscp 0x3f accept") == 1, "canon: dscp 63");
+    assert(streq(_cn1(match_pkt_type(PKT_UNICAST), verdict_accept(), FAMILY_INET), "meta pkttype host accept") == 1,
+      "canon: unicast is host");
+    assert(streq(_cn1(match_pkt_type(PKT_BROADCAST), verdict_drop(), FAMILY_INET), "meta pkttype broadcast drop") == 1,
+      "canon: broadcast");
+    # Verdicts.
+    assert(streq(_cn(rule_new(verdict_reject_with(REJECT_ICMPX_ADMIN_PROHIB)), FAMILY_INET),
+        "reject with icmpx admin-prohibited") == 1, "canon: no `type` in a reject");
+    assert(streq(_cn(rule_new(verdict_reject_with(REJECT_ICMP_PORT_UNREACH)), FAMILY_IP), "reject") == 1,
+      "canon: port-unreachable is an ip table's default");
+    assert(streq(_cn(rule_new(verdict_reject_with(REJECT_ICMP_PORT_UNREACH)), FAMILY_INET),
+        "reject with icmp port-unreachable") == 1, "canon: but not an inet table's");
+    assert(streq(_cn(rule_new(verdict_reject_with(REJECT_ICMP_HOST_UNREACH)), FAMILY_IP),
+        "reject with icmp host-unreachable") == 1, "canon: host-unreachable");
+    assert(streq(_cw(rule_new(verdict_reject_with(REJECT_ICMP_PORT_UNREACH))),
+        "reject with icmp type port-unreachable") == 1, "written: reject reason unchanged");
+    assert_eq(_reject_reason_canon(REJECT_ICMP_PORT_UNREACH, FAMILY_IP), 0, "FAMILY_IP resolves in rule.cyr");
+    assert(streq(_cn(rule_new(verdict_set_mark(5)), FAMILY_INET), "meta mark set 0x00000005") == 1, "canon: mark set");
+    assert(streq(_cn(rule_new(verdict_set_ct_mark(0)), FAMILY_INET), "ct mark set 0x00000000") == 1, "canon: ct mark set");
+    assert(streq(_cn(rule_new(verdict_log_advanced("ADV: ", NFT_LOG_WARN, 0, 0)), FAMILY_INET),
+        "log prefix \"ADV: \"") == 1, "canon: warn is the default level");
+    assert(streq(_cn(rule_new(verdict_log_advanced(0, NFT_LOG_WARN, 0, 0)), FAMILY_INET), "log") == 1,
+      "canon: log level warn alone");
+    assert(streq(_cn(rule_new(verdict_log_advanced("I: ", NFT_LOG_INFO, 0, 0)), FAMILY_INET),
+        "log prefix \"I: \" level info") == 1, "canon: other levels kept");
+    assert(streq(_cw(rule_new(verdict_log_advanced("ADV: ", NFT_LOG_WARN, 0, 0))),
+        "log prefix \"ADV: \" level warn") == 1, "written: level warn kept");
+    # NAT.
+    assert(streq(_cnat(port_forward(8080, "172.17.1.5", 80), FAMILY_IP),
+        "fib daddr type local tcp dport 8080 dnat to 172.17.1.5:80 comment \"container port fwd\"") == 1,
+      "canon: no ip after dnat in an ip table");
+    assert(streq(_cnat(port_forward(8080, "172.17.1.5", 80), FAMILY_INET),
+        "fib daddr type local tcp dport 8080 dnat ip to 172.17.1.5:80 comment \"container port fwd\"") == 1,
+      "canon: ip after dnat in an inet table");
+    assert(streq(_render_to_cstr(nat_render(port_forward(8080, "172.17.1.5", 80))),
+        "fib daddr type local tcp dport 8080 dnat ip to 172.17.1.5:80 comment \"container port fwd\"") == 1,
+      "written: dnat ip to");
+    assert(streq(_cnat(nat_dnat(PROTO_TCP, 8443, "FD00:0::2", 443, 0), FAMILY_IP6),
+        "fib daddr type local tcp dport 8443 dnat to [fd00::2]:443") == 1, "canon: IPv6 dnat in an ip6 table");
+    assert(streq(_cnat(port_range_forward(9000, 9001, "172.17.0.3", 10000), FAMILY_IP),
+        "fib daddr type local tcp dport 9000-9001 dnat to 172.17.0.3:tcp dport map { 9000 : 10000, 9001 : 10001 } comment \"container port range fwd\"") == 1,
+      "canon: map joined to the address");
+    assert(streq(_render_to_cstr(nat_render(port_range_forward(9000, 9001, "172.17.0.3", 10000))),
+        "fib daddr type local tcp dport 9000-9001 dnat ip to 172.17.0.3 : tcp dport map { 9000 : 10000, 9001 : 10001 } comment \"container port range fwd\"") == 1,
+      "written: map as before");
+    assert(streq(_cnat(port_range_forward(9100, 9101, "fd00::4", 9100), FAMILY_IP6),
+        "fib daddr type local tcp dport 9100-9101 dnat to fd00::4 comment \"container port range fwd\"") == 1,
+      "canon: an IPv6 target with no port is not bracketed");
+    assert(streq(_cnat(port_range_forward(9100, 9101, "fd00::4", 9100), FAMILY_INET),
+        "fib daddr type local tcp dport 9100-9101 dnat ip6 to fd00::4 comment \"container port range fwd\"") == 1,
+      "canon: nor in an inet table");
+    assert(streq(_cnat(nat_snat("10.1.0.5/32", "192.0.2.2", "one host"), FAMILY_IP),
+        "ip saddr 10.1.0.5 snat to 192.0.2.2 comment \"one host\"") == 1, "canon: snat");
+    assert(streq(_cnat(nat_snat("FD00::/8", "fd00::1", 0), FAMILY_INET),
+        "ip6 saddr fd00::/8 snat ip6 to fd00::1") == 1, "canon: IPv6 snat in an inet table");
+    assert(streq(_cnat(container_masquerade("172.17.0.1/16", "eth0"), FAMILY_IP),
+        "ip saddr 172.17.0.0/16 oifname \"eth0\" masquerade comment \"container outbound NAT\"") == 1,
+      "canon: masquerade source masked");
+
+    # State nft lists and nein does not render: dropped before comparing.
+    assert(streq(_diff_strip_state("counter packets 6 bytes 504"), "counter") == 1, "strip: counter values");
+    assert(streq(_diff_strip_state("ip daddr 127.0.0.1 counter packets 6 bytes 504 accept comment \"counter packets 1 bytes 2\""),
+        "ip daddr 127.0.0.1 counter accept comment \"counter packets 1 bytes 2\"") == 1, "strip: a quoted comment is untouched");
+    assert(streq(_diff_strip_state("log prefix \"counter packets 9 bytes 9 \" counter packets 0 bytes 0"),
+        "log prefix \"counter packets 9 bytes 9 \" counter") == 1, "strip: a quoted log prefix is untouched");
+    assert(streq(_diff_strip_state("accept comment \"a counter packets 1 bytes 2 b\""),
+        "accept comment \"a counter packets 1 bytes 2 b\"") == 1, "strip: a token start inside quotes is untouched");
+    assert(streq(_diff_strip_state("comment \"a b\" counter packets 3 bytes 4"), "comment \"a b\" counter") == 1,
+      "strip: and after the closing quote, stripped");
+    assert(streq(_diff_strip_state("quota over 100 mbytes used 5 kbytes drop"), "quota over 100 mbytes drop") == 1,
+      "strip: quota usage");
+    assert(streq(_diff_strip_state("quota 1 kbytes used 512 bytes"), "quota 1 kbytes") == 1, "strip: until quota usage");
+    assert(streq(_diff_strip_state("quota 1 kbytes used 512 bytesx"), "quota 1 kbytes used 512 bytesx") == 1,
+      "strip: quota usage only to a token end");
+    var same = "counter accept";
+    assert_eq(_diff_strip_state(same), same, "strip: nothing to drop returns the body itself");
+    assert(streq(_diff_strip_state("xcounter packets 1 bytes 2"), "xcounter packets 1 bytes 2") == 1,
+      "strip: only at a token start");
+    assert(streq(_diff_strip_state("counter packets 1 bytes 2x"), "counter packets 1 bytes 2x") == 1,
+      "strip: only to a token end");
+    assert(streq(_diff_strip_state("counter packets bytes 2"), "counter packets bytes 2") == 1,
+      "strip: digits required");
+    assert(_diff_strip_state(0) == 0, "strip: NULL");
+
+    # The diff itself: a target already in place is in sync, though nft
+    # spells it differently and its counter has counted.
+    var fw = firewall_new();
+    var t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_ACCEPT);
+    chain_add_rule(c, deny_source("10.0.0.5/32"));
+    chain_add_rule(c, rule_new(verdict_counter()));
+    chain_add_rule(c, rule_add_match(rule_new(verdict_accept()), match_meta_mark(7)));
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+    var live = "table inet filter { # handle 1\n\tchain input { # handle 1\n\t\ttype filter hook input priority filter; policy accept;\n\t\tip saddr 10.0.0.5 drop # handle 2\n\t\tcounter packets 12 bytes 3456 # handle 3\n\t\tmeta mark 0x00000007 accept # handle 4\n\t}\n}\n";
+    assert_eq(vec_len(diff_compute(fw, str_from(live))), 0, "diff: in sync in nft's spelling, counter counted");
+    var drift = "table inet filter { # handle 1\n\tchain input { # handle 1\n\t\ttype filter hook input priority filter; policy accept;\n\t\tip saddr 10.0.0.6 drop # handle 2\n\t\tcounter packets 12 bytes 3456 # handle 3\n\t\tmeta mark 0x00000007 accept # handle 4\n\t}\n}\n";
+    var ops = diff_compute(fw, str_from(drift));
+    assert_eq(vec_len(ops), 6, "diff: a different address rebuilds the chain (3 deletes, 3 adds)");
+    assert(streq(vec_get(ops, 3), "add rule inet filter input ip saddr 10.0.0.5/32 drop\n") == 1,
+      "diff: the add op carries the body as written");
+    var reorder = "table inet filter { # handle 1\n\tchain input { # handle 1\n\t\ttype filter hook input priority filter; policy accept;\n\t\tcounter packets 12 bytes 3456 # handle 3\n\t\tip saddr 10.0.0.5 drop # handle 2\n\t\tmeta mark 0x00000007 accept # handle 4\n\t}\n}\n";
+    assert_eq(vec_len(diff_compute(fw, str_from(reorder))), 6, "diff: order still counts");
+    var dtr = diff_target_rules(fw);
+    assert(streq(live_rule_body(vec_get(dtr, 0)), "ip saddr 10.0.0.5/32 drop") == 1,
+      "diff_target_rules: bodies as written");
+}
+
+# EXT_AUTH and quota bounds (1.9.2): validated must mean parseable.
+fn test_validate_parseable_192() {
+    test_group("validate_parseable_192");
+    assert(is_err_result(rule_validate(rule_add_match(rule_new(verdict_drop()), match_ipv6_ext_hdr(EXT_AUTH)))) == 1,
+      "exthdr auth refused: nft has no exthdr for AH");
+    assert(is_err_result(rule_validate(rule_add_match(rule_new(verdict_drop()), match_ipv6_ext_hdr(EXT_MOBILITY)))) == 0,
+      "exthdr mh validates");
+    assert(is_err_result(rule_validate(rule_add_match(rule_new(verdict_drop()),
+            match_quota(QUOTA_OVER, 8589934591, QUNIT_GBYTES)))) == 0, "largest gbytes quota whose bytes fit");
+    assert(is_err_result(rule_validate(rule_add_match(rule_new(verdict_drop()),
+            match_quota(QUOTA_OVER, 8589934592, QUNIT_GBYTES)))) == 1, "gbytes quota past 2^63 bytes refused");
+    assert(is_err_result(rule_validate(rule_add_match(rule_new(verdict_drop()),
+            match_quota(QUOTA_OVER, 0 - 1, QUNIT_BYTES)))) == 1, "negative quota refused");
+    assert(is_err_result(rule_validate(rule_add_match(rule_new(verdict_drop()),
+            match_quota(QUOTA_OVER, 1, 9)))) == 1, "unknown quota unit refused");
+}
+
+# Every field a constructor stores reads back through its own accessor, at
+# its own offset (1.9.2, coverage ratchet). An accessor reading a neighbour's
+# slot is the offset-struct class the v1.5.5 block-stack OOB write came from;
+# a round trip with distinct values per field is what catches it.
+fn test_accessor_roundtrip() {
+    test_group("accessor_roundtrip");
+    # rule.cyr
+    var m = match_new(MATCH_DPORT_RANGE, 11, 22, 33);
+    assert_eq(match_type(m), MATCH_DPORT_RANGE, "match_type");
+    assert_eq(match_val1(m), 11, "match_val1");
+    assert_eq(match_val2(m), 22, "match_val2");
+    assert_eq(match_val3(m), 33, "match_val3");
+    var v = verdict_new(VERDICT_LOG_ADVANCED, 41, 42, 43, 44);
+    assert_eq(verdict_type(v), VERDICT_LOG_ADVANCED, "verdict_type");
+    assert_eq(verdict_val1(v), 41, "verdict_val1");
+    assert_eq(verdict_val2(v), 42, "verdict_val2");
+    assert_eq(verdict_val3(v), 43, "verdict_val3");
+    assert_eq(verdict_val4(v), 44, "verdict_val4");
+    var rv = verdict_drop();
+    var r = rule_new(rv);
+    assert_eq(rule_verdict(r), rv, "rule_verdict");
+    assert_eq(rule_comment(r), 0, "rule_comment unset");
+    rule_set_comment(r, "c1");
+    assert(streq(rule_comment(r), "c1") == 1, "rule_comment");
+    assert(streq(_render_to_cstr(rule_render(rate_limit_udp(53, 10, RATE_SECOND))),
+        "udp dport 53 limit rate 10/second burst 10 packets accept") == 1, "rate_limit_udp: burst = rate");
+    assert(is_err_result(rule_validate(rate_limit_udp(53, 10, RATE_SECOND))) == 0, "rate_limit_udp validates");
+
+    # nat.cyr
+    var n = nat_new(NAT_SNAT, 101, 102, 103, 104, 105, 106);
+    assert_eq(nat_type(n), NAT_SNAT, "nat_type");
+    assert_eq(nat_v1(n), 101, "nat_v1");
+    assert_eq(nat_v2(n), 102, "nat_v2");
+    assert_eq(nat_v3(n), 103, "nat_v3");
+    assert_eq(nat_v4(n), 104, "nat_v4");
+    assert_eq(nat_v5(n), 105, "nat_v5");
+    assert_eq(nat_v6(n), 106, "nat_v6");
+    assert_eq(nat_v7(n), 0, "nat_v7 unset");
+    assert_eq(nat_set_v7(n, 107), n, "nat_set_v7 returns the rule");
+    assert_eq(nat_v7(n), 107, "nat_v7");
+    assert_eq(nat_v6(n), 106, "nat_set_v7 leaves v6");
+
+    # chain.cyr
+    var c = chain_base("fwd", CHAIN_FILTER, HOOK_FORWARD, 0 - 5, POLICY_DROP);
+    assert_eq(chain_type_val(c), CHAIN_FILTER, "chain_type_val");
+    assert_eq(chain_hook(c), HOOK_FORWARD, "chain_hook");
+    assert_eq(chain_priority(c), 0 - 5, "chain_priority (negative)");
+    assert_eq(chain_policy(c), POLICY_DROP, "chain_policy");
+    var cr = chain_rule_new(CR_RULE, allow_tcp(22));
+    assert(streq(_render_to_cstr(chain_rule_render(cr)), "tcp dport 22 accept") == 1, "chain_rule_render: a rule");
+    assert(is_err_result(chain_rule_validate(cr)) == 0, "chain_rule_validate: a rule");
+    var crn = chain_rule_new(CR_NAT, nat_redirect(PROTO_TCP, 80, 3128, 0));
+    assert(streq(_render_to_cstr(chain_rule_render(crn)), "tcp dport 80 redirect to :3128") == 1,
+      "chain_rule_render: a NAT rule");
+    assert(is_err_result(chain_rule_validate(crn)) == 0, "chain_rule_validate: a NAT rule");
+    var crb = chain_rule_new(CR_NAT, nat_redirect(PROTO_TCP, 0, 3128, 0));
+    assert(is_err_result(chain_rule_validate(crb)) == 1, "chain_rule_validate: port 0 NAT refused");
+
+    # set.cyr
+    var s = nft_set_new("hosts", SET_IPV4_ADDR);
+    assert(streq(nft_set_name(s), "hosts") == 1, "nft_set_name");
+    assert_eq(nft_set_type(s), SET_IPV4_ADDR, "nft_set_type");
+    assert_eq(vec_len(nft_set_flags(s)), 0, "nft_set_flags empty");
+    var els = vec_new();
+    vec_push(els, "10.0.0.1");
+    vec_push(els, "10.0.0.2");
+    assert_eq(nft_set_add_elements(s, els), s, "nft_set_add_elements returns the set");
+    nft_set_add_element(s, "10.0.0.3");
+    assert_eq(vec_len(nft_set_elements(s)), 3, "nft_set_elements: two added, then one");
+    assert(streq(vec_get(nft_set_elements(s), 2), "10.0.0.3") == 1, "nft_set_elements in order");
+    var mp = nft_map_new("pm", SET_INET_SERVICE);
+    assert(streq(nft_map_name(mp), "pm") == 1, "nft_map_name");
+    assert_eq(nft_map_key_type(mp), SET_INET_SERVICE, "nft_map_key_type");
+    assert_eq(vec_len(nft_map_entries(mp)), 0, "nft_map_entries empty");
+
+    # table.cyr
+    var d = define_new("lan", "10.0.0.0/8");
+    assert(streq(define_name(d), "lan") == 1, "define_name");
+    assert(streq(define_value(d), "10.0.0.0/8") == 1, "define_value");
+    assert(streq(_render_to_cstr(define_render(d)), "  define lan = 10.0.0.0/8;\n") == 1, "define_render");
+    var devs = vec_new();
+    vec_push(devs, "eth0");
+    var ft = flowtable_new("ft", 0 - 10, devs);
+    assert(streq(flowtable_name(ft), "ft") == 1, "flowtable_name");
+    assert_eq(flowtable_hook(ft), HOOK_INGRESS, "flowtable_hook is ingress");
+    assert_eq(flowtable_priority(ft), 0 - 10, "flowtable_priority");
+    assert_eq(flowtable_devices(ft), devs, "flowtable_devices");
+    var cto = ct_timeout_new("cto", PROTO_UDP);
+    assert(streq(ct_timeout_name(cto), "cto") == 1, "ct_timeout_name");
+    assert_eq(ct_timeout_protocol(cto), PROTO_UDP, "ct_timeout_protocol");
+    assert_eq(ct_timeout_l3proto(cto), 0, "ct_timeout_l3proto unset");
+    ct_timeout_set_l3proto(cto, FAMILY_IP6);
+    assert_eq(ct_timeout_l3proto(cto), FAMILY_IP6, "ct_timeout_l3proto");
+    ct_timeout_add_timeout(cto, "replied", 30);
+    assert_eq(vec_len(ct_timeout_policy(cto)), 1, "ct_timeout_policy");
+    var t = table_new("tt", FAMILY_INET);
+    table_add_define(t, d);
+    table_add_flowtable(t, ft);
+    table_add_ct_timeout(t, cto);
+    table_add_set(t, s);
+    table_add_map(t, mp);
+    assert_eq(vec_get(table_defines(t), 0), d, "table_defines");
+    assert_eq(vec_get(table_flowtables(t), 0), ft, "table_flowtables");
+    assert_eq(vec_get(table_ct_timeouts(t), 0), cto, "table_ct_timeouts");
+    assert_eq(vec_get(table_sets(t), 0), s, "table_sets");
+    assert_eq(vec_get(table_maps(t), 0), mp, "table_maps");
+    assert_eq(vec_len(table_chains(t)), 0, "table_chains untouched");
+
+    # engine.cyr
+    var ps = port_spec_new(PROTO_UDP, 443, TRANS_QUIC);
+    assert_eq(ps_protocol(ps), PROTO_UDP, "ps_protocol");
+    assert_eq(ps_port(ps), 443, "ps_port");
+    assert_eq(ps_transport(ps), TRANS_QUIC, "ps_transport");
+    assert_eq(transport_protocol(TRANS_TCP), PROTO_TCP, "transport_protocol tcp");
+    assert_eq(transport_protocol(TRANS_QUIC), PROTO_UDP, "transport_protocol quic is udp");
+    assert(streq(transport_label(TRANS_UDP), "udp") == 1, "transport_label udp");
+    assert(streq(transport_label(TRANS_QUIC), "quic") == 1, "transport_label quic");
+    var ap = agent_policy_new("svc", "10.0.0.5");
+    assert(streq(ap_agent_id(ap), "svc") == 1, "ap_agent_id");
+    assert_eq(ap_allow_established(ap), 1, "ap_allow_established defaults on");
+    assert_eq(ap_allow_loopback(ap), 1, "ap_allow_loopback defaults on");
+    ap_allow_inbound(ap, ps_tcp(8080));
+    ap_allow_outbound(ap, ps_udp(53));
+    ap_allow_outbound(ap, ps_tcp(443));
+    ap_allow_outbound_host(ap, "192.0.2.1");
+    assert_eq(vec_len(ap_allowed_inbound(ap)), 1, "ap_allowed_inbound");
+    assert_eq(vec_len(ap_allowed_outbound(ap)), 2, "ap_allowed_outbound");
+    assert_eq(vec_len(ap_allowed_outbound_hosts(ap)), 1, "ap_allowed_outbound_hosts");
+    assert(is_err_result(ap_validate(ap)) == 0, "ap_validate");
+    assert(is_err_result(ap_validate(agent_policy_new("svc", "not-an-addr"))) == 1, "ap_validate: bad address");
+    var pe = policy_engine_new();
+    assert(streq(pe_table_name(pe), "nein_agents") == 1, "pe_table_name default");
+    pe_add_agent(pe, ap);
+    assert_eq(vec_get(pe_agents(pe), 0), ap, "pe_agents");
+}
+
 fn main() {
     alloc_init();
 
@@ -4035,6 +4394,9 @@ fn main() {
     test_sign_v2();
     test_nft_name_positions();
     test_builder_composed_names();
+    test_diff_canonical();
+    test_validate_parseable_192();
+    test_accessor_roundtrip();
 
     return assert_summary();
 }

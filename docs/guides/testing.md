@@ -1,15 +1,17 @@
 # Testing Guide
 
-Last refresh: **2026-11-04** (v1.9.1). Replaces the Rust-era guide that
+Last refresh: **2026-11-07** (v1.9.2). Replaces the Rust-era guide that
 shipped with the v1.0.0 port.
 
 ## Unit Tests
 
-The full unit-test suite lives in `tests/nein.tcyr` — 1,145 assertions
-across 58 test groups (validators, rule rendering, NAT, sets/maps,
+The full unit-test suite lives in `tests/nein.tcyr` — 1,327 assertions
+across 61 test groups (validators, rule rendering, NAT, sets/maps,
 chains, tables, firewall validation, builders, policy, geoip, mesh,
-bridge, engine, config, netns, inspect, diff, sign, sign_v2, mcp, and
-since 1.9.1 nft names at every position and the names builders compose).
+bridge, engine, config, netns, inspect, diff, sign, sign_v2, mcp,
+since 1.9.1 nft names at every position and the names builders compose,
+and since 1.9.2 the diff's canonical form — what nft lists for each rule
+shape — and a round trip through every struct accessor).
 
 ```sh
 cyrius test tests/nein.tcyr
@@ -35,8 +37,8 @@ Apply-layer integration tests need:
 
 The integration harness ships in `tests/integration/*.tcyr` — 41 assertions
 (14 `apply_outcome` + 8 `apply_smoke` + 19 `mcp_consume_smoke`) plus
-`nft_load` (1.8.2) and `nft_grammar` (1.9.1), run via
-`cyrius test tests/integration`.
+`nft_load` (1.8.2), `nft_grammar` (1.9.1) and `diff_converge` (1.9.2), run
+via `cyrius test tests/integration`.
 
 **`apply_outcome` (1.9.0) needs nothing** — no root, no nft. It stands nft in
 with small `/bin/sh` scripts (through `nein_set_nft_path`, in a fresh
@@ -72,6 +74,20 @@ builder's output at the B-8 length limits, and quoted interface names. About
 would fail at apply) and NOTEs the reverse (an older nft with fewer keywords).
 A keyword a later nft adds shows up as a failure that names the word.
 
+**`diff_converge` (1.9.2) has real nft judge the live diff**, the same way
+(`unshare -rn`, SKIP where it cannot run — locally before every release). Each
+ruleset — every builder, a corpus of one chain per match and verdict shape
+nein renders (87 single-rule chains across inet, ip, ip6 and bridge tables), and 400
+generated addresses biased toward the spellings inet_ntop rewrites — is loaded
+into a fresh namespace, listed back with handles (what `nein_diff` reads) and
+diffed against itself: any op is a FAIL that prints nein's predicted spelling
+beside the body nft listed. Then each is perturbed (a stray counter rule at the
+head and tail of a chain), diffed toward the target, the ops applied in a
+second fresh namespace (handles are allocated in load order, so they match),
+and the result must diff clean. It exists because through 1.9.1 every chain
+holding a rule nft re-spells — a `/32`, a mark, a `counter` — was rebuilt on
+every diff (audit P-8). About 2 s.
+
 On non-permissive hosts the
 apply assertions fall through the permission-denied class; the
 pure-function assertions still run. You can also run a smoke test
@@ -92,10 +108,13 @@ Two coverage gates run in CI as of v1.6.9, both **ratchets at the
 currently-measured figure** rather than aspirational targets:
 
 - `scripts/test-coverage.sh` — what fraction of the public API surface is
-  called by a test. Floor **64%** (255/394). Reference coverage: a fn called
-  once counts, so it catches "shipped an API, never tested it" and nothing
-  finer.
-- `scripts/doc-coverage.sh` — doc-comment coverage. Floor **17%** (69/394),
+  called by a test. Floor **89%** (368/411, 1.9.2; it was 64% at 1.6.9 and
+  71% at 1.9.1). Reference coverage: a fn called once counts, so it catches
+  "shipped an API, never tested it" and nothing finer. `--list` names every
+  uncovered fn by module; at 1.9.2 the 43 left are accessors of bridge,
+  policy, netns, geoip and mesh, `nein_diff` / `diff_apply` (they run nft) and
+  `status_raw_ruleset`.
+- `scripts/doc-coverage.sh` — doc-comment coverage. Floor **19%** (80/411),
   low by the shape of the surface rather than neglect: the logic-carrying
   modules are at or near 100% and the deficit is one-line accessors.
 
@@ -106,11 +125,13 @@ pass vacuously while measuring nothing.
 
 ## Benchmarks
 
-The benchmark suite lives in `tests/nein.bcyr` — 59 benchmarks
+The benchmark suite lives in `tests/nein.bcyr` — 63 benchmarks
 covering validators, rule rendering, full firewall generation,
 multi-agent engine, namespace firewall, (since 1.9.0) signing — v1
-against v2 on the same body — and the MCP gate, and (since 1.9.1)
-`validate_nft_name` and `pe_validate` at 100 agents.
+against v2 on the same body — and the MCP gate, (since 1.9.1)
+`validate_nft_name` and `pe_validate` at 100 agents, and (since 1.9.2) the
+live diff of a 100-rule chain already in place, in nein's spelling and in
+nft's, the address canonicalizer and the counter-state strip.
 
 ⚠ **Code layout moves single benchmarks.** Adding includes to the bench
 binary (1.9.0: the sign and MCP modules) moved `firewall_1000_rules_validate`

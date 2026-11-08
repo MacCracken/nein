@@ -7,7 +7,7 @@ small enough that a generator script isn't needed yet — agnosys's
 `scripts/gen-capability-map.sh` pattern would be the template if it
 gets one).
 
-**Last refresh:** 2026-11-04 (v1.9.1 — no capability change: the new validators are computation-only, and `tests/integration/nft_grammar.tcyr` runs `unshare -rn nft -c` from the test, not the library. Previously v1.9.0 — `mcp`: the live readers are their own class; `sign`: v2 is computation-only, no clock read; no syscall added. Previously v1.8.2 — the apply path moved from pipes to memfds and a pidfd; the syscall set and filesystem paths changed)
+**Last refresh:** 2026-11-07 (v1.9.2 — no capability change: the diff's canonical comparison is computation-only, and `tests/integration/diff_converge.tcyr` runs `unshare -rn nft` from the test, not the library. Previously v1.9.1 — no capability change: the new validators are computation-only, and `tests/integration/nft_grammar.tcyr` runs `unshare -rn nft -c` from the test, not the library. Previously v1.9.0 — `mcp`: the live readers are their own class; `sign`: v2 is computation-only, no clock read; no syscall added. Previously v1.8.2 — the apply path moved from pipes to memfds and a pidfd; the syscall set and filesystem paths changed)
 **nein version:** 1.6.10
 **cyrius version:** 6.5.33
 
@@ -119,7 +119,8 @@ library and invoke their own `main()`.
 
 Pure rule-rendering + string-parsing module. `diff_compute` is a pure
 function (target firewall + raw live ruleset → Vec of nft command
-strings). The syscall surface only opens when a caller chains the
+strings); since 1.9.2 it also renders each target rule in nft's spelling
+for the comparison, still computation only. The syscall surface only opens when a caller chains the
 result through `diff_apply` or `nein_diff`, which transitively use
 the apply-layer wrappers below.
 

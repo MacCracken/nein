@@ -4,6 +4,177 @@ All notable changes to nein are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.9.2] — 2026-11-07
+
+**`nein_diff` stops rebuilding chains that are already in place** (audit P-8). nft lists a rule in its
+own spelling, not the one it was given, and the diff compared the two byte for byte. So every chain
+holding a rule nft re-spells was deleted and re-added on every diff: its handles moved and its counters
+reset. That covers a `/32` address, a mark, an upper-case IPv6 address, a one-state `ct state { new }`,
+and every `counter`. A new integration test has real nft list what nein applied: 27 of the 86
+single-rule chains in its shape corpus churned, and 2 of the 8 builders (bridge and NAT). All of
+them converge now. Two rule shapes that validated but that nft refuses are fixed on the way. bote
+**3.8.9 → 3.8.15**. **1,327 unit** (was 1,145) assertions, a new nft integration test, 4 new
+benchmarks, API test coverage **71% → 89%**.
+
+No consumer contract changes, and the ruleset nein renders and applies is byte-identical except for
+`quota … gbytes`, which nft could never load (see Fixed).
+
+### Fixed
+
+- **The live diff compares in nft's spelling** (audit P-8, LOW: churn, not a security issue).
+  `tests/integration/diff_converge.tcyr` loads each ruleset into real nft 1.1.7, lists it back as
+  `nein_diff` does, and diffs it against itself. Through 1.9.1 that diff was not empty for:
+  - addresses: `/32` and `/128` are dropped, IPv6 is lower case and `::`-compressed the way inet_ntop
+    does it, and host bits under a prefix are masked (`10.0.0.1/24` lists as `10.0.0.0/24`);
+  - **`counter`**, which lists with its values (`counter packets 6 bytes 504`), so every chain with a
+    counter rule was rebuilt and its counters zeroed on every diff;
+  - `ct state { new }` (lists as `ct state new`), and several states in value order;
+  - `tcp flags { syn }` (lists as `tcp flags == syn`), and several flags in value order;
+  - marks (`meta mark 5` lists as `meta mark 0x00000005`, also `meta mark set` and `ct mark set`);
+  - `ip dscp 46` (lists as `ef`, and so on for every named DSCP value, the rest as `0x%02x`);
+  - quotas (`until` is the default and lists as nothing; `2048 kbytes` lists as `2 mbytes`);
+  - `meta pkttype unicast` (lists as `host`) and `meta l4proto icmpv6` (lists as `ipv6-icmp`);
+  - `reject with icmp type X` (lists as `reject with icmp X`, and `port-unreachable` in an ip table
+    lists as a bare `reject`);
+  - `log … level warn` (warn is the default and lists as nothing);
+  - NAT: `dnat ip to` / `snat ip to` in an ip or ip6 table (lists as `dnat to`), a port-range map
+    (`172.17.0.3:tcp dport map`, not `172.17.0.3 : tcp dport map`), and a port-less IPv6 target
+    (unbracketed). This hit **the bridge builder** (every container port mapping) and the NAT builders.
+
+  The diff now renders each target rule in the spelling nft lists it in, for the comparison only.
+  The ruleset it applies is unchanged. On the live side it drops counter values and quota usage,
+  outside quoted strings only. All 8 builders, an 87-chain corpus of one chain per match and verdict
+  shape across inet, ip, ip6 and bridge tables, and 400 generated addresses now diff as in sync, and
+  each converges from a perturbed state through applied ops.
+- **`quota … gbytes` renders as mbytes** (found by the new test, LOW). nft 1.1.7 has no `gbytes`
+  (`expected any of: bytes, kbytes, mbytes`), so a rule with `QUNIT_GBYTES` failed the whole batch
+  at apply. It renders as `N*1024 mbytes`, the same quota. A quota whose byte count would pass
+  2^63 is refused at validation.
+- **`EXT_AUTH` is refused at validation** (found by the new test, LOW). `exthdr auth exists` is a
+  syntax error in nft 1.1.7, whose `exthdr` takes hbh, rt, frag, dst and mh. Through 1.9.1 a rule
+  with it validated and then failed the batch. The constant stays, and `cfg_parse_ipv6_ext_hdr("auth")`
+  still returns it.
+
+### Changed
+
+- **What "in sync" means.** A chain is still compared as an ordered sequence, and any difference
+  still rebuilds it. What changed is the spelling compared: the target is rendered in nft's spelling
+  (`_rule_render_canon` / `_nat_render_canon`, given the table's family), and live bodies lose counter
+  and quota state. Every rewrite is one nft makes to the same rule, so none changes what a rule
+  matches. A spelling nein predicts wrongly costs what every diff cost through 1.9.1, a rebuilt
+  chain. It cannot make two different rules compare equal. See threat model T-2.
+- **`LiveRule` grows two internal fields** (40 → 56 bytes): the comparison form, and a target rule's
+  source, so the diff renders a body as written only for the rules it adds. The accessors and
+  `diff_target_rules` are unchanged, and `diff_target_rules` still returns bodies as written.
+- The diff module's header no longer describes the pre-1.6.10 matching ("conservative but always
+  correct"). It now describes the order-preserving, nft-spelling comparison.
+
+### Changed — pins
+
+bote-core **3.8.9 → 3.8.15**. These releases enforce more of JSON Schema in bote's validator:
+`pattern`, `multipleOf`, `patternProperties`, `format`, dynamic references and `unevaluated*`.
+Registration also refuses schemas the official client cannot compile. nein's tools declare empty input
+schemas, so none of it reaches their arguments. The handler ABI and the stated minimum cyrius (6.7.13)
+are unchanged, and bote 3.8.15 pins cyrius 6.7.18, libro 2.11.3 and majra 2.13.0 like nein. It also
+fixes a dispatcher's plain form keeping each call's allocations (up to 12.8 MB for one call in 3.8.11),
+which is a host's concern. `bote-core.cyr` grows from 10,922 to 17,340 lines. The lock moves by two
+lines (commit and bundle hash). It was re-resolved from an empty `lib/` and is byte-identical on a
+second pass. Every other pin was already its repo's latest release.
+
+### Tests
+
+- **`tests/integration/diff_converge.tcyr`** (new) runs the installed nft inside `unshare -rn` and
+  SKIPs where it cannot, as `nft_load` does. Locally it reports 19 checks, 0 failed. It has two
+  halves:
+  - **idempotence:** each builder, the shape corpus and 400 generated addresses are loaded, listed
+    with handles and diffed against themselves, and any op FAILs with nein's predicted spelling
+    beside nft's;
+  - **convergence:** each builder and the corpus get a stray counter rule at the head and tail of a
+    chain, are diffed toward the target, and get the ops applied in a second fresh namespace, where
+    handles come back the same in load order. The result must diff as in sync.
+
+  The generated IPv6 addresses favour the cases inet_ntop rewrites: ties between zero runs, a `::`
+  written at the shorter run, single zero groups, dotted-quad tails, upper case, zero padding, and
+  host bits under a prefix.
+- `tests/nein.tcyr` **1,145 → 1,327**, in three new groups:
+  - `diff_canonical`: 25 address spellings, each probed against nft. Every canonical rewrite next
+    to its as-written form, which must not change. The counter / quota strip, including quoted text
+    that spells a counter. A diff in sync in nft's spelling with a counted counter, one that differs
+    (whose add op carries the body as written), and order still counting.
+  - `validate_parseable_192`: `EXT_AUTH`, the quota byte bound.
+  - `accessor_roundtrip`: every field of the rule, NAT, chain, set, map, table, flowtable, ct
+    timeout, define, port spec, agent policy and engine structs reads back through its own accessor.
+    This is the offset class of the v1.5.5 out-of-bounds write.
+
+  The old `quota until 100 gbytes accept` assertion pinned text nft refuses. It now pins
+  `quota until 102400 mbytes accept`.
+- **Checked against broken code.** We made 33 mutants of the new code and 32 fail a suite. The 33rd
+  is equivalent: it renders the written body eagerly, which changes speed, not results. The mutants
+  include:
+  - an inet_ntop tie broken the other way, no host-bit masking, a single zero group compressed, and
+    no v4-mapped dotted quad;
+  - quote tracking, the token start and the token end each removed from the strip;
+  - each rewrite reverted, one at a time;
+  - the gbytes rendering, the `EXT_AUTH` refusal and the quota bound reverted;
+  - the comparison form ignored.
+
+  Two of them first survived the unit suite. The quoted-strip tests never put a space inside the
+  quotes, so the token-start rule alone protected them. The quota-usage token end had no test. Both
+  have one now.
+- **Downstream.** daimon, stiva and aegis each build against this tree (`CYRIUS_LOCAL=1`, confirmed
+  by a 1.9.2-only string in each binary). Their nein-touching suites pass: daimon `mcp` 82, stiva
+  667 + 902, aegis 533.
+- Coverage floors: API test coverage **71% → 89%** (368/411). The 43 fns left are bridge, policy,
+  netns, geoip and mesh accessors, the two fns that run nft (`nein_diff`, `diff_apply`) and
+  `status_raw_ruleset`. Doc coverage stays at **19%** (80/411).
+
+### Performance
+
+Against the 1.9.1 baseline on the same machine (factor 0.970×), 59 of 59 benchmarks were compared
+with 0 regressions. **A 1.9.2 baseline is recorded** in `docs/benchmarks/history.csv` (63 benchmarks,
+2026-11-08T02:04:27Z), and the bench-regression gate passes against it: 63 of 63, 0 regressions.
+
+| bench | 1.9.1 | 1.9.2 | |
+|---|---|---|---|
+| diff, 100 rules in sync, nein's spelling (A/B) | 205 µs | 236 µs | +15%: each target rule is rendered in nft's spelling, each live body scanned for counter state |
+| diff, 100 rules in place, nft's spelling (A/B) | 383 µs, **200 ops** | 243 µs, **0 ops** | 1.9.1 rebuilt the chain, 1.9.2 finds it in sync |
+| `diff_compute/100_plain` (new) | — | 238,742 ns | the first row, in the suite |
+| `diff_compute/100_nft` (new) | — | 248,869 ns | the second: 10 counters with values, 10 `/32` addresses |
+| `addr_canon/ipv6` (new) | — | 1,410 ns | `2001:db8:0:0:1:0:0:1/128` |
+| `diff_strip_state` (new) | — | 870 ns | one counter with values and a comment |
+| `mcp_dispatch_validate` | 2,941 ns | 3,095 ns | +5–12% normalized across runs: bote 3.8.15's request handling |
+
+Notes on how these were measured:
+- **The A/B rows.** One small harness of the two diff benches, built against 1.9.1's sources and
+  1.9.2's, 5 rounds of 200 each.
+- **The first version rendered every target rule twice**, once as written for the ops and once in
+  nft's spelling for the comparison. That cost +70% in sync (205 → 350 µs). The diff now renders the
+  written body only for a rule it adds, which brought it to +15%. The strip also copied every body,
+  even with nothing to drop. It now scans first and copies only when it strips (1.29 → 0.87 µs on a
+  body that does strip).
+- **Three validators read 7–11% faster** (`validate_family`, `validate_identifier/short`,
+  `validate_addr/ipv6`) with no change to their code. `validate.cyr` grew, and as in 1.9.1, layout
+  moves single benchmarks.
+
+### Documentation
+
+- Threat model T-2: the diff's comparison, and why a wrong prediction can only cost a rebuild.
+  Its residuals are a different nft's spellings, musl's inet_ntop, `match_raw` text, and
+  dependency elision.
+- Audit report: P-8 fixed. The two unloadable shapes the new test found are recorded and fixed. A
+  third class is deferred: reject reasons nft refuses in some families (`icmpx` in ip / ip6 tables,
+  `icmp` in ip6).
+- Roadmap: P-8 removed. The `nft -j` item now rests on P-4 alone. New items: family-dependent rule
+  validity, and the residual spellings the diff does not model. The bench-threshold item is still
+  open, because CI's logs need authentication to read. Consumer adoption was stale and is now as the
+  consumers' trees show it: all three on nein 1.9.1 / cyrius 6.7.18, daimon's gate migrated, and
+  stiva's `/tmp` ruleset path replaced by a memfd in stiva.
+- `traps.md`, two new traps: nft lists its own spelling (probe the listing, not the parser), and a
+  test can pass a rule it never exercises (mutate it).
+- `testing.md` (`diff_converge`, counts, the coverage section's figures, which were stale since 1.6.9),
+  `dependencies.md`, `supply-chain-policy.md`, `SECURITY.md`, `overview.md`, `capability-map.md`,
+  `mcp-host-integration.md`, README, CONTRIBUTING, CLAUDE.md, `doc-health.md`.
+
 ## [1.9.1] — 2026-11-04
 
 **Hardening: what nein validates is now what nft can parse.** Two of the 2026-11-03 audit's deferred

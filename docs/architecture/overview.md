@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Last refresh: **2026-11-04** (v1.9.1 — public-fn count; `validate_nft_name`; `pe_validate`'s address buffer. Previously v1.9.0 — public-fn count; `sign` and `mcp` descriptions. Previously v1.8.2 — the apply path's memfds and deadline; buffer list).
+Last refresh: **2026-11-07** (v1.9.2 — the diff's comparison, `_addr_canon`'s buffers. Previously v1.9.1 — public-fn count; `validate_nft_name`; `pe_validate`'s address buffer. Previously v1.9.0 — public-fn count; `sign` and `mcp` descriptions. Previously v1.8.2 — the apply path's memfds and deadline; buffer list).
 
 ## Design Philosophy
 
@@ -59,7 +59,7 @@ src/
     netns.cyr         — Per-agent network namespace firewall builder
     apply.cyr         — nft execution layer (fork+pipe+execve)
     inspect.cyr       — Live firewall status parser
-    diff.cyr          — Live-rule diff + idempotent apply
+    diff.cyr          — Live-rule diff + idempotent apply (compares in the spelling nft lists, 1.9.2)
     sign.cyr          — Ed25519 ruleset signing (v1.6.1; replay-bound v2, v1.9.0)
     mcp.cyr           — MCP tool surface over bote (v1.6.0; gate contract, v1.9.0)
 ```
@@ -149,6 +149,11 @@ The legitimate `var buf[N]` patterns (1.8.2):
   1.9.1 `pe_validate` keeps its agents' canonical addresses in one
   `alloc(alen * 16)` instead of `a[16]` / `b[16]`: agent i at `i * 16`,
   the last ending at `alen * 16`
+- `b[16]` in `validate.cyr` `_addr_canon` (1.9.2) — `_addr_bytes`' 16
+  bytes, then host bits masked in place: byte `off + (bit >> 3)` with
+  `bit < 32` at `off = 12` (IPv4) or `bit < 128` at `off = 0`, so at most
+  byte 15; `w[64]` in `_sb_add_ipv6` — eight i64 groups, `i * 8` for
+  `i < 8`, the last ending at 64
 - `bad[8]` / `st[8]` / `dst[8]` in `diff.cyr` / `mcp.cyr` — one i64 status
   slot each
 - `buf[20]` in `_sb_add_hex` (`rule.cyr`) — reverse-write scratch for

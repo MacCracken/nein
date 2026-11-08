@@ -477,10 +477,80 @@ fn bench_parse_v2() { parse_signed_ruleset_v2(_bench_env2); return 0; }
 fn bench_mcp_gate_check() { _nein_gate_check("nein_validate", 0); return 0; }
 fn bench_mcp_dispatch_validate() { nein_mcp_dispatch("nein_validate", "{\"protocol\":\"tcp\",\"port\":443}", 0); return 0; }
 
+# --- diff (1.9.2) ---
+# A 100-rule chain diffed against a listing of itself: the common nein_diff
+# case, nothing to do. `plain` holds only rules nft lists as nein writes them
+# (comparable with 1.9.1, which compared as written); `nft` holds counters
+# with counted values and /32 addresses, which only compare equal since 1.9.2
+# (audit P-8) — through 1.9.1 that listing rebuilt the chain.
+var _bench_diff_plain_fw = 0;
+var _bench_diff_plain_live = 0;
+var _bench_diff_nft_fw = 0;
+var _bench_diff_nft_live = 0;
+
+fn _bench_diff_fw(mixed: i64): i64 {
+    var fw = firewall_new();
+    var t = table_new("filter", FAMILY_INET);
+    var c = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    var i = 0;
+    while (i < 100) {
+        if (mixed == 1 && i % 10 == 0) { chain_add_rule(c, rule_new(verdict_counter())); }
+        elif (mixed == 1 && i % 10 == 5) { chain_add_rule(c, deny_source(_b_cidr(10, 0, i, 5, 32))); }
+        else { chain_add_rule(c, allow_tcp(2000 + i)); }
+        i = i + 1;
+    }
+    table_add_chain(t, c);
+    firewall_add_table(fw, t);
+    return fw;
+}
+
+fn _bench_diff_live(mixed: i64): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "table inet filter { # handle 1\n\tchain input { # handle 1\n");
+    str_builder_add_cstr(sb, "\t\ttype filter hook input priority filter; policy drop;\n");
+    var i = 0;
+    while (i < 100) {
+        str_builder_add_cstr(sb, "\t\t");
+        if (mixed == 1 && i % 10 == 0) { str_builder_add_cstr(sb, "counter packets 12 bytes 3456"); }
+        elif (mixed == 1 && i % 10 == 5) {
+            str_builder_add_cstr(sb, "ip saddr 10.0.");
+            str_builder_add_int(sb, i);
+            str_builder_add_cstr(sb, ".5 drop");
+        } else {
+            str_builder_add_cstr(sb, "tcp dport ");
+            str_builder_add_int(sb, 2000 + i);
+            str_builder_add_cstr(sb, " accept");
+        }
+        str_builder_add_cstr(sb, " # handle ");
+        str_builder_add_int(sb, i + 2);
+        str_builder_add_cstr(sb, "\n");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "\t}\n}\n");
+    return str_builder_build(sb);
+}
+
+fn _bench_setup_diff() {
+    _bench_diff_plain_fw = _bench_diff_fw(0);
+    _bench_diff_plain_live = _bench_diff_live(0);
+    _bench_diff_nft_fw = _bench_diff_fw(1);
+    _bench_diff_nft_live = _bench_diff_live(1);
+    # Both must be in sync, or the benches measure a rebuild.
+    if (vec_len(diff_compute(_bench_diff_plain_fw, _bench_diff_plain_live)) != 0) { println("bench setup: plain diff not in sync"); }
+    if (vec_len(diff_compute(_bench_diff_nft_fw, _bench_diff_nft_live)) != 0) { println("bench setup: nft diff not in sync"); }
+    return 0;
+}
+
+fn bench_diff_compute_100_plain() { diff_compute(_bench_diff_plain_fw, _bench_diff_plain_live); return 0; }
+fn bench_diff_compute_100_nft() { diff_compute(_bench_diff_nft_fw, _bench_diff_nft_live); return 0; }
+fn bench_addr_canon_ipv6() { _addr_canon("2001:db8:0:0:1:0:0:1/128"); return 0; }
+fn bench_diff_strip_state() { _diff_strip_state("ip daddr 127.0.0.1 counter packets 6 bytes 504 accept comment \"web\""); return 0; }
+
 fn main() {
     alloc_init();
     _bench_setup_scale();
     _bench_setup_sign();
+    _bench_setup_diff();
     var all = vec_new();
     var b = 0;
 
@@ -558,6 +628,10 @@ fn main() {
     b = bench_new("parse_v2"); bench_run(b, &bench_parse_v2, 10000); vec_push(all, b);
     b = bench_new("mcp_gate_check"); bench_run(b, &bench_mcp_gate_check, 100000); vec_push(all, b);
     b = bench_new("mcp_dispatch_validate"); bench_run(b, &bench_mcp_dispatch_validate, 100000); vec_push(all, b);
+    b = bench_new("diff_compute/100_plain"); bench_run(b, &bench_diff_compute_100_plain, 200); vec_push(all, b);
+    b = bench_new("diff_compute/100_nft"); bench_run(b, &bench_diff_compute_100_nft, 200); vec_push(all, b);
+    b = bench_new("addr_canon/ipv6"); bench_run(b, &bench_addr_canon_ipv6, 100000); vec_push(all, b);
+    b = bench_new("diff_strip_state"); bench_run(b, &bench_diff_strip_state, 100000); vec_push(all, b);
 
     bench_report_all(all);
     return 0;

@@ -8,7 +8,7 @@
 - **License**: GPL-3.0-only
 - **Language**: Cyrius (sovereign systems language, compiled by cycc; pinned `cyrius = "6.7.18"` in `cyrius.cyml`)
 - **Version**: SemVer, version file at `VERSION`
-- **Status**: 1.9.1 — Cyrius port complete + MCP/Ed25519-signing surface (mcp 1.6.0, sign 1.6.1, daimon dispatch adapter 1.6.2); toolchain moves 1.7.1–1.8.1 (cyrius 6.6.20 → 6.7.18, every dep at its latest release); 1.8.2 the P(-1) audit after them ([docs/audit/2026-11-03-audit.md](docs/audit/2026-11-03-audit.md)); 1.9.0 the consumer-contract minor that closes its deferred MEDIUMs (replay-bound v2 signing, MCP gate contract + tool classes, outcome-unknown applies, GeoIP on prerouting; bote 3.8.0); 1.9.1 hardening (nft names and IPv6 spellings checked against nft's own grammar, builder-composed names; bote 3.8.9). 1,145 unit + 41 integration assertions + nft load and grammar tests, 59 benchmarks, 7 fuzz drivers, 411 public fns. CI gates: fmt/lint/vet/deny/capacity/type-check/aarch64-cross/security-scan/doc-coverage/test-coverage/supply-chain/api-surface/bench-regression/fuzz/integration/dist-staleness
+- **Status**: 1.9.2 — Cyrius port complete + MCP/Ed25519-signing surface (mcp 1.6.0, sign 1.6.1, daimon dispatch adapter 1.6.2); toolchain moves 1.7.1–1.8.1 (cyrius 6.6.20 → 6.7.18, every dep at its latest release); 1.8.2 the P(-1) audit after them ([docs/audit/2026-11-03-audit.md](docs/audit/2026-11-03-audit.md)); 1.9.0 the consumer-contract minor that closes its deferred MEDIUMs (replay-bound v2 signing, MCP gate contract + tool classes, outcome-unknown applies, GeoIP on prerouting; bote 3.8.0); 1.9.1 hardening (nft names and IPv6 spellings checked against nft's own grammar, builder-composed names; bote 3.8.9); 1.9.2 the live diff compares in nft's own spelling (audit P-8: chains already in place stopped being rebuilt), two rule shapes nft never loaded fixed, bote 3.8.15. 1,327 unit + 41 integration assertions + nft load, grammar and diff-convergence tests, 63 benchmarks, 7 fuzz drivers, 411 public fns. CI gates: fmt/lint/vet/deny/capacity/type-check/aarch64-cross/security-scan/doc-coverage/test-coverage/supply-chain/api-surface/bench-regression/fuzz/integration/dist-staleness
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)
@@ -131,11 +131,11 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 - **Tests + benchmarks are the way.** Two coverage gates, both ratchets at the
   currently-measured figure — raise them as coverage improves, never lower them
   to make a build pass:
-  - **API test coverage** — `scripts/test-coverage.sh`, floor **71%** (293/411
-    public fns called by a test, 1.9.1). This is reference coverage: a fn called once
+  - **API test coverage** — `scripts/test-coverage.sh`, floor **89%** (368/411
+    public fns called by a test, 1.9.2). This is reference coverage: a fn called once
     counts. It catches "shipped an API, never tested it" — the exact failure that
     let the v1.6.7 `dry_run` bug through.
-  - **Doc coverage** — `scripts/doc-coverage.sh`, floor **19%** (80/411, 1.9.1). Low by
+  - **Doc coverage** — `scripts/doc-coverage.sh`, floor **19%** (80/411, 1.9.2). Low by
     design of the surface, not neglect: the logic-carrying modules are at or near
     100% (config 17/17, validate 8/8, error 3/3) and the deficit is one-line
     accessors under section comments.
@@ -143,8 +143,8 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
   The long-standing "80%+ coverage target" in this file was aspirational — no gate
   ever enforced it, and `cyrius coverage --min` cannot (it measures reference
   coverage from an entry point and reports 1/1 = 100% on this tree, so it passes
-  vacuously). Measured and gated at 1.6.9; 80% is still the direction of travel
-  for API test coverage.
+  vacuously). Measured and gated at 1.6.9; API test coverage passed 80% at 1.9.2,
+  when every struct accessor of the core modules got a round-trip test.
 - Test after EVERY change, not after the feature is done
 - ONE change at a time — never bundle unrelated changes
 - Research before implementation — check vidya for existing patterns

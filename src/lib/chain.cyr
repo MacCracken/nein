@@ -93,6 +93,15 @@ fn chain_rule_render(cr: i64): Str {
     return rule_render(inner);
 }
 
+# The rule as nft lists it in a table of family `fam` — what nein_diff
+# compares (1.9.2, audit P-8; rule.cyr's "Canonical spellings").
+fn _chain_rule_render_canon(cr: i64, fam: i64): Str {
+    var ct = load64(cr);
+    var inner = load64(cr + 8);
+    if (ct == CR_NAT) { return _nat_render_canon(inner, fam); }
+    return _rule_render_canon(inner, fam);
+}
+
 fn chain_rule_validate(cr: i64): i64 {
     var ct = load64(cr);
     var inner = load64(cr + 8);

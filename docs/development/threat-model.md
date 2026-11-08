@@ -1,6 +1,6 @@
 # Threat Model
 
-Last refresh: **2026-11-04** (v1.9.1 — T-1: names rendered bare must be names nft reads (`validate_nft_name`), IPv6 addresses ones nft parses, and the residual of a probed keyword list; T-5: `pe_validate` parses each address once. Previously v1.9.0 — T-9 gains the replay-bound v2 envelope and its residual risk; T-10 rewritten for the 1.9.0 gate contract: tool classes, offline-only default, one permit value, install-once. Previously v1.8.2 — T-4 rewritten for the memfd apply path after the 2026-11-03 P(-1) audit; T-3's override is copied, not borrowed. Previously 2026-08-21, v1.6.10 — T-4 rewritten and T-7 corrected after that audit. Earlier passes added T-9 signed-ruleset trust (v1.6.1), T-10 MCP
+Last refresh: **2026-11-07** (v1.9.2 — T-2: the live diff compares in nft's spelling, and why a wrong prediction can only cost a rebuild. Previously v1.9.1 — T-1: names rendered bare must be names nft reads (`validate_nft_name`), IPv6 addresses ones nft parses, and the residual of a probed keyword list; T-5: `pe_validate` parses each address once. Previously v1.9.0 — T-9 gains the replay-bound v2 envelope and its residual risk; T-10 rewritten for the 1.9.0 gate contract: tool classes, offline-only default, one permit value, install-once. Previously v1.8.2 — T-4 rewritten for the memfd apply path after the 2026-11-03 P(-1) audit; T-3's override is copied, not borrowed. Previously 2026-08-21, v1.6.10 — T-4 rewritten and T-7 corrected after that audit. Earlier passes added T-9 signed-ruleset trust (v1.6.1), T-10 MCP
 destructive-tool access control (v1.6.0) and T-11 MCP argument injection and
 output escaping; the v1.4.0 refresh hardened T-3 to a single pinned absolute
 path.)
@@ -98,6 +98,38 @@ parameters before interpolation:
 - Rule bodies — rendered via `rule_render`, which already passed
   validate-during-construction
 - Handles — `i64`, no injection surface
+
+**The diff's comparison (1.9.2, audit P-8).** `nein_diff` decides which
+chains to leave alone by comparing each target rule with the body nft lists
+for the live one. A comparison that called two different rules equal would
+leave a live rule in place that the target does not hold. That is the
+dangerous direction: an allow the operator removed would stay. Since 1.9.2
+the target side is rendered in the spelling nft lists, and the live side
+loses counter values and quota usage. The safety argument:
+
+- Every rewrite is one nft makes to the same rule. It masks host bits nft
+  masks at load, drops prefixes and defaults nft drops, and prints a set or
+  number the way nft prints it. None changes what a rule matches, so a live
+  body equal to the canonical target is a rule equal to the target.
+- The prediction is never trusted the other way. A spelling nein predicts
+  wrongly compares unequal, and the chain is rebuilt, which is what every
+  diff did through 1.9.1.
+- State is dropped only outside quoted strings and only at a token boundary,
+  so a comment or log prefix that spells `counter packets 1 bytes 2` cannot
+  be edited into a match. A target rule cannot carry a `"` inside a string
+  (`validate_comment`, `validate_log_prefix`), so a forged quote in a live
+  comment cannot make a live body equal any target.
+- The ops still carry the body as rendered and validated, never the
+  canonical form, so what reaches `nft -f -` is unchanged.
+
+Residual: the spellings are nft 1.1.7's and glibc's inet_ntop. A different
+nft, or nft built on musl (whose inet_ntop prints `::c000:201` where glibc
+prints `::192.0.2.1`), costs churn on the forms it spells differently, never
+a false match. `match_raw` text is compared as written. nft's dependency
+elision is not modelled: it drops a `meta l4proto tcp` before `reject with
+tcp reset` in an ip table, so such a chain still churns.
+`tests/integration/diff_converge.tcyr` names every form that churns against
+the installed nft.
 
 ### T-3 — `nft` PATH injection
 

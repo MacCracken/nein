@@ -13,28 +13,34 @@
 #     tables and chains are assumed to exist with the right shapes.
 #     A future revision can extend.
 #
-# Matching strategy: rule bodies are compared as byte-equal cstrings.
-# Target rules go through `rule_render` (Str → cstring). Live rules
-# come from the inspect parser with their `# handle N` suffix stripped.
-# Exact match means "same rule"; any drift in whitespace or operand
-# ordering produces a delete+add pair, which is conservative but
-# always correct (nft accepts duplicate adds and rejects invalid
-# deletes, both of which are surfaced as NEIN_ERR_NFT_FAILED).
+# Matching strategy: each chain the target declares is compared with the
+# live chain as an ordered sequence of rule bodies (see diff_compute). A live
+# body is what nft lists, `# handle N` stripped. nft lists its own spelling,
+# not the one it was given (`ip saddr 10.0.0.5/32` lists as `ip saddr
+# 10.0.0.5`), so since 1.9.2 (audit P-8) the target side of the comparison is
+# rendered in that spelling (rule.cyr's "Canonical spellings") and the live
+# side drops counter and quota state; ops still carry the body as rendered.
+# Through 1.9.1 the bodies were compared as written, and every chain holding
+# such a rule was rebuilt on every diff, resetting its counters.
 
 # ================================================================
-# LiveRule struct — { family, table, chain, body, handle }
-# Layout: [family:8][table:8][chain:8][body:8][handle:8] = 40 bytes
-# All four name fields are cstrings; handle is i64.
+# LiveRule struct — { family, table, chain, body, handle, cmp, src }
+# Layout: [family:8][table:8][chain:8][body:8][handle:8][cmp:8][src:8] = 56
+# All name fields are cstrings; handle is i64. Two fields only the diff sets
+# (1.9.2): `cmp`, the form it compares (0 means the body itself), and `src`,
+# a target rule's chain rule, so its body is rendered only for an add op.
 # ================================================================
 
 fn _live_rule_new(family: cstring, table: cstring, chain: cstring,
   body: cstring, handle: i64): i64 {
-    var lr = alloc(40);
+    var lr = alloc(56);
     store64(lr, family);
     store64(lr + 8, table);
     store64(lr + 16, chain);
     store64(lr + 24, body);
     store64(lr + 32, handle);
+    store64(lr + 40, 0);
+    store64(lr + 48, 0);
     return lr;
 }
 
@@ -43,6 +49,105 @@ fn live_rule_table(lr: i64): cstring { return load64(lr + 8); }
 fn live_rule_chain(lr: i64): cstring { return load64(lr + 16); }
 fn live_rule_body(lr: i64): cstring { return load64(lr + 24); }
 fn live_rule_handle(lr: i64): i64 { return load64(lr + 32); }
+
+# The body as the diff compares it.
+fn _live_rule_cmp(lr: i64): cstring {
+    var c = load64(lr + 40);
+    if (c != 0) { return c; }
+    return load64(lr + 24);
+}
+
+fn _live_rule_set_cmp(lr: i64, c: cstring): i64 {
+    store64(lr + 40, c);
+    return 0;
+}
+
+# ================================================================
+# Stateful values — dropped before comparing (1.9.2, audit P-8)
+# ================================================================
+# nft lists a counter with its values (`counter packets 6 bytes 504`) and a
+# quota with what it has used (` used 5 kbytes`). Those are state, not the
+# rule: nein renders a bare `counter`, so through 1.9.1 every chain with a
+# counter in it compared unequal and was rebuilt — counters reset — on every
+# diff. Removed only outside quoted strings and only at a token start, so a
+# comment or log prefix that spells `counter packets 1 bytes 2` is untouched.
+
+# Index just past a run of decimal digits at s[i], or -1 when there is none.
+fn _diff_digits(s: cstring, i: i64): i64 {
+    var j = i;
+    while (load8(s + j) >= 48 && load8(s + j) <= 57) { j = j + 1; }
+    if (j == i) { return 0 - 1; }
+    return j;
+}
+
+# Index just past " <digits> <unit>" at s[i] — unit bytes, kbytes or mbytes,
+# the units nft lists a quota in — or -1.
+fn _diff_amount(s: cstring, i: i64): i64 {
+    if (load8(s + i) != 32) { return 0 - 1; }
+    var j = _diff_digits(s, i + 1);
+    if (j < 0 || load8(s + j) != 32) { return 0 - 1; }
+    j = j + 1;
+    if (_cstr_starts_with(s + j, "bytes") == 1) { return j + 5; }
+    if (_cstr_starts_with(s + j, "kbytes") == 1) { return j + 6; }
+    if (_cstr_starts_with(s + j, "mbytes") == 1) { return j + 6; }
+    return 0 - 1;
+}
+
+# 1 when s[i] ends a token: the end of the body or a space.
+fn _diff_tok_end(s: cstring, i: i64): i64 {
+    if (load8(s + i) == 0 || load8(s + i) == 32) { return 1; }
+    return 0;
+}
+
+# `body` without counter values and quota usage; `body` itself when it has
+# neither. Nothing is copied until something is dropped: most bodies hold
+# neither, and the diff strips every live rule.
+fn _diff_strip_state(body: cstring): cstring {
+    if (body == 0) { return 0; }
+    var len = strlen(body);
+    var sb = 0;
+    var from = 0;   # body[from..i) is still to be copied
+    var q = 0;
+    var tok = 1;
+    var i = 0;
+    while (i < len) {
+        var c0 = load8(body + i);
+        if (q == 0 && tok == 1 && (c0 == 99 || c0 == 113)) {   # 'c', 'q'
+            var keep = 0 - 1;   # body[i..keep) stays, body[keep..skip) goes
+            var skip = 0;
+            if (_cstr_starts_with(body + i, "counter packets ") == 1) {
+                var j = _diff_digits(body, i + 16);
+                if (j >= 0 && _cstr_starts_with(body + j, " bytes ") == 1) {
+                    var k = _diff_digits(body, j + 7);
+                    if (k >= 0 && _diff_tok_end(body, k) == 1) { keep = i + 7; skip = k; }
+                }
+            } elif (_cstr_starts_with(body + i, "quota ") == 1) {
+                var a = i + 5;
+                if (_cstr_starts_with(body + a, " over ") == 1) { a = a + 5; }
+                var e = _diff_amount(body, a);
+                if (e >= 0 && _cstr_starts_with(body + e, " used") == 1) {
+                    var u = _diff_amount(body, e + 5);
+                    if (u >= 0 && _diff_tok_end(body, u) == 1) { keep = e; skip = u; }
+                }
+            }
+            if (keep >= 0) {
+                if (sb == 0) { sb = str_builder_new(); }
+                str_builder_add(sb, str_new(body + from, keep - from));
+                from = skip;
+                i = skip;
+                tok = 0;
+                continue;
+            }
+        }
+        if (c0 == 34) { q = 1 - q; }
+        tok = 0;
+        if (q == 0 && c0 == 32) { tok = 1; }
+        i = i + 1;
+    }
+    if (sb == 0) { return body; }
+    str_builder_add(sb, str_new(body + from, len - from));
+    return str_cstr(str_builder_build(sb));
+}
 
 # ================================================================
 # Live ruleset parser — extracts LiveRule tuples from `nft list ruleset -a`
@@ -403,7 +508,12 @@ fn _render_to_cstr(s: Str): cstring {
     return out;
 }
 
-fn diff_target_rules(fw: i64): i64 {
+fn diff_target_rules(fw: i64): i64 { return _diff_target_rules_x(fw, 1); }
+
+# `written` 0 (the diff's own path): only the form nft lists is rendered; the
+# body as written is rendered by _emit_add_rule, for the rules that need it.
+# A chain in sync then costs one render per rule, not two.
+fn _diff_target_rules_x(fw: i64, written: i64): i64 {
     var rules = vec_new();
     var tables = firewall_tables(fw);
     var tlen = vec_len(tables);
@@ -436,10 +546,14 @@ fn diff_target_rules(fw: i64): i64 {
                     ri = ri + 1;
                     continue;
                 }
-                var rendered = chain_rule_render(cr);
-                var body = _render_to_cstr(rendered);
-                vec_push(rules, _live_rule_new(family_cstr, table_name,
-                    chain_name, body, 0));
+                var body = 0;
+                if (written == 1) { body = _render_to_cstr(chain_rule_render(cr)); }
+                var tlr = _live_rule_new(family_cstr, table_name, chain_name, body, 0);
+                store64(tlr + 48, cr);
+                # Compared in the spelling nft lists it in (1.9.2, audit P-8).
+                _live_rule_set_cmp(tlr, _diff_strip_state(_render_to_cstr(
+                      _chain_rule_render_canon(cr, table_family(t)))));
+                vec_push(rules, tlr);
                 ri = ri + 1;
             }
             ci = ci + 1;
@@ -456,12 +570,13 @@ fn diff_target_rules(fw: i64): i64 {
 # ================================================================
 
 # Match a target rule against the live ruleset. Returns 1 if any
-# live rule has the same (family, table, chain, body); 0 otherwise.
+# live rule has the same (family, table, chain) and compares equal; 0
+# otherwise.
 fn _target_in_live(target_rule: i64, live_rules: i64): i64 {
     var fam = live_rule_family(target_rule);
     var tab = live_rule_table(target_rule);
     var chn = live_rule_chain(target_rule);
-    var body = live_rule_body(target_rule);
+    var body = _live_rule_cmp(target_rule);
     var n = vec_len(live_rules);
     var i = 0;
     while (i < n) {
@@ -469,7 +584,7 @@ fn _target_in_live(target_rule: i64, live_rules: i64): i64 {
         if (streq(live_rule_family(lr), fam) == 1
           && streq(live_rule_table(lr), tab) == 1
           && streq(live_rule_chain(lr), chn) == 1
-          && streq(live_rule_body(lr), body) == 1) {
+          && streq(_live_rule_cmp(lr), body) == 1) {
             return 1;
         }
         i = i + 1;
@@ -500,6 +615,9 @@ fn _emit_add_rule(rule: i64): cstring {
         sakshi_error(sk_an, strlen(sk_an));
         return 0;
     }
+    var body = live_rule_body(rule);
+    if (body == 0 && load64(rule + 48) != 0) { body = _render_to_cstr(chain_rule_render(load64(rule + 48))); }
+    if (body == 0) { return 0; }
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "add rule ");
     str_builder_add_cstr(sb, live_rule_family(rule));
@@ -508,7 +626,7 @@ fn _emit_add_rule(rule: i64): cstring {
     str_builder_add_cstr(sb, " ");
     str_builder_add_cstr(sb, live_rule_chain(rule));
     str_builder_add_cstr(sb, " ");
-    str_builder_add_cstr(sb, live_rule_body(rule));
+    str_builder_add_cstr(sb, body);
     str_builder_add_cstr(sb, "\n");
     return _render_to_cstr(str_builder_build(sb));
 }
@@ -543,6 +661,17 @@ fn _emit_del_rule(rule: i64): cstring {
     return _render_to_cstr(str_builder_build(sb));
 }
 
+# Each live rule's comparison form: its body without counter or quota state.
+fn _diff_live_cmp(live_rules: i64): i64 {
+    var i = 0;
+    while (i < vec_len(live_rules)) {
+        var lr = vec_get(live_rules, i);
+        _live_rule_set_cmp(lr, _diff_strip_state(live_rule_body(lr)));
+        i = i + 1;
+    }
+    return 0;
+}
+
 # Do two LiveRules belong to the same (family, table, chain)?
 fn _same_chain(a: i64, b: i64): i64 {
     if (streq(live_rule_family(a), live_rule_family(b)) != 1) { return 0; }
@@ -562,8 +691,8 @@ fn _chain_in_sync(key: i64, target_rules: i64, live_rules: i64): i64 {
         while (li < ln && _same_chain(vec_get(live_rules, li), key) == 0) { li = li + 1; }
         if (ti >= tn && li >= ln) { return 1; }        # both exhausted together
         if (ti >= tn || li >= ln) { return 0; }        # one side has extra rules
-        if (streq(live_rule_body(vec_get(target_rules, ti)),
-            live_rule_body(vec_get(live_rules, li))) != 1) { return 0; }
+        if (streq(_live_rule_cmp(vec_get(target_rules, ti)),
+            _live_rule_cmp(vec_get(live_rules, li))) != 1) { return 0; }
         ti = ti + 1; li = li + 1;
     }
     return 1;
@@ -633,7 +762,7 @@ fn _diff_target_keys(fw: i64): i64 {
 fn _diff_compute(target_fw: i64, live_raw: Str, status_out: i64): i64 {
     store64(status_out, 0);
     var ops = vec_new();
-    var target_rules = diff_target_rules(target_fw);
+    var target_rules = _diff_target_rules_x(target_fw, 0);
     var bad[8];
     var live_rules = _diff_parse(live_raw, &bad);
     if (load64(&bad) != 0) {
@@ -642,6 +771,7 @@ fn _diff_compute(target_fw: i64, live_raw: Str, status_out: i64): i64 {
         store64(status_out, NEIN_ERR_PARSE);
         return ops;
     }
+    _diff_live_cmp(live_rules);
 
     var keys = _diff_target_keys(target_fw);
     var ki = 0;

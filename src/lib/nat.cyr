@@ -83,18 +83,6 @@ fn _addr_has_colon(s: cstring): i64 {
     return 0;
 }
 
-# Emit an address, wrapping in brackets if IPv6
-fn _sb_add_addr(sb: i64, addr: cstring): i64 {
-    if (_addr_has_colon(addr) == 1) {
-        str_builder_add_cstr(sb, "[");
-        str_builder_add_cstr(sb, addr);
-        str_builder_add_cstr(sb, "]");
-    } else {
-        str_builder_add_cstr(sb, addr);
-    }
-    return 0;
-}
-
 # The network-layer keyword for an address: "ip6" for IPv6, "ip" otherwise.
 fn _nat_l3(addr: cstring): cstring {
     if (_addr_has_colon(addr) == 1) { return "ip6"; }
@@ -134,7 +122,44 @@ fn _nat_comment(sb: i64, c: cstring): i64 {
     return 0;
 }
 
-fn nat_render(n: i64): Str {
+fn nat_render(n: i64): Str { return _nat_render_cf(n, 0); }
+
+# The NAT rule as nft lists it in a table of family `fam` (1.9.2, audit P-8):
+# what nein_diff compares. nft drops the `ip` / `ip6` after dnat / snat in a
+# table of one family (`dnat to`), lists addresses in canonical form, brackets
+# an IPv6 target only when a port or a map follows it, and joins the map to the
+# address (`172.17.0.3:tcp dport map { ... }`). See rule.cyr's "Canonical
+# spellings".
+fn _nat_render_canon(n: i64, fam: i64): Str { return _nat_render_cf(n, fam); }
+
+# The `ip` / `ip6` after dnat / snat: kept as written, and under `cf` only in
+# a table that holds both families.
+fn _nat_l3_cf(sb: i64, addr: cstring, cf: i64): i64 {
+    if (cf == FAMILY_IP || cf == FAMILY_IP6) { return 0; }
+    str_builder_add_cstr(sb, _nat_l3(addr));
+    str_builder_add_cstr(sb, " ");
+    return 0;
+}
+
+# A NAT address: as written, or canonical under `cf`; an IPv6 one bracketed
+# when `bracket` (a port or map follows).
+fn _sb_add_nat_addr(sb: i64, addr: cstring, cf: i64, bracket: i64): i64 {
+    var a = addr;
+    if (cf != 0) {
+        var c = _addr_canon(addr);
+        if (c != 0) { a = c; }
+    }
+    if (bracket == 1 && _addr_has_colon(a) == 1) {
+        str_builder_add_cstr(sb, "[");
+        str_builder_add_cstr(sb, a);
+        str_builder_add_cstr(sb, "]");
+    } else {
+        str_builder_add_cstr(sb, a);
+    }
+    return 0;
+}
+
+fn _nat_render_cf(n: i64, cf: i64): Str {
     var sb = str_builder_new();
     var nt = nat_type(n);
 
@@ -144,25 +169,25 @@ fn nat_render(n: i64): Str {
         str_builder_add_cstr(sb, " dport ");
         str_builder_add_int(sb, nat_v2(n));
         str_builder_add_cstr(sb, " dnat ");
-        str_builder_add_cstr(sb, _nat_l3(nat_v3(n)));
-        str_builder_add_cstr(sb, " to ");
-        _sb_add_addr(sb, nat_v3(n));
+        _nat_l3_cf(sb, nat_v3(n), cf);
+        str_builder_add_cstr(sb, "to ");
+        _sb_add_nat_addr(sb, nat_v3(n), cf, 1);
         str_builder_add_cstr(sb, ":");
         str_builder_add_int(sb, nat_v4(n));
         _nat_comment(sb, nat_v5(n));
     } elif (nt == NAT_SNAT) {
         str_builder_add_cstr(sb, _nat_l3(nat_v1(n)));
         str_builder_add_cstr(sb, " saddr ");
-        str_builder_add_cstr(sb, nat_v1(n));
+        _sb_add_nat_addr(sb, nat_v1(n), cf, 0);
         str_builder_add_cstr(sb, " snat ");
-        str_builder_add_cstr(sb, _nat_l3(nat_v2(n)));
-        str_builder_add_cstr(sb, " to ");
-        str_builder_add_cstr(sb, nat_v2(n));
+        _nat_l3_cf(sb, nat_v2(n), cf);
+        str_builder_add_cstr(sb, "to ");
+        _sb_add_nat_addr(sb, nat_v2(n), cf, 0);
         _nat_comment(sb, nat_v3(n));
     } elif (nt == NAT_MASQUERADE) {
         str_builder_add_cstr(sb, _nat_l3(nat_v1(n)));
         str_builder_add_cstr(sb, " saddr ");
-        str_builder_add_cstr(sb, nat_v1(n));
+        _sb_add_nat_addr(sb, nat_v1(n), cf, 0);
         if (nat_v2(n) != 0) {
             str_builder_add_cstr(sb, " oifname \"");
             str_builder_add_cstr(sb, nat_v2(n));
@@ -189,11 +214,15 @@ fn nat_render(n: i64): Str {
         str_builder_add_cstr(sb, "-");
         str_builder_add_int(sb, dpe);
         str_builder_add_cstr(sb, " dnat ");
-        str_builder_add_cstr(sb, _nat_l3(nat_v4(n)));
-        str_builder_add_cstr(sb, " to ");
-        _sb_add_addr(sb, nat_v4(n));
+        _nat_l3_cf(sb, nat_v4(n), cf);
+        str_builder_add_cstr(sb, "to ");
+        # As written, an IPv6 target is always bracketed; canonical, only
+        # when the map follows (nft lists `dnat to fd00::4` with no port).
+        var br = 1;
+        if (cf != 0 && tps == dps) { br = 0; }
+        _sb_add_nat_addr(sb, nat_v4(n), cf, br);
         if (tps != dps) {
-            str_builder_add_cstr(sb, " : ");
+            if (cf != 0) { str_builder_add_cstr(sb, ":"); } else { str_builder_add_cstr(sb, " : "); }
             str_builder_add_cstr(sb, proto);
             str_builder_add_cstr(sb, " dport map { ");
             var p = dps;
